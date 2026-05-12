@@ -9,12 +9,12 @@ See: .planning/PROJECT.md (updated 2026-05-12)
 
 ## Current Position
 
-Phase: 1 of 10 (Server skeleton + install) — v1.x scope; v2.x and v3.x milestones documented in ROADMAP backlog
-Plan: 0 of 3 in current phase
-Status: Ready to plan
-Last activity: 2026-05-12 — REQUIREMENTS / ROADMAP / PROJECT / CONTEXT / README synced with upstream PR #672 (tool surface ~80→~190; NFT reads in scope; BTC/LTC fully shipped; honest-model-error class added; new ergonomics + contacts + sharing + device-trust surfaces added to v3.x backlog)
+Phase: 1 of 10 (Server skeleton + install) — **plans 01-01, 01-02, 01-03 all shipped; phase complete pending real-runtime `claude mcp add` smoke**
+Plan: 3 of 3 done in current phase
+Status: Ready to ship Phase 1 (verify-phase open: register with Claude Code, confirm `claude mcp list` shows connected)
+Last activity: 2026-05-12 — Phase 1 fully implemented. 01-01 (TypeScript scaffold + LICENSE) sequential; 01-02 (MCP server framework) and 01-03 (`--check` CLI) executed in parallel via subagents. All 8 unit tests pass; `--check` end-to-end smoke produces correct human + JSON output with status escalation working as specified.
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█░░░░░░░░░] 3/30 plans (10%) — phase 1 of 10 phases done
 
 ## Performance Metrics
 
@@ -59,8 +59,14 @@ None yet.
 
 ### Blockers/Concerns
 
-- **Phase 1 prerequisite**: `WALLETCONNECT_PROJECT_ID` will be needed at Phase 3; user should register a project at https://cloud.walletconnect.com before that phase begins
+- **Phase 1 verify-phase open**: requires user with a Claude Code instance to run `claude mcp add vaultpilot-mcp -- node /Users/s/dev/vaultpilot/vaultpilot-mcp-gsd-inspired/dist/index.js` and confirm `claude mcp list` shows it as connected. The in-process initialize-handshake test covers server construction; the real-stdio path is the only thing not yet exercised.
+- **Phase 3 prerequisite**: `WALLETCONNECT_PROJECT_ID` will be needed at Phase 3; user should register a project at https://cloud.walletconnect.com before that phase begins
 - **Phase 4 prerequisite**: A real Ledger device with the Ethereum app installed + Ledger Live paired is required for the Phase 4 verify-phase step (the trust-pipeline milestone is moot without device-side hash verification)
+
+### Phase 1 retro
+
+- **Parallel-agent race on shared main**: dispatched 01-02 + 01-03 as parallel subagents both writing to `main`. Mid-execution the 01-03 agent's `git checkout HEAD --` (cleaning its working set before its commit) un-staged some of 01-02's in-flight files. The 01-02 agent caught it on post-commit `git status` and shipped a recovery commit (7b24bb5). No data lost; tests + build green after recovery. **Lesson**: for Phase 2+ parallel dispatch, give each subagent its own `.claude/worktrees/<branch-name>/` worktree per the global CLAUDE.md "one worktree per feature" rule. The orchestrator merges branches after both complete. Cost of the violation here was one extra commit + a debug round; cost in a larger phase would compound.
+- **Plan-boundary slip**: 01-02-PLAN.md said "don't touch src/index.ts" but 01-03 agent legitimately needed to fix a pre-existing typecheck failure there (the JSON default-import shape on the `--version` branch). Surfaced as deviation in agent report. **Lesson**: when one plan owns "the bin entrypoint wires both handlers" by virtue of writing both stubs (01-01), file-ownership boundaries between later plans need to acknowledge the shared file. Either: route shared-file changes through the orchestrator, or explicitly carve `src/index.ts` as "contested — first agent to touch announces, other agent reads after."
 
 ## Deferred Items
 

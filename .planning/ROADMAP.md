@@ -272,7 +272,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 1. Server skeleton + install | v1.0 | 0/3 | Not started | - |
+| 1. Server skeleton + install | v1.0 | 3/3 | Complete (verify-phase open) | 2026-05-12 |
 | 2. Ethereum read-only portfolio | v1.0 | 0/4 | Not started | - |
 | 3. WalletConnect pairing | v1.0 | 0/2 | Not started | - |
 | 4. Native ETH send (the trust pipeline) | v1.0 | 0/5 | Not started | - |
