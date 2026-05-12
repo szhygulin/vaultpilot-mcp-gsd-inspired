@@ -303,4 +303,14 @@ describe("get_tx_verification — register-all wiring", () => {
     expect(tool).toBeDefined();
     expect(tool?.inputSchema.required).toEqual(["handle"]);
   });
+
+  it("register-all.ts contains the side-effect import line for ./get_tx_verification.js", async () => {
+    const fs = await import("node:fs/promises");
+    const path = await import("node:path");
+    const url = await import("node:url");
+    const here = url.fileURLToPath(new URL(".", import.meta.url));
+    const target = path.resolve(here, "..", "src", "tools", "register-all.ts");
+    const source = await fs.readFile(target, "utf8");
+    expect(source).toContain('import "./get_tx_verification.js";');
+  });
 });
