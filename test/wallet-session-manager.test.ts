@@ -98,6 +98,8 @@ describe("session-manager.pair() — happy path + status (PAIR-01, PAIR-02)", ()
     expect(result.wcUri).toBe(mockSignClient._wcUri);
     expect(result.status).toEqual({
       paired: true,
+      accounts: [ADDRESS],
+      activeAccount: ADDRESS,
       address: ADDRESS,
       chainId: 1,
       sessionTopicLast8: "00c0ffee",
@@ -148,6 +150,8 @@ describe("session-manager.pair() — happy path + status (PAIR-01, PAIR-02)", ()
     const status = await getStatus();
     expect(status).toEqual({
       paired: true,
+      accounts: [ADDRESS],
+      activeAccount: ADDRESS,
       address: ADDRESS,
       chainId: 1,
       sessionTopicLast8: "00c0ffee",
@@ -384,6 +388,8 @@ describe("session-manager.pairStart() — URI returned immediately, handle parke
     const status = await waitPromise;
     expect(status).toEqual({
       paired: true,
+      accounts: [ADDRESS],
+      activeAccount: ADDRESS,
       address: ADDRESS,
       chainId: 1,
       sessionTopicLast8: "00c0ffee",
