@@ -140,6 +140,8 @@ const FIXTURE_TOPIC = "0xfeedfacecafebeef000000000000000000000000000000000000000
 
 const PAIRED_STATUS = {
   paired: true as const,
+  accounts: [FIXTURE_SENDER],
+  activeAccount: FIXTURE_SENDER,
   address: FIXTURE_SENDER,
   chainId: 1,
   sessionTopicLast8: "00c0ffee",

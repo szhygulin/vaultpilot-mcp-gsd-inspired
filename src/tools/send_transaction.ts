@@ -434,7 +434,7 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
     // are not JSON-safe.
     const txParams = [
       {
-        from: status.address,
+        from: status.activeAccount,
         to: record.tx.to,
         value: toHex(record.tx.valueWei),
         gas: toHex(pinned.gas),

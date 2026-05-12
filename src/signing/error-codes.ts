@@ -29,6 +29,10 @@
 //                              T-PERSONA-CONFUSION-1 mitigation; state NOT mutated.
 //                              Phase 5+ tools needing a similar mode check reuse the code
 //                              via `makeStructuredError`.)
+//   INVALID_ACCOUNT          — `set_active_account` (requested address is not in
+//                              the live WC session's approved set; surfaces the
+//                              in-session list so the agent can self-correct
+//                              without a second tool call).
 
 export type ErrorCode =
   | "WALLET_NOT_PAIRED"
@@ -44,7 +48,8 @@ export type ErrorCode =
   | "DEMO_MODE_REFUSED"
   | "INVALID_INPUT"
   | "INTERNAL_ERROR"
-  | "WRONG_MODE";
+  | "WRONG_MODE"
+  | "INVALID_ACCOUNT";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

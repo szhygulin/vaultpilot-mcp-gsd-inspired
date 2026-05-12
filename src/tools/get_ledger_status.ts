@@ -16,9 +16,9 @@ import { getStatus } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
 
 const DESCRIPTION = [
-  "Check whether a Ledger hardware wallet is currently paired via WalletConnect, returning the paired address + chain + session-topic-last-8 (or `paired: false` if no session).",
+  "Check whether a Ledger hardware wallet is currently paired via WalletConnect, returning the active address, all approved accounts, chain, and session-topic-last-8 (or `paired: false` if no session).",
   "Use this BEFORE calling pair_ledger_live to avoid a redundant re-pair if a session already exists. Also use after a prepare_* failure to confirm the session is still live (the user may have disconnected from Ledger Live).",
-  "Returns `{ paired: false }` when no session, or `{ paired: true, address, chainId, sessionTopicLast8 }` when paired. Never errors — a missing project ID / unreachable relay simply means no session exists, so `paired: false`.",
+  "Returns `{ paired: false }` when no session, or `{ paired: true, address, accounts, chainId, sessionTopicLast8 }` when paired. `accounts` lists every approved address; `address` is the active one (switch with `set_active_account`). Never errors — a missing project ID / unreachable relay simply means no session exists, so `paired: false`.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -40,14 +40,23 @@ registerTool("get_ledger_status", DESCRIPTION, INPUT_SCHEMA, async () => {
       structuredContent: { paired: false },
     };
   }
-  const { address, chainId, sessionTopicLast8 } = status;
+  const { activeAccount, accounts, chainId, sessionTopicLast8 } = status;
   return {
     content: [
       {
         type: "text",
-        text: `paired: true, address: ${address}, chainId: ${chainId}, sessionTopicLast8: ${sessionTopicLast8}`,
+        text: [
+          `paired: true, address: ${activeAccount}, chainId: ${chainId}, sessionTopicLast8: ${sessionTopicLast8}`,
+          `accounts: [${accounts.join(", ")}]`,
+        ].join("\n"),
       },
     ],
-    structuredContent: { paired: true, address, chainId, sessionTopicLast8 },
+    structuredContent: {
+      paired: true,
+      address: activeAccount,
+      accounts,
+      chainId,
+      sessionTopicLast8,
+    },
   };
 });

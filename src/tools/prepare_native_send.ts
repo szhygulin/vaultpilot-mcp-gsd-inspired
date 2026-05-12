@@ -227,7 +227,7 @@ registerTool("prepare_native_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
           ),
         };
       }
-      fromAddress = status.address;
+      fromAddress = status.activeAccount;
     }
 
     // chainId hard-coded to 1 (Ethereum mainnet) — v1.0 is mainnet-only.

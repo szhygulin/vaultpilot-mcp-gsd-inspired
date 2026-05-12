@@ -21,7 +21,8 @@ import { getStatus } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
 
 const DESCRIPTION = [
-  "Returns an INFERRED-STATE envelope for the connected Ledger — paired status, address, chainId, WC session-topic suffix (last 8 chars), and an actionable hint.",
+  "Returns an INFERRED-STATE envelope for the connected Ledger — paired status, active address + all approved accounts, chainId, WC session-topic suffix (last 8 chars), and an actionable hint.",
+  "Multi-account sessions: `accounts` lists every approved address; `address` is the active one. Switch with `set_active_account`.",
   "This tool does NOT probe the device for firmware / open app / connection state. WalletConnect v2.x has no method for that. The fields `deviceConnected`, `appOpen`, `firmware` are ALWAYS `\"unknown\"` (or, for `appOpen`, inferred from the CAIP-2 namespace on the active session). For authoritative device state, check Ledger Live → Settings → Connected Apps.",
   "Use this when debugging pairing — 'is the Ledger paired?', 'what address am I paired to?', 'is the session topic still alive?'.",
   "Do NOT use this as a substitute for visual Ledger Live inspection. The user's eyes on Ledger Live are the source of truth for device state.",
@@ -48,6 +49,7 @@ registerTool("get_ledger_device_info", DESCRIPTION, INPUT_SCHEMA, async () => {
     const envelope = {
       paired: false,
       address: null,
+      accounts: null,
       chainId: null,
       sessionTopicSuffix: null,
       deviceConnected: UNKNOWN,
@@ -74,14 +76,15 @@ registerTool("get_ledger_device_info", DESCRIPTION, INPUT_SCHEMA, async () => {
 
   const envelope = {
     paired: true as const,
-    address: status.address,
+    address: status.activeAccount,
+    accounts: status.accounts,
     chainId: status.chainId,
     sessionTopicSuffix: status.sessionTopicLast8,
     deviceConnected: UNKNOWN,
     appOpen: APP_OPEN_INFERRED,
     firmware: UNKNOWN,
     hint:
-      "Session topic is alive. If signing flows fail, check Ledger Live → Settings → Connected Apps to confirm the session is active on the device side.",
+      "Session topic is alive. If signing flows fail, check Ledger Live → Settings → Connected Apps to confirm the session is active on the device side. Switch active account with `set_active_account` when the session approved multiple addresses.",
   };
   return {
     content: [
@@ -89,6 +92,7 @@ registerTool("get_ledger_device_info", DESCRIPTION, INPUT_SCHEMA, async () => {
         type: "text",
         text: [
           `paired: true, address: ${envelope.address}, chainId: ${envelope.chainId}, sessionTopicSuffix: ${envelope.sessionTopicSuffix}`,
+          `  accounts:           [${envelope.accounts.join(", ")}]`,
           `  deviceConnected:    ${envelope.deviceConnected}`,
           `  appOpen:            ${envelope.appOpen}`,
           `  firmware:           ${envelope.firmware}`,

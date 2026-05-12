@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildMockSession,
+  buildMultiAccountSession,
   createMockSignClient,
   type MockSignClient,
 } from "./helpers/mock-sign-client.js";
@@ -21,8 +22,10 @@ vi.mock("@walletconnect/sign-client", () => {
 });
 
 import {
+  AccountNotInSessionError,
   ApprovalTimeoutError,
   InvalidPairingHandleError,
+  NotPairedError,
   PendingPairingError,
   UserRejectedPairingError,
   _resetSessionManagerForTesting,
@@ -32,6 +35,7 @@ import {
   pair,
   pairStart,
   pairWait,
+  setActiveAccount,
 } from "../src/wallet/session-manager.js";
 import {
   _resetWalletConnectClientForTesting,
@@ -98,6 +102,8 @@ describe("session-manager.pair() — happy path + status (PAIR-01, PAIR-02)", ()
     expect(result.wcUri).toBe(mockSignClient._wcUri);
     expect(result.status).toEqual({
       paired: true,
+      accounts: [ADDRESS],
+      activeAccount: ADDRESS,
       address: ADDRESS,
       chainId: 1,
       sessionTopicLast8: "00c0ffee",
@@ -148,6 +154,8 @@ describe("session-manager.pair() — happy path + status (PAIR-01, PAIR-02)", ()
     const status = await getStatus();
     expect(status).toEqual({
       paired: true,
+      accounts: [ADDRESS],
+      activeAccount: ADDRESS,
       address: ADDRESS,
       chainId: 1,
       sessionTopicLast8: "00c0ffee",
@@ -384,6 +392,8 @@ describe("session-manager.pairStart() — URI returned immediately, handle parke
     const status = await waitPromise;
     expect(status).toEqual({
       paired: true,
+      accounts: [ADDRESS],
+      activeAccount: ADDRESS,
       address: ADDRESS,
       chainId: 1,
       sessionTopicLast8: "00c0ffee",
@@ -501,5 +511,175 @@ describe("session-manager.pairStart() — URI returned immediately, handle parke
     mockSignClient._simulateApproval(newSession);
     const status = await waitNew;
     expect(status.paired).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-account session parsing + setActiveAccount — fix for the bug where
+// `sessionToStatus` only surfaced `accounts[0]` and there was no way to
+// switch which approved address `prepare_*` uses without re-pairing.
+// ---------------------------------------------------------------------------
+const MULTI_ACCOUNTS = [
+  "0x742d35Cc6634C0532925a3b844Bc9e7595f06b9D",
+  "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+  "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+] as const;
+
+describe("session-manager — multi-account session parsing", () => {
+  it("(a) parsed `accounts` contains all three approved addresses in order", async () => {
+    const session = buildMultiAccountSession({
+      chainId: 1,
+      addresses: [...MULTI_ACCOUNTS],
+      topic: TOPIC,
+    });
+    const pending = pair();
+    await waitUntilConnectCalled();
+    mockSignClient._simulateApproval(session);
+    const result = await pending;
+    expect(result.status.accounts).toEqual([...MULTI_ACCOUNTS]);
+  });
+
+  it("(b) `activeAccount === accounts[0]` by default", async () => {
+    const session = buildMultiAccountSession({
+      chainId: 1,
+      addresses: [...MULTI_ACCOUNTS],
+      topic: TOPIC,
+    });
+    const pending = pair();
+    await waitUntilConnectCalled();
+    mockSignClient._simulateApproval(session);
+    const result = await pending;
+    expect(result.status.activeAccount).toBe(MULTI_ACCOUNTS[0]);
+    expect(result.status.address).toBe(MULTI_ACCOUNTS[0]);
+  });
+});
+
+describe("session-manager.setActiveAccount() — happy path + error classes", () => {
+  it("(c) happy path: switching to a non-first address persists across getStatus()", async () => {
+    const session = buildMultiAccountSession({
+      chainId: 1,
+      addresses: [...MULTI_ACCOUNTS],
+      topic: TOPIC,
+    });
+    const pending = pair();
+    await waitUntilConnectCalled();
+    mockSignClient._simulateApproval(session);
+    await pending;
+    mockSignClient._setSessionsInStore([session]);
+
+    const switched = await setActiveAccount(MULTI_ACCOUNTS[1]);
+    expect(switched.activeAccount).toBe(MULTI_ACCOUNTS[1]);
+    expect(switched.address).toBe(MULTI_ACCOUNTS[1]); // alias mirrors active
+    expect(switched.accounts).toEqual([...MULTI_ACCOUNTS]);
+
+    // Persistence: a subsequent getStatus() returns the same active account.
+    const re = await getStatus();
+    expect(re?.activeAccount).toBe(MULTI_ACCOUNTS[1]);
+  });
+
+  it("(c2) accepts lowercase / checksum-insensitive input", async () => {
+    const session = buildMultiAccountSession({
+      chainId: 1,
+      addresses: [...MULTI_ACCOUNTS],
+      topic: TOPIC,
+    });
+    const pending = pair();
+    await waitUntilConnectCalled();
+    mockSignClient._simulateApproval(session);
+    await pending;
+    mockSignClient._setSessionsInStore([session]);
+
+    const lowered = MULTI_ACCOUNTS[1].toLowerCase() as `0x${string}`;
+    const switched = await setActiveAccount(lowered);
+    // Normalized back to checksummed form.
+    expect(switched.activeAccount).toBe(MULTI_ACCOUNTS[1]);
+  });
+
+  it("(d) unknown address throws AccountNotInSessionError carrying the in-session list", async () => {
+    const session = buildMultiAccountSession({
+      chainId: 1,
+      addresses: [...MULTI_ACCOUNTS],
+      topic: TOPIC,
+    });
+    const pending = pair();
+    await waitUntilConnectCalled();
+    mockSignClient._simulateApproval(session);
+    await pending;
+    mockSignClient._setSessionsInStore([session]);
+
+    const stranger = "0x0000000000000000000000000000000000000001";
+    let caught: unknown;
+    try {
+      await setActiveAccount(stranger);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(AccountNotInSessionError);
+    expect((caught as AccountNotInSessionError).requested).toBe(stranger);
+    expect((caught as AccountNotInSessionError).accounts).toEqual([
+      ...MULTI_ACCOUNTS,
+    ]);
+  });
+
+  it("throws NotPairedError when no live session exists", async () => {
+    // No prior pair() — the session store is empty. setActiveAccount
+    // surfaces NotPairedError so the tool layer can map to WALLET_NOT_PAIRED.
+    mockSignClient._setSessionsInStore([]);
+    await expect(setActiveAccount(MULTI_ACCOUNTS[0])).rejects.toBeInstanceOf(
+      NotPairedError,
+    );
+  });
+
+  it("(e) _resetSessionManagerForTesting clears activeAccountByTopic", async () => {
+    const session = buildMultiAccountSession({
+      chainId: 1,
+      addresses: [...MULTI_ACCOUNTS],
+      topic: TOPIC,
+    });
+    const pending = pair();
+    await waitUntilConnectCalled();
+    mockSignClient._simulateApproval(session);
+    await pending;
+    mockSignClient._setSessionsInStore([session]);
+
+    await setActiveAccount(MULTI_ACCOUNTS[2]);
+    let status = await getStatus();
+    expect(status?.activeAccount).toBe(MULTI_ACCOUNTS[2]);
+
+    // Reset clears the selector map; a fresh getStatus against the same
+    // session falls back to accounts[0].
+    _resetSessionManagerForTesting();
+    // Re-seed the store after reset (the reset clears caching state but
+    // the mock's session store is independent).
+    mockSignClient._setSessionsInStore([session]);
+    status = await getStatus();
+    expect(status?.activeAccount).toBe(MULTI_ACCOUNTS[0]);
+  });
+
+  it("session_delete listener clears the active-account selection", async () => {
+    const session = buildMultiAccountSession({
+      chainId: 1,
+      addresses: [...MULTI_ACCOUNTS],
+      topic: TOPIC,
+    });
+    const pending = pair();
+    await waitUntilConnectCalled();
+    mockSignClient._simulateApproval(session);
+    await pending;
+    mockSignClient._setSessionsInStore([session]);
+
+    await setActiveAccount(MULTI_ACCOUNTS[1]);
+    expect((await getStatus())?.activeAccount).toBe(MULTI_ACCOUNTS[1]);
+
+    // Simulate the wallet dropping the session. The store filter handles
+    // the live-session check, but our cleanup must drop the selection so
+    // a future re-pair on the same topic doesn't surface a stale active.
+    mockSignClient._simulateSessionDelete(session.topic);
+    // Re-seed the store with the SAME session (acting as a fresh re-pair
+    // before the wallet has re-emitted via approval). The selection must
+    // have been cleared so we read accounts[0] again.
+    mockSignClient._setSessionsInStore([session]);
+    const status = await getStatus();
+    expect(status?.activeAccount).toBe(MULTI_ACCOUNTS[0]);
   });
 });

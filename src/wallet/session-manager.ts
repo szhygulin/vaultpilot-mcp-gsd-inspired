@@ -31,6 +31,7 @@
 
 import type { SessionTypes } from "@walletconnect/types";
 import { getSdkError } from "@walletconnect/utils";
+import { type Address, getAddress } from "viem";
 
 import { log } from "../diagnostics/logger.js";
 import { parseEvmAccountId } from "./caip.js";
@@ -64,7 +65,24 @@ const APPROVAL_TIMEOUT_MS = 60_000;
 
 export interface LedgerStatus {
   paired: true;
-  address: `0x${string}`;
+  /**
+   * Every approved account in the WC session, in the order the wallet
+   * returned them. Default `activeAccount = accounts[0]` until
+   * `setActiveAccount` swaps it.
+   */
+  accounts: Address[];
+  /**
+   * The account `prepare_*` uses as `from`. Equal to `accounts[0]` by
+   * default; switched via `setActiveAccount(address)`. The Ledger screen
+   * remains the trust anchor — this is a server-side convenience selector.
+   */
+  activeAccount: Address;
+  /**
+   * Alias for `activeAccount`. Retained so existing call sites compile
+   * unchanged in Task 1; every internal read migrates to `activeAccount`
+   * in Task 5.
+   */
+  address: Address;
   chainId: number;
   sessionTopicLast8: string;
 }
@@ -140,10 +158,50 @@ export class InvalidPairingHandleError extends Error {
   }
 }
 
+/**
+ * Thrown by `setActiveAccount` when no live WC session exists. Same
+ * mode-of-failure as `getStatus() === null`; the tool layer maps it to
+ * the `WALLET_NOT_PAIRED` error envelope.
+ */
+export class NotPairedError extends Error {
+  constructor() {
+    super(
+      "no live Ledger session; call pair_ledger_live to pair before selecting an active account",
+    );
+    this.name = "NotPairedError";
+  }
+}
+
+/**
+ * Thrown by `setActiveAccount` when the requested address is not among
+ * the accounts the live session approved. The set of valid addresses is
+ * surfaced so the caller can self-correct without a separate
+ * `get_ledger_status` round-trip.
+ */
+export class AccountNotInSessionError extends Error {
+  public readonly requested: string;
+  public readonly accounts: Address[];
+  constructor(requested: string, accounts: Address[]) {
+    super(
+      `address ${requested} is not in the current Ledger session; approved accounts: ${accounts.join(", ")}`,
+    );
+    this.name = "AccountNotInSessionError";
+    this.requested = requested;
+    this.accounts = accounts;
+  }
+}
+
 // Module-scoped state. Cleared by `_resetSessionManagerForTesting`.
 let inFlightApproval: Promise<PairResult> | undefined;
 let cachedSessionTopic: string | undefined;
 let sessionDeleteListenerRegistered = false;
+/**
+ * Active-account selector, keyed by WC session topic. `sessionToStatus`
+ * consults this map and falls back to `accounts[0]` when unset. Entries
+ * are cleared by `_resetSessionManagerForTesting` and by the
+ * `session_delete` listener so a re-pair starts at the default again.
+ */
+const activeAccountByTopic = new Map<string, Address>();
 
 /**
  * In-flight store for two-phase pairing. Maps pairingHandle → approval
@@ -206,6 +264,7 @@ export async function pair(
         reason: getSdkError("USER_DISCONNECTED"),
       });
       if (cachedSessionTopic === existing.topic) cachedSessionTopic = undefined;
+      activeAccountByTopic.delete(existing.topic);
     }
     // Clear any parked two-phase handle so a subsequent pairWait with a
     // stale handle gets InvalidPairingHandleError rather than resolving
@@ -307,6 +366,7 @@ export async function pairStart(
         reason: getSdkError("USER_DISCONNECTED"),
       });
       if (cachedSessionTopic === existing.topic) cachedSessionTopic = undefined;
+      activeAccountByTopic.delete(existing.topic);
     }
     pendingHandles.clear();
   } else {
@@ -464,6 +524,50 @@ export function getActiveSessionTopic(): string | null {
 }
 
 /**
+ * Switch the active account for the live WC session. The active account
+ * is what `prepare_*` / `preview_send` / `send_transaction` pass as
+ * `from`; the Ledger device still signs whichever address the user
+ * confirms on-screen, so this is a server-side convenience selector, not
+ * a security boundary.
+ *
+ * Address comparison is checksum-insensitive (via `getAddress`), so
+ * callers passing lowercase / mixed-case hex work identically.
+ *
+ * Throws:
+ *  - `NotPairedError` when no live session exists.
+ *  - `AccountNotInSessionError` when `address` is not among the accounts
+ *    the live session approved. The error carries the in-session list so
+ *    the tool layer can surface it for self-correction.
+ */
+export async function setActiveAccount(address: string): Promise<LedgerStatus> {
+  const client = await getWalletConnectClient();
+  const live = findLiveSession(client);
+  if (!live) {
+    throw new NotPairedError();
+  }
+  // Reuse the same parser the status path uses so behavior cannot drift.
+  const accounts = (live.namespaces.eip155?.accounts ?? []).map(
+    (c) => parseEvmAccountId(c).address,
+  );
+  let normalized: Address;
+  try {
+    normalized = getAddress(address);
+  } catch {
+    // `getAddress` throws on malformed hex. Surface as
+    // "not in session" — the tool-layer schema gate catches malformed
+    // input upstream; this is defense-in-depth.
+    throw new AccountNotInSessionError(address, accounts);
+  }
+  const match = accounts.find((a) => getAddress(a) === normalized);
+  if (!match) {
+    throw new AccountNotInSessionError(address, accounts);
+  }
+  activeAccountByTopic.set(live.topic, normalized);
+  cachedSessionTopic = live.topic;
+  return sessionToStatus(live);
+}
+
+/**
  * Disconnect the named session and clear the in-memory cache. Idempotent
  * on the cache side; the underlying WC SDK may throw on no-such-topic but
  * we let that propagate to the caller (Phase 4's signing flow needs to
@@ -473,6 +577,7 @@ export async function disconnect(topic: string): Promise<void> {
   const client = await getWalletConnectClient();
   await client.disconnect({ topic, reason: getSdkError("USER_DISCONNECTED") });
   if (cachedSessionTopic === topic) cachedSessionTopic = undefined;
+  activeAccountByTopic.delete(topic);
 }
 
 function findLiveSession(client: WalletConnectClient): SessionTypes.Struct | undefined {
@@ -484,16 +589,35 @@ function findLiveSession(client: WalletConnectClient): SessionTypes.Struct | und
 }
 
 function sessionToStatus(session: SessionTypes.Struct): LedgerStatus {
-  const accounts = session.namespaces.eip155?.accounts;
-  if (!accounts || accounts.length === 0 || accounts[0] === undefined) {
+  const caipAccounts = session.namespaces.eip155?.accounts;
+  if (!caipAccounts || caipAccounts.length === 0 || caipAccounts[0] === undefined) {
     throw new Error(
       "paired session has no eip155 accounts; Ledger Live did not approve a wallet",
     );
   }
-  const { chainId, address } = parseEvmAccountId(accounts[0]);
+  // Parse every CAIP-10 entry and enforce a single chainId across them.
+  // A multi-chain session would require Phase 8's chain-registry; v1.x is
+  // mainnet-only and a mixed-chain session here is a sign that the
+  // namespace negotiation is wrong.
+  const parsed = caipAccounts.map((c) => parseEvmAccountId(c));
+  const chainId = parsed[0]!.chainId;
+  for (const entry of parsed) {
+    if (entry.chainId !== chainId) {
+      throw new Error(
+        `paired session has accounts on multiple eip155 chains (${chainId} and ${entry.chainId}); v1.x is mainnet-only`,
+      );
+    }
+  }
+  const accounts = parsed.map((p) => p.address);
+  const activeAccount =
+    activeAccountByTopic.get(session.topic) ?? accounts[0]!;
   return {
     paired: true,
-    address,
+    accounts,
+    activeAccount,
+    // `address` is an alias for `activeAccount` retained for back-compat
+    // through Task 5; remove once all callers migrate.
+    address: activeAccount,
     chainId,
     sessionTopicLast8: session.topic.slice(-8),
   };
@@ -504,6 +628,7 @@ async function ensureSessionDeleteListener(client: WalletConnectClient): Promise
   client.on("session_delete", ({ topic }) => {
     log("info", `walletconnect session_delete event for topic=${topic.slice(-8)}`);
     if (cachedSessionTopic === topic) cachedSessionTopic = undefined;
+    activeAccountByTopic.delete(topic);
   });
   sessionDeleteListenerRegistered = true;
 }
@@ -514,4 +639,5 @@ export function _resetSessionManagerForTesting(): void {
   sessionDeleteListenerRegistered = false;
   pendingHandles.clear();
   handleCounter = 0;
+  activeAccountByTopic.clear();
 }

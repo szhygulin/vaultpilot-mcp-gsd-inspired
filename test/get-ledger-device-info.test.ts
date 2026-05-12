@@ -36,9 +36,12 @@ afterEach(() => {
 
 describe("get_ledger_device_info — paired branch (DIAG-02)", () => {
   it("Test 1 — getStatus returns a session → full envelope with last-8 suffix + inferred appOpen", async () => {
+    const PRIMARY = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" as const;
     vi.spyOn(sessionManager, "getStatus").mockResolvedValue({
       paired: true,
-      address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+      accounts: [PRIMARY],
+      activeAccount: PRIMARY,
+      address: PRIMARY,
       chainId: 1,
       sessionTopicLast8: "deadbeef",
     });
@@ -49,6 +52,7 @@ describe("get_ledger_device_info — paired branch (DIAG-02)", () => {
     const sc = result.structuredContent as {
       paired: boolean;
       address: string;
+      accounts: string[];
       chainId: number;
       sessionTopicSuffix: string;
       deviceConnected: string;
@@ -58,13 +62,39 @@ describe("get_ledger_device_info — paired branch (DIAG-02)", () => {
     };
 
     expect(sc.paired).toBe(true);
-    expect(sc.address).toBe("0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045");
+    expect(sc.address).toBe(PRIMARY);
+    expect(sc.accounts).toEqual([PRIMARY]);
     expect(sc.chainId).toBe(1);
     expect(sc.sessionTopicSuffix).toBe("deadbeef");
     expect(sc.deviceConnected).toBe("unknown");
     expect(sc.appOpen).toBe("Ethereum (inferred from CAIP-2 namespace)");
     expect(sc.firmware).toBe("unknown");
     expect(sc.hint).toMatch(/Ledger Live/);
+    // Multi-account hint surfaces set_active_account routing.
+    expect(sc.hint).toMatch(/set_active_account/);
+  });
+
+  it("Test 1b — multi-account session surfaces every approved address", async () => {
+    const ADDRS = [
+      "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" as const,
+      "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as const,
+      "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" as const,
+    ];
+    vi.spyOn(sessionManager, "getStatus").mockResolvedValue({
+      paired: true,
+      accounts: ADDRS,
+      activeAccount: ADDRS[1],
+      address: ADDRS[1],
+      chainId: 1,
+      sessionTopicLast8: "deadbeef",
+    });
+
+    const result = await callTool();
+    const sc = result.structuredContent as { address: string; accounts: string[] };
+    expect(sc.address).toBe(ADDRS[1]);
+    expect(sc.accounts).toEqual(ADDRS);
+    const text = result.content[0]?.text ?? "";
+    for (const a of ADDRS) expect(text).toContain(a);
   });
 });
 
@@ -100,9 +130,12 @@ describe("get_ledger_device_info — unpaired branch", () => {
 describe("get_ledger_device_info — inferred-state lock (T-DEVICE-INFO-CLAIM-1)", () => {
   it("Test 3 (LOAD-BEARING) — deviceConnected/firmware ALWAYS 'unknown'; appOpen one of two locked strings", async () => {
     // Paired branch: assert each forbidden value individually.
+    const PRIMARY = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" as const;
     vi.spyOn(sessionManager, "getStatus").mockResolvedValue({
       paired: true,
-      address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+      accounts: [PRIMARY],
+      activeAccount: PRIMARY,
+      address: PRIMARY,
       chainId: 1,
       sessionTopicLast8: "abcdef01",
     });

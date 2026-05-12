@@ -68,6 +68,8 @@ describe("pair_ledger_live_wait — VERIFY-ON-DEVICE block + success envelope (P
   it("returns the verbatim VERIFY-ON-DEVICE block with substituted placeholders", async () => {
     pairWaitSpy.mockResolvedValueOnce({
       paired: true,
+      accounts: [ADDRESS],
+      activeAccount: ADDRESS,
       address: ADDRESS,
       chainId: 1,
       sessionTopicLast8: SESSION_TOPIC_LAST8,
@@ -78,6 +80,7 @@ describe("pair_ledger_live_wait — VERIFY-ON-DEVICE block + success envelope (P
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toEqual({
       address: ADDRESS,
+      accounts: [ADDRESS],
       chainId: 1,
       sessionTopicLast8: SESSION_TOPIC_LAST8,
     });
@@ -100,6 +103,8 @@ describe("pair_ledger_live_wait — VERIFY-ON-DEVICE block + success envelope (P
   it("passes the handle verbatim to pairWait", async () => {
     pairWaitSpy.mockResolvedValueOnce({
       paired: true,
+      accounts: [ADDRESS],
+      activeAccount: ADDRESS,
       address: ADDRESS,
       chainId: 1,
       sessionTopicLast8: SESSION_TOPIC_LAST8,
@@ -108,6 +113,54 @@ describe("pair_ledger_live_wait — VERIFY-ON-DEVICE block + success envelope (P
     await callTool({ pairingHandle: HANDLE });
 
     expect(pairWaitSpy).toHaveBeenCalledWith(HANDLE);
+  });
+
+  it("multi-account session: structuredContent.accounts has all approved addresses; VERIFY-ON-DEVICE lists active only", async () => {
+    const ACCOUNTS = [
+      ADDRESS,
+      "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as const,
+      "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" as const,
+    ];
+    pairWaitSpy.mockResolvedValueOnce({
+      paired: true,
+      accounts: ACCOUNTS,
+      activeAccount: ACCOUNTS[0],
+      address: ACCOUNTS[0],
+      chainId: 1,
+      sessionTopicLast8: SESSION_TOPIC_LAST8,
+    });
+
+    const result = await callTool({ pairingHandle: HANDLE });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      address: string;
+      accounts: string[];
+    };
+    expect(sc.address).toBe(ACCOUNTS[0]);
+    expect(sc.accounts).toEqual(ACCOUNTS);
+
+    // The VERIFY-ON-DEVICE block must surface ONLY the active address —
+    // listing the full array in the on-device verification block would
+    // be noisy and the device can only sign with one address per
+    // request anyway. The non-active addresses must NOT appear inside
+    // the verify block.
+    const text = result.content[0]?.text ?? "";
+    const verifyBlock = VERIFY_ON_DEVICE_TEMPLATE
+      .replace("{ADDRESS}", ACCOUNTS[0])
+      .replace("{SESSION_TOPIC_LAST8}", SESSION_TOPIC_LAST8);
+    expect(text).toContain(verifyBlock);
+    // Slice out the verify block and assert it does NOT contain the
+    // non-active accounts.
+    const blockStart = text.indexOf(verifyBlock);
+    const blockEnd = blockStart + verifyBlock.length;
+    const verifyOnly = text.slice(blockStart, blockEnd);
+    expect(verifyOnly).not.toContain(ACCOUNTS[1]);
+    expect(verifyOnly).not.toContain(ACCOUNTS[2]);
+
+    // The accounts line lives OUTSIDE the verify block in the text body.
+    expect(text).toContain(ACCOUNTS[1]);
+    expect(text).toContain(ACCOUNTS[2]);
   });
 });
 

@@ -201,7 +201,7 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
           ),
         };
       }
-      senderAddress = status.address;
+      senderAddress = status.activeAccount;
     }
 
     // Resolve nonce / fees / gas concurrently. Pin AT PREVIEW TIME

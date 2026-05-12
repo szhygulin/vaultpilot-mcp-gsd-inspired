@@ -38,7 +38,8 @@ import { VERIFY_ON_DEVICE_TEMPLATE } from "./pair_ledger_live.js";
 
 const DESCRIPTION = [
   "Phase-2 of the two-phase Ledger pairing flow. Call this AFTER `pair_ledger_live_start` once the user has pasted the URI into Ledger Live and approved on-device.",
-  "Blocks up to 60s waiting for WalletConnect session approval. Returns `{ wcUri, address, chainId, sessionTopicLast8 }` plus a VERIFY-ON-DEVICE block when approved.",
+  "Blocks up to 60s waiting for WalletConnect session approval. Returns `{ address, accounts, chainId, sessionTopicLast8 }` plus a VERIFY-ON-DEVICE block when approved.",
+  "`accounts` lists every approved address; `address` is the active one (default `accounts[0]`). Switch with `set_active_account` after pairing.",
   "The VERIFY-ON-DEVICE block instructs the user to confirm the surfaced address matches Ledger Live → Settings → Connected Apps — if it does not match, a MITM may be active.",
   "Pass the `pairingHandle` exactly as returned by `pair_ledger_live_start`. A stale or unknown handle returns `errorCode: INVALID_HANDLE`.",
   "DO NOT use for read-only flows (get_portfolio_summary, get_token_balance, etc.) — those work without pairing.",
@@ -91,13 +92,23 @@ registerTool("pair_ledger_live_wait", DESCRIPTION, INPUT_SCHEMA, async (args) =>
 
   try {
     const status = await pairWait(handle);
-    const { address, chainId, sessionTopicLast8 } = status;
+    const { activeAccount, accounts, chainId, sessionTopicLast8 } = status;
+    // VERIFY-ON-DEVICE block surfaces the ACTIVE address only — listing the
+    // full array on-device would be noisy and the device can only sign with
+    // one address per request anyway. The full `accounts` list is in
+    // structuredContent + the text body below for agent routing.
     const verifyBlock = VERIFY_ON_DEVICE_TEMPLATE
-      .replace("{ADDRESS}", address)
+      .replace("{ADDRESS}", activeAccount)
       .replace("{SESSION_TOPIC_LAST8}", sessionTopicLast8);
+    const accountsLine = `accounts: [${accounts.join(", ")}]`;
     return {
-      content: [{ type: "text", text: verifyBlock }],
-      structuredContent: { address, chainId, sessionTopicLast8 },
+      content: [{ type: "text", text: `${verifyBlock}\n${accountsLine}` }],
+      structuredContent: {
+        address: activeAccount,
+        accounts,
+        chainId,
+        sessionTopicLast8,
+      },
     };
   } catch (err) {
     if (err instanceof InvalidPairingHandleError) {

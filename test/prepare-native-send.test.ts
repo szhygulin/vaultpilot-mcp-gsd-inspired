@@ -72,9 +72,12 @@ async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResul
 const DEMO_KEY = "VAULTPILOT_DEMO";
 let savedDemo: string | undefined;
 
+const PRIMARY_ADDRESS = "0x742d35Cc6634C0532925a3b844Bc9e7595f06b9D" as `0x${string}`;
 const PAIRED_STATUS = {
   paired: true as const,
-  address: "0x742d35Cc6634C0532925a3b844Bc9e7595f06b9D" as `0x${string}`,
+  accounts: [PRIMARY_ADDRESS],
+  activeAccount: PRIMARY_ADDRESS,
+  address: PRIMARY_ADDRESS,
   chainId: 1,
   sessionTopicLast8: "deadbeef",
 };
@@ -390,6 +393,41 @@ describe("prepare_native_send — `chainId` not exposed in inputSchema (Q3 regre
     const required = tool.inputSchema.required ?? [];
     expect(required).toEqual(["to", "valueWei"]);
     expect(required).not.toContain("chainId");
+  });
+});
+
+describe("prepare_native_send — multi-account session uses activeAccount as `from`", () => {
+  it("returns the non-default active account as `from` after setActiveAccount switched it", async () => {
+    const ACCOUNTS = [
+      "0x742d35Cc6634C0532925a3b844Bc9e7595f06b9D" as `0x${string}`,
+      "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`,
+      "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" as `0x${string}`,
+    ];
+    // Mock the session-manager state AFTER set_active_account switched
+    // to ACCOUNTS[2]. `activeAccount` is the non-default member; `address`
+    // mirrors it (back-compat alias). `prepare_native_send` must read
+    // `status.activeAccount` (NOT `status.accounts[0]`) — if a future
+    // edit silently falls back to `accounts[0]`, this assertion fires.
+    getStatusSpy.mockResolvedValueOnce({
+      paired: true,
+      accounts: ACCOUNTS,
+      activeAccount: ACCOUNTS[2],
+      address: ACCOUNTS[2],
+      chainId: 1,
+      sessionTopicLast8: "deadbeef",
+    });
+
+    const result = await callTool({ to: FIXTURE_A.to, valueWei: FIXTURE_A.valueWei });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      from: string;
+      payloadFingerprint: string;
+    };
+    expect(sc.from).toBe(ACCOUNTS[2]);
+    // PREP-03 from-independence: Fixture A anchor still holds because
+    // `from` is NOT in the fingerprint preimage.
+    expect(sc.payloadFingerprint).toBe(FIXTURE_A.payloadFingerprint);
   });
 });
 

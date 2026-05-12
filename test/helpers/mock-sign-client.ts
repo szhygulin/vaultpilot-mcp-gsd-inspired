@@ -213,14 +213,37 @@ export function buildMockSession(opts: {
   topic?: string;
   expirySecondsFromNow?: number;
 }): SessionTypes.Struct {
+  return buildMultiAccountSession({
+    chainId: opts.chainId,
+    addresses: opts.address ? [opts.address] : undefined,
+    topic: opts.topic,
+    expirySecondsFromNow: opts.expirySecondsFromNow,
+  });
+}
+
+/**
+ * Build a `SessionTypes.Struct` with multiple eip155 accounts approved.
+ * Used by `setActiveAccount` tests and any tool-layer test that needs to
+ * exercise the multi-account-session code path (e.g. the `accounts`
+ * surfacing in read tools, the active-account switching in `prepare_*`).
+ *
+ * Accounts default to three test addresses; override `addresses` for a
+ * single-account fixture or for a different set.
+ */
+export function buildMultiAccountSession(opts: {
+  chainId?: number;
+  addresses?: `0x${string}`[];
+  topic?: string;
+  expirySecondsFromNow?: number;
+} = {}): SessionTypes.Struct {
   const chainId = opts.chainId ?? 1;
-  const address = opts.address ?? "0x742d35Cc6634C0532925a3b844Bc9e7595f06b9D";
+  const addresses = opts.addresses ?? [
+    "0x742d35Cc6634C0532925a3b844Bc9e7595f06b9D",
+    "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+  ];
   const topic = opts.topic ?? "0xfeedfacecafebeef0000000000000000000000000000000000000000c0ffee";
   const expiry = Math.floor(Date.now() / 1000) + (opts.expirySecondsFromNow ?? 7 * 24 * 60 * 60);
-  // Cast through `as unknown as` because `SessionTypes.Struct` carries many
-  // SDK-internal fields (relay, controller, self, peer, etc.) that production
-  // code does not read. Tests assert against the namespaces/topic/expiry
-  // surface only.
   return {
     topic,
     pairingTopic: topic,
@@ -229,7 +252,7 @@ export function buildMockSession(opts: {
     controller: "controller-key",
     namespaces: {
       eip155: {
-        accounts: [`eip155:${chainId}:${address}`],
+        accounts: addresses.map((a) => `eip155:${chainId}:${a}`),
         methods: ["eth_sendTransaction", "personal_sign"],
         events: ["accountsChanged", "chainChanged"],
       },
