@@ -153,7 +153,12 @@ describe("get_tx_verification — 'prepared' status re-emits PREPARE RECEIPT onl
 
     const text = result.content[0]?.text ?? "";
     expect(text).toContain("PREPARE RECEIPT");
-    expect(text).not.toContain("LEDGER BLIND-SIGN HASH");
+    // No block emission — the preview-not-run note literally mentions the
+    // string "LEDGER BLIND-SIGN HASH" as a routing hint, so we assert the
+    // full BLOCK isn't emitted (header on its own line + the placeholder
+    // labels). The actual ledger block contains "Expected on-device hash";
+    // its absence proves the block didn't render.
+    expect(text).not.toContain("Expected on-device hash");
     expect(text).not.toContain("[AGENT TASK");
     expect(text).not.toContain("4BYTE CROSS-CHECK");
     expect(text).toContain("preview has not run yet");
