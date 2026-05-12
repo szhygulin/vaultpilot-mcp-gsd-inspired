@@ -11,6 +11,7 @@ import {
 
 import { log } from "./diagnostics/logger.js";
 import { getRegisteredTool, listRegisteredTools } from "./tools/index.js";
+import { registerAllTools } from "./tools/register-all.js";
 
 const SERVER_NAME = "vaultpilot-mcp";
 const SERVER_VERSION = "0.0.0";
@@ -22,6 +23,8 @@ const INSTRUCTIONS = [
 ].join(" ");
 
 export function buildServer(): Server {
+  registerAllTools();
+
   const server = new Server(
     { name: SERVER_NAME, version: SERVER_VERSION },
     {

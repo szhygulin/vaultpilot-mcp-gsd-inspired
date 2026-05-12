@@ -28,7 +28,8 @@
   "license": "BUSL-1.1",
   "author": "Slava Zhygulin",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "viem": "^2.48.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
