@@ -14,6 +14,10 @@
 //      the test's `.includes(expectedSubstituted)` check works against a
 //      raw runtime substitution.
 //
+//      This const is also imported by `pair_ledger_live_wait.ts` — keeping
+//      it here as the single source of truth means neither the wait tool
+//      nor its tests can drift from the production block.
+//
 //   2. `isDemoMode()` is checked FIRST in the handler, BEFORE any call to
 //      session-manager.pair(). Demo mode is the only state under which
 //      pairing is unconditionally refused; the session manager must remain
@@ -26,6 +30,13 @@
 // catch-all for an unexpected `Error` from session-manager (e.g. relay
 // unreachable mid-handshake); it is NOT in the locked-five set and is
 // documented as the unstructured fallback.
+//
+// ROUTING NOTE: for interactive use where the user must paste the WC URI
+// into Ledger Live, use the two-phase flow instead:
+//   1. `pair_ledger_live_start` — returns wcUri immediately.
+//   2. `pair_ledger_live_wait`  — blocks for approval, returns VERIFY-ON-DEVICE.
+// `pair_ledger_live` is kept as a single-shot wrapper (useful when the URI
+// does not need surfacing, e.g. automated tests, CI, or cached-session checks).
 
 import { isDemoMode } from "../config/env.js";
 import {
@@ -47,6 +58,9 @@ import { registerTool } from "./index.js";
  * THIS const, substitutes placeholders the same way the handler does, and
  * asserts the substituted block appears in `result.content[0].text`. Do
  * NOT duplicate the string into the test file.
+ *
+ * `pair_ledger_live_wait.ts` imports this const so the wait tool's
+ * VERIFY-ON-DEVICE output stays in sync without a second copy.
  */
 export const VERIFY_ON_DEVICE_TEMPLATE: string = [
   "VERIFY-ON-DEVICE",
@@ -61,12 +75,13 @@ export const VERIFY_ON_DEVICE_TEMPLATE: string = [
 ].join("\n");
 
 const DESCRIPTION = [
-  "Pair a Ledger hardware wallet via WalletConnect so subsequent prepare_* tools can route unsigned transactions to the device for signing.",
-  "Use this once per session BEFORE any prepare_* / send_transaction tool — the trust pipeline cannot operate without a paired Ledger.",
+  "Single-shot Ledger pairing via WalletConnect — blocks up to 60s for approval before returning.",
+  "PREFER the two-phase flow for interactive use where the user must paste the URI into Ledger Live: call `pair_ledger_live_start` to get the URI immediately, then `pair_ledger_live_wait` to collect the session.",
+  "Use `pair_ledger_live` only when the URI does not need surfacing (e.g. re-using a cached session, automated tests, or CI).",
   "DO NOT use this for read-only flows (get_portfolio_summary, get_token_balance, get_transaction_status, resolve_ens_name) — those work without pairing.",
-  "Returns `{ wcUri, address, chainId, sessionTopicLast8 }`. The wcUri is what the user pastes into Ledger Live (Settings → WalletConnect → Connect). Tool blocks up to 60s waiting for session approval.",
-  "Pass `force: true` to disconnect any existing session and pair from scratch (e.g. after switching accounts in Ledger Live). Without `force`, repeated calls return the cached session immediately.",
-  "The response carries a VERIFY-ON-DEVICE block instructing the user to confirm the surfaced address matches Ledger Live → Settings → Connected Apps; this is a tamper signal — if it doesn't match, a MITM may be active.",
+  "Returns `{ wcUri, address, chainId, sessionTopicLast8 }` plus a VERIFY-ON-DEVICE block.",
+  "Pass `force: true` to disconnect any existing session and pair from scratch (e.g. after switching accounts in Ledger Live).",
+  "The VERIFY-ON-DEVICE block instructs the user to confirm the surfaced address matches Ledger Live → Settings → Connected Apps; mismatch is a tamper signal.",
 ].join(" ");
 
 const INPUT_SCHEMA = {

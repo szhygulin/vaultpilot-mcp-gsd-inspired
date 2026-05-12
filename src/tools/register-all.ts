@@ -4,6 +4,8 @@ import "./get_token_balance.js";
 import "./get_transaction_status.js";
 import "./get_portfolio_summary.js";
 import "./pair_ledger_live.js";
+import "./pair_ledger_live_start.js";
+import "./pair_ledger_live_wait.js";
 import "./get_ledger_status.js";
 import "./prepare_native_send.js";
 import "./preview_send.js";
