@@ -1,0 +1,38 @@
+# Node
+node_modules/
+dist/
+*.log
+.npm/
+
+# TypeScript
+*.tsbuildinfo
+
+# Test
+coverage/
+.vitest-cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Local config (the user's real config lives in ~/.vaultpilot-mcp/, not in the repo)
+.env
+.env.local
+.envrc
+
+# GSD ephemeral
+.planning/todos/pending/*
+!.planning/todos/pending/.gitkeep
+.planning/.continue-here*
+.planning/.context-*
+claude-work/
+
+# Build artifacts
+build/
+out/
+*.tgz
