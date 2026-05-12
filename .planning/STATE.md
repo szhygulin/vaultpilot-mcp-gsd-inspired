@@ -108,6 +108,12 @@ None yet.
 - **Persona archetype mismatch deferred to Phase 6.** Plan-checker flagged `defi-degen` and `staking-maxi` being mapped to Binance hot wallets (stable + non-OFAC but not thematically faithful). Accepted as residual: Phase 5 ships no DeFi-aware read tools that would surface the mismatch; Phase 6 ERC-20 enumeration tests will. Documented inline in 05-01-PLAN.md § Accepted Residuals; tracked as a known-followup.
 - **v1.0 MVP feature set complete.** Phases 1-5 cover INST-01..05 + READ-01..06 + PAIR-01..05 + PREP-01..10 + DEMO-01..07 + DIAG-01..04. The combined Phase 3+4+5 verify-phase (real Ledger pair + small mainnet broadcast + auto-demo + demo-rehearsal + diagnostics) is the only thing between v1.0 trust pipeline and "shipped".
 
+## Quick Tasks Completed
+
+| Date | Slug | Branch | Summary |
+|------|------|--------|---------|
+| 2026-05-12 | [wc-multi-account-session](./quick/20260512-wc-multi-account-session/SUMMARY.md) | `fix/wc-multi-account-session` | Plumb all CAIP-10 accounts in WC v2 session; add `set_active_account` tool; signing pipeline reads `activeAccount`. 6 atomic commits, 304/304 tests pass. |
+
 ## Deferred Items
 
 | Category | Item | Status | Deferred At |
