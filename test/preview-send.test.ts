@@ -106,7 +106,10 @@ import {
   type ToolHandlerResult,
 } from "../src/tools/index.js";
 import { _resetDemoModeForTesting } from "../src/config/env.js";
-import { _resetActivePersonaForTesting } from "../src/demo/state.js";
+import {
+  _resetActivePersonaForTesting,
+  setActivePersona,
+} from "../src/demo/state.js";
 
 // Trigger side-effect registration for all Phase 1/2/3/04-01/04-02/04-03/04-05
 // tools so the registry assertions below work.
@@ -557,24 +560,114 @@ describe("preview_send — idempotent re-preview (Q4 locked decision)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 10 — demo-mode refusal (T-DEMO-1)
+// Test 10 — Plan 05-02 / Q-CONTRADICTION-PREP Option B — demo mode SUCCEEDS
+// against the active persona's address as SENDER for getTransactionCount +
+// estimateGas. Replaces the Phase 4 DEMO_MODE_REFUSED assertion.
+//   10a: demo + whale active → success; viem reads fire with whale's address;
+//        presignHash === Fixture C (proves the cryptographic-binding chain
+//        holds across demo under matched RPC pins).
+//   10b: persona switch — viem reads fire with stable-saver's address.
+//   10c: T-NULL-PERSONA-1 — demo on, no persona → WRONG_MODE; downstream
+//        spies NEVER called.
 // ---------------------------------------------------------------------------
-describe("preview_send — demo-mode refusal fires FIRST (T-DEMO-1)", () => {
-  it("VAULTPILOT_DEMO=true → DEMO_MODE_REFUSED; ZERO calls to lookup/getStatus/viem/4byte", async () => {
+describe("preview_send — demo mode succeeds against active persona (Plan 05-02 / Q-CONTRADICTION-PREP Option B)", () => {
+  const WHALE_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" as Address;
+  const STABLE_SAVER_ADDRESS = "0x55FE002aefF02F77364de339a1292923A15844B8" as Address;
+
+  it("(10a) demo + whale active → success; presignHash === Fixture C; viem reads fire with whale address as SENDER", async () => {
     const handle = seedHandle();
     process.env[DEMO_KEY] = "true";
     _resetDemoModeForTesting();
+    setActivePersona("whale");
+    // Fixture C RPC pins applied via scriptFixtureCMocks — but we want
+    // getStatus to remain UNCALLED in demo mode (T-DEMO-1), so we do NOT
+    // arm getStatusSpy with PAIRED_STATUS this time.
+    getTransactionCountSpy.mockResolvedValue(FIXTURE_C_NONCE);
+    estimateFeesPerGasSpy.mockResolvedValue({
+      maxFeePerGas: FIXTURE_C_MAX_FEE,
+      maxPriorityFeePerGas: FIXTURE_C_MAX_PRIO,
+    });
+    estimateGasSpy.mockResolvedValue(FIXTURE_C_GAS);
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      previewToken: string;
+      presignHash: string;
+      nonce: number;
+    };
+    // T-PRESIGN-HASH-DRIFT-1: Fixture C anchor holds across demo under
+    // matched RPC pins. Cryptographic-binding chain regression value.
+    expect(sc.presignHash).toBe(FIXTURE_C_PRESIGN_HASH);
+    expect(sc.previewToken).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    expect(sc.nonce).toBe(FIXTURE_C_NONCE);
+
+    // LEDGER BLIND-SIGN HASH block is emitted unchanged in demo mode
+    // (the rehearsal exercises the same verification ritual).
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("LEDGER BLIND-SIGN");
+    expect(text).toContain(FIXTURE_C_PRESIGN_HASH);
+
+    // T-DEMO-1: getStatus is NEVER called in demo mode.
+    expect(getStatusSpy).toHaveBeenCalledTimes(0);
+
+    // T-PIN-1 / T-FROM-1 (Plan 05-02): the SENDER passed to
+    // getTransactionCount is the PERSONA's address, NOT tx.to. This is the
+    // load-bearing assertion that the demo flow uses persona-as-from.
+    expect(getTransactionCountSpy).toHaveBeenCalledTimes(1);
+    const txCountArgs = getTransactionCountSpy.mock.calls[0]?.[1] as {
+      address: string;
+      blockTag: string;
+    };
+    expect(txCountArgs.address).toBe(WHALE_ADDRESS);
+    expect(txCountArgs.blockTag).toBe("pending");
+
+    // estimateGas's `account` is also the persona's address.
+    const gasArgs = estimateGasSpy.mock.calls[0]?.[1] as { account: string };
+    expect(gasArgs.account).toBe(WHALE_ADDRESS);
+  });
+
+  it("(10b) persona switch — stable-saver → viem reads fire with stable-saver's address", async () => {
+    const handle = seedHandle();
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    setActivePersona("stable-saver");
+    getTransactionCountSpy.mockResolvedValue(FIXTURE_C_NONCE);
+    estimateFeesPerGasSpy.mockResolvedValue({
+      maxFeePerGas: FIXTURE_C_MAX_FEE,
+      maxPriorityFeePerGas: FIXTURE_C_MAX_PRIO,
+    });
+    estimateGasSpy.mockResolvedValue(FIXTURE_C_GAS);
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    expect(getStatusSpy).toHaveBeenCalledTimes(0);
+    const txCountArgs = getTransactionCountSpy.mock.calls[0]?.[1] as {
+      address: string;
+    };
+    expect(txCountArgs.address).toBe(STABLE_SAVER_ADDRESS);
+  });
+
+  it("(10c) T-NULL-PERSONA-1 — explicit demo + no persona → WRONG_MODE; downstream spies NEVER called", async () => {
+    const handle = seedHandle();
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    _resetActivePersonaForTesting(); // ensure no persona active
 
     const result = await callTool({ handle });
 
     expect(result.isError).toBe(true);
     expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
-      "DEMO_MODE_REFUSED",
+      "WRONG_MODE",
     );
     expect(result.content[0]?.text ?? "").toMatch(/demo mode/i);
     expect(result.content[0]?.text ?? "").toMatch(/set_demo_wallet/);
 
-    // All downstream paths short-circuit: session, viem, 4byte all untouched.
+    // T-DEMO-1 + null-defense: all downstream spies untouched.
     expect(getStatusSpy).toHaveBeenCalledTimes(0);
     expect(getTransactionCountSpy).toHaveBeenCalledTimes(0);
     expect(estimateFeesPerGasSpy).toHaveBeenCalledTimes(0);

@@ -54,7 +54,10 @@ import {
   type ToolHandlerResult,
 } from "../src/tools/index.js";
 import { _resetDemoModeForTesting } from "../src/config/env.js";
-import { _resetActivePersonaForTesting } from "../src/demo/state.js";
+import {
+  _resetActivePersonaForTesting,
+  setActivePersona,
+} from "../src/demo/state.js";
 
 // Triggers side-effect registration for ALL Phase 1/2/3/04-02 tools, so
 // test #10 below can smoke-check `prepare_native_send` is in the registry.
@@ -114,25 +117,95 @@ afterEach(() => {
   _resetActivePersonaForTesting();
 });
 
-describe("prepare_native_send — demo-mode refusal (T-DEMO-1)", () => {
-  it("refuses with DEMO_MODE_REFUSED when VAULTPILOT_DEMO=true; getStatus + createHandle NEVER called", async () => {
+// ---------------------------------------------------------------------------
+// Plan 05-02 / Q-CONTRADICTION-PREP Option B — demo mode SUCCEEDS using the
+// active persona's address as `from`. The Phase 4 DEMO_MODE_REFUSED test is
+// REPLACED here with three cases:
+//   1a: demo + whale active → success; from === whale address; payloadFingerprint
+//       === Fixture A (from-independence proof — PREP-03 preimage doesn't
+//       include `from`).
+//   1b: persona switch (stable-saver) → from === stable-saver address.
+//   1c: T-NULL-PERSONA-1 — demo on, no persona active → WRONG_MODE; getStatus
+//       + createHandle NEVER called.
+// ---------------------------------------------------------------------------
+describe("prepare_native_send — demo mode succeeds with active persona (Plan 05-02 / Q-CONTRADICTION-PREP Option B)", () => {
+  const WHALE_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+  const STABLE_SAVER_ADDRESS = "0x55FE002aefF02F77364de339a1292923A15844B8";
+
+  it("(1a) demo + whale active → success; from === whale address; payloadFingerprint === Fixture A (from-independence)", async () => {
     process.env[DEMO_KEY] = "true";
     _resetDemoModeForTesting();
+    setActivePersona("whale");
+
+    const result = await callTool({ to: FIXTURE_A.to, valueWei: FIXTURE_A.valueWei });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      handle: string;
+      chainId: number;
+      from: string;
+      to: string;
+      valueWei: string;
+      payloadFingerprint: string;
+    };
+    expect(sc.from).toBe(WHALE_ADDRESS);
+    // T-PERSONA-FINGERPRINT-DRIFT-1 / PREP-03 from-independence: Fixture A
+    // anchor holds under demo `from` because the preimage is
+    // `chainId || to || valueWei || data` — `from` is NOT in it.
+    expect(sc.payloadFingerprint).toBe(FIXTURE_A.payloadFingerprint);
+    expect(sc.chainId).toBe(1);
+    expect(sc.to).toBe(FIXTURE_A.to);
+    expect(sc.valueWei).toBe(FIXTURE_A.valueWei);
+    expect(sc.handle).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+
+    // Receipt block surfaces verbatim args (PREP-02 invariant) — `from`
+    // is NOT in the receipt text, only in `structuredContent`.
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("PREPARE RECEIPT");
+
+    // T-DEMO-1: getStatus is NEVER called in demo mode (no WC pairing
+    // to consult). Plan 05-02 contract: createHandle IS called (the
+    // demo flow creates a real handle that flows through preview + send
+    // simulation); count is 1, NOT 0 (the Phase 4 assertion's inverse).
+    expect(getStatusSpy).toHaveBeenCalledTimes(0);
+    expect(createHandleSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("(1b) persona switch — setActivePersona(\"stable-saver\") → from === stable-saver address", async () => {
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    setActivePersona("stable-saver");
+
+    const result = await callTool({ to: FIXTURE_A.to, valueWei: FIXTURE_A.valueWei });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { from: string; payloadFingerprint: string };
+    expect(sc.from).toBe(STABLE_SAVER_ADDRESS);
+    // Fingerprint still anchors to Fixture A — from-independence again.
+    expect(sc.payloadFingerprint).toBe(FIXTURE_A.payloadFingerprint);
+    expect(getStatusSpy).toHaveBeenCalledTimes(0);
+    expect(createHandleSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("(1c) T-NULL-PERSONA-1 — explicit demo + no persona → WRONG_MODE; getStatus + createHandle NEVER called", async () => {
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    _resetActivePersonaForTesting(); // ensure no persona active
 
     const result = await callTool({ to: FIXTURE_A.to, valueWei: FIXTURE_A.valueWei });
 
     expect(result.isError).toBe(true);
     expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
-      "DEMO_MODE_REFUSED",
+      "WRONG_MODE",
     );
     const text = result.content[0]?.text ?? "";
     expect(text).toMatch(/demo mode/i);
     expect(text).toMatch(/set_demo_wallet/);
 
-    // Critical T-DEMO-1 mitigation assertions: NEITHER the session
-    // manager NOR the handle store is touched in demo mode. A future
-    // reorder that lets either fire would silently leak real-RPC
-    // behavior into a simulation context.
+    // Defense-in-depth: NEITHER downstream is touched in the WRONG_MODE
+    // branch. A reorder that lets either fire would defeat the gate.
     expect(getStatusSpy).toHaveBeenCalledTimes(0);
     expect(createHandleSpy).toHaveBeenCalledTimes(0);
   });
