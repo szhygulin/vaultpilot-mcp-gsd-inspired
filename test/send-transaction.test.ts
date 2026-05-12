@@ -87,7 +87,8 @@ vi.mock("viem/actions", async () => {
   };
 });
 
-import { isDemoMode } from "../src/config/env.js";
+import { _resetDemoModeForTesting, isDemoMode } from "../src/config/env.js";
+import { _resetActivePersonaForTesting } from "../src/demo/state.js";
 import {
   _peekHandleForTesting,
   _resetHandleStoreForTesting,
@@ -200,12 +201,18 @@ beforeEach(() => {
   _resetHandleStoreForTesting();
   mockSignClientHolder.current = createMockSignClient();
   savedDemo = process.env[DEMO_KEY];
-  delete process.env[DEMO_KEY];
+  // Phase 5 / Plan 05-01: pin to "false" so the resolver picks
+  // real-mode deterministically; reset cache so each test starts clean.
+  process.env[DEMO_KEY] = "false";
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
 });
 
 afterEach(() => {
   if (savedDemo === undefined) delete process.env[DEMO_KEY];
   else process.env[DEMO_KEY] = savedDemo;
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
   vi.useRealTimers();
 });
 
@@ -530,6 +537,7 @@ describe("send_transaction — BROADCAST_FAILED on non-rejection WC error (T-BRO
 describe("send_transaction — DEMO-05 simulation envelope (T-DEMO-1, 04-04-10)", () => {
   it("VAULTPILOT_DEMO=true + send → runs eth_call, returns simulated:true, signClient.request NOT called", async () => {
     process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
     expect(isDemoMode()).toBe(true);
     const { handle, previewToken } = seedPreviewedHandle();
     scriptPairedMocks();

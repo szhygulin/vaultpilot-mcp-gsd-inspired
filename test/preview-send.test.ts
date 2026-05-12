@@ -105,6 +105,8 @@ import {
   listRegisteredTools,
   type ToolHandlerResult,
 } from "../src/tools/index.js";
+import { _resetDemoModeForTesting } from "../src/config/env.js";
+import { _resetActivePersonaForTesting } from "../src/demo/state.js";
 
 // Trigger side-effect registration for all Phase 1/2/3/04-01/04-02/04-03/04-05
 // tools so the registry assertions below work.
@@ -183,12 +185,18 @@ beforeEach(() => {
   lookupSelectorSpy.mockResolvedValue({ kind: "not-applicable" });
   _resetHandleStoreForTesting();
   savedDemo = process.env[DEMO_KEY];
-  delete process.env[DEMO_KEY];
+  // Phase 5 / Plan 05-01: pin to "false" so the resolver picks
+  // real-mode deterministically; reset cache so each test starts clean.
+  process.env[DEMO_KEY] = "false";
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
 });
 
 afterEach(() => {
   if (savedDemo === undefined) delete process.env[DEMO_KEY];
   else process.env[DEMO_KEY] = savedDemo;
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
   vi.useRealTimers();
 });
 
@@ -555,6 +563,7 @@ describe("preview_send — demo-mode refusal fires FIRST (T-DEMO-1)", () => {
   it("VAULTPILOT_DEMO=true → DEMO_MODE_REFUSED; ZERO calls to lookup/getStatus/viem/4byte", async () => {
     const handle = seedHandle();
     process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
 
     const result = await callTool({ handle });
 

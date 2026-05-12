@@ -35,6 +35,8 @@ import {
   type ToolHandlerResult,
 } from "../src/tools/index.js";
 import { VERIFY_ON_DEVICE_TEMPLATE } from "../src/tools/pair_ledger_live.js";
+import { _resetDemoModeForTesting, isDemoMode } from "../src/config/env.js";
+import { _resetActivePersonaForTesting } from "../src/demo/state.js";
 
 const DEMO_KEY = "VAULTPILOT_DEMO";
 let savedDemo: string | undefined;
@@ -61,12 +63,21 @@ const SESSION_TOPIC_LAST8 = "f06b9d00";
 beforeEach(() => {
   pairSpy.mockReset();
   savedDemo = process.env[DEMO_KEY];
-  delete process.env[DEMO_KEY];
+  // Phase 5 / Plan 05-01: the resolver caches at first call and
+  // auto-demo fires when env is unset AND no config file exists.
+  // Pin the env to "false" so the resolver picks env-off (real-mode)
+  // deterministically regardless of the host filesystem; then reset
+  // the cache so each test starts clean.
+  process.env[DEMO_KEY] = "false";
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
 });
 
 afterEach(() => {
   if (savedDemo === undefined) delete process.env[DEMO_KEY];
   else process.env[DEMO_KEY] = savedDemo;
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
   void _resetRegistryForTesting; // referenced for consistency with sibling test files
 });
 
@@ -187,6 +198,7 @@ describe("pair_ledger_live tool — error envelopes (locked-5 errorCodes)", () =
 describe("pair_ledger_live tool — demo-mode refusal (DEMO-06 anticipated)", () => {
   it("refuses with errorCode: DEMO_MODE_REFUSED when VAULTPILOT_DEMO=true; session-manager.pair NEVER called", async () => {
     process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
 
     const result = await callTool({});
 
@@ -204,25 +216,27 @@ describe("pair_ledger_live tool — demo-mode refusal (DEMO-06 anticipated)", ()
     expect(pairSpy).toHaveBeenCalledTimes(0);
   });
 
-  it("DEMO-01 strict-literal predicate: VAULTPILOT_DEMO='True' (capitalized) does NOT trigger refusal", async () => {
-    process.env[DEMO_KEY] = "True"; // capital T — should NOT match
-    pairSpy.mockResolvedValueOnce({
-      wcUri: "wc:test-uri",
-      status: {
-        paired: true,
-        address: ADDRESS,
-        chainId: 1,
-        sessionTopicLast8: SESSION_TOPIC_LAST8,
-      },
-    });
+  it("VAULTPILOT_DEMO='True' (capital) refuses to boot per Q-STRICT (Phase 5)", () => {
+    // Phase 3 contract: capital-T was silently treated as real-mode (the
+    // predicate matched literal `"true"` only). Phase 5 / Plan 05-01
+    // tightens this — anything other than the two accepted literals
+    // `"true"` / `"false"` triggers `log("error", ...)` + `process.exit(1)`.
+    // Loud boot refusal beats silent wrong-mode. Same SEMANTIC protection
+    // ("capital T is not a demo signal"); new MECHANISM (refuse rather
+    // than fall through).
+    process.env[DEMO_KEY] = "True";
+    _resetDemoModeForTesting();
 
-    const result = await callTool({});
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation(((code?: number) => {
+        throw new Error(`mock-exit-${code ?? "undefined"}`);
+      }) as never);
 
-    // Should reach the happy path — `isDemoMode()` returned false because
-    // the predicate is `=== "true"` (literal match, NOT `.toLowerCase()`).
-    expect(result.isError).toBeFalsy();
-    expect((result.structuredContent as { errorCode?: string }).errorCode).toBeUndefined();
-    expect(pairSpy).toHaveBeenCalledTimes(1);
+    expect(() => isDemoMode()).toThrow(/mock-exit-1/);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+
+    exitSpy.mockRestore();
   });
 });
 
