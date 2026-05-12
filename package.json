@@ -1,0 +1,39 @@
+{
+  "name": "vaultpilot-mcp",
+  "version": "0.0.0",
+  "description": "Self-custodial DeFi for AI agents — agent proposes, you approve on your Ledger. GSD-planned rebuild of vaultpilot-mcp.",
+  "type": "module",
+  "bin": {
+    "vaultpilot-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "CONTEXT.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "check": "node dist/index.js --check",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "license": "BUSL-1.1",
+  "author": "Slava Zhygulin",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}
