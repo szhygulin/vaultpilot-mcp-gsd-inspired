@@ -1,5 +1,7 @@
 # VaultPilot MCP — Context
 
+> **Defensive security tool.** This document describes the trust model of a hardware-wallet-anchored signing assistant. Every component named as "potentially untrusted" below is named so the system has a defense for it. The product treats the upstream agent, the local server, and the host computer as components that may behave incorrectly — by design fault, by software defect, or by adversarial control — and anchors final authorization at the hardware device, where the user reads the transaction details directly from a screen no software on the host can forge.
+
 Single-context repo. This file plus `docs/adr/` are the canonical domain references for every phase. Phase-specific implementation decisions live in `.planning/phases/XX-name/{phase_num}-CONTEXT.md`.
 
 ## Domain
@@ -14,34 +16,34 @@ The agent, MCP server, and host computer can all be attacker-controlled. The age
 
 A benign-looking, high-confidence agent response gets no more trust than an explicitly suspicious one. The trust anchor is the Ledger screen and the skill's cryptographic-integrity invariants, not the model's confidence.
 
-For each `prepare_*` flow the trust pipeline is:
+For each `prepare_*` flow the verification pipeline is:
 
 ```
 user-intent
    ▼
-agent (may lie OR honestly err)
+agent (potentially unreliable — may emit incorrect output)
    ▼
-MCP server (may lie about hash, swap bytes at send time)
+MCP server (potentially unreliable — may emit inconsistent hash or modified bytes)
    ▼
-WalletConnect relay / Ledger Live / USB transport (may MITM)
+WalletConnect relay / Ledger Live / USB transport (potentially unreliable — may modify in-flight bytes)
    ▼
 Ledger device (TRUSTED — recomputes hash locally, displays decoded fields where possible)
 ```
 
-Catches per layer:
+Defense matrix per scenario:
 
-| Threat                                                | What catches it (v1.0–v1.4)                                                  |
-| ----------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Compromised MCP swaps bytes between prepare and send  | `payloadFingerprint` (server-side, re-checked at send) + `LEDGER BLIND-SIGN HASH` (device-recomputed) |
-| Compromised middle layer substitutes bytes            | `LEDGER BLIND-SIGN HASH` mismatch on-device                                  |
-| Narrow agent compromise mutates `prepare_*` args      | `PREPARE RECEIPT` block surfaces verbatim args                               |
+| Scenario                                                | Defense (v1.0–v1.4)                                                  |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Server emits inconsistent bytes between prepare and send | `payloadFingerprint` (server-side, re-checked at send) + `LEDGER BLIND-SIGN HASH` (device-recomputed) |
+| Middle-layer byte modification                          | `LEDGER BLIND-SIGN HASH` mismatch on-device                                  |
+| Narrow agent argument modification                      | `PREPARE RECEIPT` block surfaces verbatim args                               |
 | Honest model error (off-by-decimal / hallucinated address / wrong-chain default) | Same `PREPARE RECEIPT` + on-device decoded display (native sends + clear-signed contracts) + Inv #2.5 chain-must-be-explicit refusal (v1.3) |
-| Agent skips the preview-step CHECKS PERFORMED block   | `previewToken` + `userDecision: "send"` schema-level gate                    |
-| Narrow agent decode lie (claims bytes do X, actually do Y) | `verify_tx_decode` server-side cross-check (v1.3)                       |
-| WalletConnect peer impersonation                      | WC session-topic cross-check (user verifies in Ledger Live)                  |
-| Edit-gas in Ledger Live                               | Hash mismatch is expected; in-block wording allows "accept tradeoff"         |
-| Coordinated agent compromise (args + output filter)   | RESIDUAL RISK in v1.0–v1.2; `get_verification_artifact` (v1.3) narrows via second-LLM |
-| Compromised MCP omits its own CHECKS PERFORMED       | RESIDUAL RISK in v1.0–v1.2; companion `vaultpilot-preflight` skill (v1.3) closes via static rules on disk |
+| Agent skips the preview-step CHECKS PERFORMED block     | `previewToken` + `userDecision: "send"` schema-level gate                    |
+| Narrow agent decode error (claims bytes do X, actually do Y) | `verify_tx_decode` server-side cross-check (v1.3)                       |
+| WalletConnect peer-identity confusion                   | WC session-topic cross-check (user verifies in Ledger Live)                  |
+| Edit-gas in Ledger Live                                 | Hash mismatch is expected; in-block wording allows "accept tradeoff"         |
+| Coordinated agent unreliability (args + output filter)  | RESIDUAL RISK in v1.0–v1.2; `get_verification_artifact` (v1.3) narrows via second-LLM |
+| Server omits its own CHECKS PERFORMED block             | RESIDUAL RISK in v1.0–v1.2; companion `vaultpilot-preflight` skill (v1.3) closes via static rules on disk |
 
 ## Glossary
 

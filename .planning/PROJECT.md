@@ -1,5 +1,7 @@
 # VaultPilot MCP (GSD-inspired)
 
+> **Defensive security tool.** This document specifies the design of a hardware-wallet-anchored signing assistant. Every threat scenario named below is named so the system can refuse, detect, or surface it to the user before any transaction is authorized. The product never holds keys, never broadcasts without explicit user confirmation, and treats the upstream agent as a potentially-unreliable component rather than a trusted authority.
+
 ## What This Is
 
 A Model Context Protocol (MCP) server that lets AI coding agents read on-chain crypto positions and prepare transactions the user signs on a Ledger hardware wallet. The agent proposes; the user approves on-device. Self-custodial — keys never leave the Ledger.

@@ -1,5 +1,7 @@
 # vaultpilot-mcp-gsd-inspired
 
+> **Defensive security tool.** A hardware-wallet-anchored signing assistant for AI agents. The product never holds keys, never broadcasts without explicit user confirmation on the device, and treats the upstream agent as a potentially-unreliable component rather than a trusted authority. Every defense documented here exists to prevent the user from authorizing a harmful transaction.
+
 Self-custodial DeFi for AI agents — built fresh from product specs, planned with [GSD](https://github.com/gsd-build/get-shit-done).
 
 The agent proposes; you approve on your Ledger. Designed for the threat model where the agent, MCP server, and host can all be compromised. Only the device is trusted; private keys never leave it.
