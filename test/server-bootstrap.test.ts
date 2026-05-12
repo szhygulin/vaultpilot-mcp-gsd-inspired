@@ -26,11 +26,21 @@ describe("server bootstrap", () => {
     expect(instructions).toMatch(/SECURITY\.md/);
   });
 
-  it("advertises tools capability and returns an empty tool list", async () => {
+  it("advertises tools capability and lists registered tools", async () => {
     const caps = spawned.client.getServerCapabilities();
     expect(caps?.tools).toBeDefined();
 
     const result = await spawned.client.listTools();
-    expect(result.tools).toEqual([]);
+    const names = result.tools.map((t) => t.name).sort();
+    // Phase 2 (02-04) registers four standalone read tools. Other Phase 2 PRs
+    // (02-02 token registry, 02-03 portfolio summary) add more on top.
+    expect(names).toEqual(
+      expect.arrayContaining([
+        "get_token_balance",
+        "get_transaction_status",
+        "resolve_ens_name",
+        "reverse_resolve_ens",
+      ]),
+    );
   });
 });

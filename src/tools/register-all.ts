@@ -1,3 +1,8 @@
+import "./resolve_ens_name.js";
+import "./reverse_resolve_ens.js";
+import "./get_token_balance.js";
+import "./get_transaction_status.js";
+
 export function registerAllTools(): void {
   // Tool modules register on import. Phase 2+ adds imports above this comment.
 }
