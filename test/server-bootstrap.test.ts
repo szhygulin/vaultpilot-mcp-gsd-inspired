@@ -26,6 +26,22 @@ describe("server bootstrap", () => {
     expect(instructions).toMatch(/SECURITY\.md/);
   });
 
+  it("instructions field names the Phase 4 trust pipeline + Phase 5 demo mode (DIAG-03 rewrite)", () => {
+    // Plan 05-03 / DIAG-03: INSTRUCTIONS rewrite post-Phase-4-shipping.
+    // The text MUST name the actual v1.0 trust pipeline (payloadFingerprint
+    // / LEDGER BLIND-SIGN HASH / PREPARE RECEIPT / previewToken) and the
+    // Phase 5 demo-mode surface so the routing agent's onboarding context
+    // matches what's shipped.
+    const instructions = spawned.client.getInstructions() ?? "";
+    expect(instructions).toMatch(/payloadFingerprint/);
+    expect(instructions).toMatch(/LEDGER BLIND-SIGN HASH/);
+    expect(instructions).toMatch(/PREPARE RECEIPT/);
+    expect(instructions).toMatch(/previewToken/);
+    expect(instructions).toMatch(/demo mode/i);
+    expect(instructions).toMatch(/set_demo_wallet/);
+    expect(instructions).toMatch(/get_vaultpilot_config_status/);
+  });
+
   it("advertises tools capability and lists registered tools", async () => {
     const caps = spawned.client.getServerCapabilities();
     expect(caps?.tools).toBeDefined();
