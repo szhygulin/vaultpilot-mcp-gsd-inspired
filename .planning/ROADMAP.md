@@ -80,8 +80,10 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 03-01: `@walletconnect/sign-client` integration + session lifecycle + topic surfacing + `WALLETCONNECT_PROJECT_ID` env handling
-- [ ] 03-02: `pair_ledger_live` tool + `get_ledger_status` tool + force-re-pair semantics + 60s session-approval timeout
+- [x] 03-01: `@walletconnect/sign-client` integration + session lifecycle + topic surfacing + `WALLETCONNECT_PROJECT_ID` env handling — PR #8
+- [x] 03-02: `pair_ledger_live` tool + `get_ledger_status` tool + force-re-pair semantics + 60s session-approval timeout — PR #9
+
+**Status**: code-complete; verify-phase pending real-Ledger smoke + `WALLETCONNECT_PROJECT_ID` from cloud.walletconnect.com
 
 #### Phase 4: Native ETH send (the trust pipeline)
 **Goal**: The full prepare → preview → send flow works for native ETH, with `payloadFingerprint` + `LEDGER BLIND-SIGN HASH` + `PREPARE RECEIPT` + `previewToken` + `userDecision` gates all enforced. This is the load-bearing milestone for the entire project.
