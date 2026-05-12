@@ -99,11 +99,13 @@ Plans:
 **Plans**: 5 plans
 
 Plans:
-- [ ] 04-01: Handle store (in-memory, 15-min TTL) + `payloadFingerprint` computation + `PREPARE RECEIPT` block emission
-- [ ] 04-02: `prepare_native_send` tool + nonce/gas/fee resolution + EIP-1559 tx structure
-- [ ] 04-03: `preview_send` tool + `previewToken` UUID minting + pre-sign hash recompute + `LEDGER BLIND-SIGN HASH` block + agent-task block
-- [ ] 04-04: `send_transaction` tool + `previewToken` + `userDecision` gate + WC `eth_sendTransaction` forwarding + Ledger response handling
-- [ ] 04-05: 4byte.directory client (best-effort) + `get_tx_verification` re-emit tool + cross-check summary block
+- [x] 04-01: Handle store (in-memory, 15-min TTL) + `payloadFingerprint` computation + `PREPARE RECEIPT` block emission — PR #12
+- [x] 04-02: `prepare_native_send` tool + nonce/gas/fee resolution + EIP-1559 tx structure — PR #13
+- [x] 04-03: `preview_send` tool + `previewToken` UUID minting + pre-sign hash recompute + `LEDGER BLIND-SIGN HASH` block + agent-task block — PR #15
+- [x] 04-04: `send_transaction` tool + `previewToken` + `userDecision` gate + WC `eth_sendTransaction` forwarding + Ledger response handling — PR #16
+- [x] 04-05: 4byte.directory client (best-effort) + `get_tx_verification` re-emit tool + cross-check summary block — PR #14
+
+**Status**: code-complete; combined Phase 3+4 verify-phase pending real-Ledger smoke + small mainnet broadcast + `WALLETCONNECT_PROJECT_ID` from cloud.walletconnect.com. Also resolves Assumption A1 (Ledger blind-sign hash display form) + A2 (Ledger Live Connected Apps UI).
 
 #### Phase 5: Demo mode + diagnostics
 **Goal**: Fresh installs without Ledger or RPC keys boot into auto-demo with curated personas; `get_vaultpilot_config_status` and `get_ledger_device_info` surface diagnostics; update check runs once per session.
