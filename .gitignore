@@ -32,6 +32,9 @@ Thumbs.db
 .planning/.context-*
 claude-work/
 
+# Serena MCP cache (per-user tooling, not source of truth)
+.serena/
+
 # Build artifacts
 build/
 out/
