@@ -77,15 +77,19 @@ export function createMockSignClient(): MockSignClient {
     client: {
       // Each connect() call hands back a fresh approval-Deferred so a single
       // mock can be used across multiple pair() invocations in one test
-      // (e.g. the force: true disconnect-then-connect path).
+      // (e.g. the force: true disconnect-then-connect path). The deferred
+      // is allocated on connect() invocation (not on approval() call) so
+      // tests can drive resolution as soon as `pair()` has reached the
+      // post-connect await — even if approval() hasn't been invoked yet,
+      // resolveApproval/rejectApproval are stable references.
       connect: vi.fn(async (_opts: unknown) => {
+        const approvalPromise = new Promise<SessionTypes.Struct>((resolve, reject) => {
+          resolveApproval = resolve;
+          rejectApproval = reject;
+        });
         return {
           uri: mock._wcUri,
-          approval: () =>
-            new Promise<SessionTypes.Struct>((resolve, reject) => {
-              resolveApproval = resolve;
-              rejectApproval = reject;
-            }),
+          approval: () => approvalPromise,
         };
       }),
       disconnect: vi.fn(async (_opts: unknown) => undefined),
