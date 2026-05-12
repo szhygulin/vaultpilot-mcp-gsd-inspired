@@ -1,7 +1,4 @@
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-
+import { _paths, readConfigFile } from "../config/config-file.js";
 import {
   ENVELOPE_VERSION,
   type CheckResult,
@@ -94,33 +91,31 @@ function checkEthereumRpc(): CheckResult {
 }
 
 function checkConfigFile(): CheckResult {
-  const path = join(homedir(), ".vaultpilot-mcp", "config.json");
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
+  // Path + I/O delegated to the format-fanout-sentinel helper at
+  // `src/config/config-file.ts`. The three text branches below stay
+  // BYTE-IDENTICAL to the Phase 1 implementation so any existing
+  // `--check` text assertions remain green.
+  const path = _paths.getConfigPath();
+  const result = readConfigFile();
+  if (result.ok) {
+    return {
+      id: "config-file",
+      level: "ok",
+      message: `${path} parsed`,
+    };
+  }
+  if (result.reason === "missing") {
     return {
       id: "config-file",
       level: "ok",
       message: `${path} (absent — auto-demo will run)`,
     };
   }
-
-  try {
-    JSON.parse(raw);
-    return {
-      id: "config-file",
-      level: "ok",
-      message: `${path} parsed`,
-    };
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    return {
-      id: "config-file",
-      level: "warn",
-      message: `${path} malformed: ${reason}`,
-    };
-  }
+  return {
+    id: "config-file",
+    level: "warn",
+    message: `${path} malformed: ${result.cause}`,
+  };
 }
 
 const LEVEL_GLYPH: Record<CheckResult["level"], string> = {

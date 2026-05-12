@@ -53,6 +53,8 @@ import {
   listRegisteredTools,
   type ToolHandlerResult,
 } from "../src/tools/index.js";
+import { _resetDemoModeForTesting } from "../src/config/env.js";
+import { _resetActivePersonaForTesting } from "../src/demo/state.js";
 
 // Triggers side-effect registration for ALL Phase 1/2/3/04-02 tools, so
 // test #10 below can smoke-check `prepare_native_send` is in the registry.
@@ -96,17 +98,26 @@ beforeEach(() => {
   createHandleSpy.mockClear();
   _resetHandleStoreForTesting();
   savedDemo = process.env[DEMO_KEY];
-  delete process.env[DEMO_KEY];
+  // Phase 5 / Plan 05-01: pin env to "false" so the resolver
+  // deterministically picks real-mode regardless of host filesystem
+  // (auto-demo would otherwise fire when ~/.vaultpilot-mcp/config.json
+  // is absent). Tests that need demo mode override + reset.
+  process.env[DEMO_KEY] = "false";
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
 });
 
 afterEach(() => {
   if (savedDemo === undefined) delete process.env[DEMO_KEY];
   else process.env[DEMO_KEY] = savedDemo;
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
 });
 
 describe("prepare_native_send — demo-mode refusal (T-DEMO-1)", () => {
   it("refuses with DEMO_MODE_REFUSED when VAULTPILOT_DEMO=true; getStatus + createHandle NEVER called", async () => {
     process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
 
     const result = await callTool({ to: FIXTURE_A.to, valueWei: FIXTURE_A.valueWei });
 

@@ -31,6 +31,8 @@ import {
   getRegisteredTool,
   type ToolHandlerResult,
 } from "../src/tools/index.js";
+import { _resetDemoModeForTesting } from "../src/config/env.js";
+import { _resetActivePersonaForTesting } from "../src/demo/state.js";
 
 // Mock the 4byte client. We never want a real network call from a unit test —
 // `lookupSelector` is replaced with a controllable spy. Default return:
@@ -104,12 +106,18 @@ beforeEach(() => {
   lookupSelectorSpy.mockReset();
   lookupSelectorSpy.mockResolvedValue({ kind: "not-applicable" });
   savedDemo = process.env[DEMO_KEY];
-  delete process.env[DEMO_KEY];
+  // Phase 5 / Plan 05-01: pin to "false" so the resolver picks
+  // real-mode deterministically; reset cache so each test starts clean.
+  process.env[DEMO_KEY] = "false";
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
 });
 
 afterEach(() => {
   if (savedDemo === undefined) delete process.env[DEMO_KEY];
   else process.env[DEMO_KEY] = savedDemo;
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
   vi.useRealTimers();
   void _resetRegistryForTesting; // referenced for consistency
 });
@@ -281,6 +289,7 @@ describe("get_tx_verification — 'cancelled' status re-emits the reached blocks
 describe("get_tx_verification — demo-mode refusal fires FIRST (T-DEMO-1)", () => {
   it("VAULTPILOT_DEMO=true → DEMO_MODE_REFUSED; lookupSelector NOT called", async () => {
     process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
     const handle = seedPreparedHandle();
     transitionToPreviewed(handle, buildPinned());
 

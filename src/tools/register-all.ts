@@ -9,6 +9,8 @@ import "./prepare_native_send.js";
 import "./preview_send.js";
 import "./send_transaction.js";
 import "./get_tx_verification.js";
+import "./get_demo_wallet.js";
+import "./set_demo_wallet.js";
 
 export function registerAllTools(): void {
   // Tool modules register on import. Phase 2+ adds imports above this comment.

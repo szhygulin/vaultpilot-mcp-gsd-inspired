@@ -122,6 +122,8 @@ import {
   getRegisteredTool,
   type ToolHandlerResult,
 } from "../src/tools/index.js";
+import { _resetDemoModeForTesting } from "../src/config/env.js";
+import { _resetActivePersonaForTesting } from "../src/demo/state.js";
 
 // Trigger side-effect registration for all tools.
 await import("../src/tools/register-all.js");
@@ -159,12 +161,18 @@ beforeEach(() => {
   mockPublicHolder.current = createMockPublicClient();
   mockSignClientHolder.current = createMockSignClient();
   savedDemo = process.env[DEMO_KEY];
-  delete process.env[DEMO_KEY];
+  // Phase 5 / Plan 05-01: pin to "false" so the resolver picks
+  // real-mode deterministically; reset cache so each test starts clean.
+  process.env[DEMO_KEY] = "false";
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
 });
 
 afterEach(() => {
   if (savedDemo === undefined) delete process.env[DEMO_KEY];
   else process.env[DEMO_KEY] = savedDemo;
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
   vi.useRealTimers();
 });
 

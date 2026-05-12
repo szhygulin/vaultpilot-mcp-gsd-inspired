@@ -1,9 +1,10 @@
-// Phase 4 structured error codes — single source of truth.
+// Phase 4 + Phase 5 structured error codes — single source of truth.
 //
-// Locked set (13 codes — research § Q15's 12 + DEMO_MODE_REFUSED lifted from
-// Phase 3 DEMO-06 precedent). Adding/removing a code is a type-level breaking
-// change: downstream plans' exhaustive `switch` statements over `ErrorCode`
-// fail to typecheck, surfacing the omission BEFORE merge. Anti-foot-gun.
+// Locked set (14 codes — research § Q15's 12 + DEMO_MODE_REFUSED lifted from
+// Phase 3 DEMO-06 precedent + WRONG_MODE added in Plan 05-01). Adding/removing
+// a code is a type-level breaking change: downstream plans' exhaustive
+// `switch` statements over `ErrorCode` fail to typecheck, surfacing the
+// omission BEFORE merge. Anti-foot-gun.
 //
 // Producer map (where each code is emitted — kept in sync with the plan):
 //
@@ -22,8 +23,12 @@
 //   USER_CANCELLED           — Plan 04-04 (userDecision: "cancel" — non-error structured exit)
 //   DEMO_MODE_REFUSED        — Plans 04-02, 04-03, 04-04, 04-05
 //                              (VAULTPILOT_DEMO=true — matches Phase 3 DEMO-06 precedent)
-//   INVALID_INPUT            — All Plans 04-02..05 (address/value/data shape rejected at handler boundary)
-//   INTERNAL_ERROR           — All Plans 04-02..05 (defensive catch-all — NOT a demo-mode fallback)
+//   INVALID_INPUT            — All Plans 04-02..05 + 05-01 (defense-in-depth slug check)
+//   INTERNAL_ERROR           — All Plans 04-02..05 + 05-01 (defensive catch-all — NOT a demo-mode fallback)
+//   WRONG_MODE               — Plan 05-01 (set_demo_wallet called outside demo mode —
+//                              T-PERSONA-CONFUSION-1 mitigation; state NOT mutated.
+//                              Phase 5+ tools needing a similar mode check reuse the code
+//                              via `makeStructuredError`.)
 
 export type ErrorCode =
   | "WALLET_NOT_PAIRED"
@@ -38,7 +43,8 @@ export type ErrorCode =
   | "USER_CANCELLED"
   | "DEMO_MODE_REFUSED"
   | "INVALID_INPUT"
-  | "INTERNAL_ERROR";
+  | "INTERNAL_ERROR"
+  | "WRONG_MODE";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers
