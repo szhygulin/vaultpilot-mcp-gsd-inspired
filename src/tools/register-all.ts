@@ -7,6 +7,7 @@ import "./pair_ledger_live.js";
 import "./get_ledger_status.js";
 import "./prepare_native_send.js";
 import "./preview_send.js";
+import "./send_transaction.js";
 import "./get_tx_verification.js";
 
 export function registerAllTools(): void {

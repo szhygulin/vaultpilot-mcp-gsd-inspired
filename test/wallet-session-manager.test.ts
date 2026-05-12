@@ -26,6 +26,7 @@ import {
   UserRejectedPairingError,
   _resetSessionManagerForTesting,
   disconnect,
+  getActiveSessionTopic,
   getStatus,
   pair,
 } from "../src/wallet/session-manager.js";
@@ -291,5 +292,51 @@ describe("session-manager.pair() — concurrency + lifecycle", () => {
     mockSignClient._setSessionsInStore([]);
     const status = await getStatus();
     expect(status).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getActiveSessionTopic — Plan 04-04 Q2 locked decision (sync accessor for
+// the send-transaction handler). Short-circuits on uninitialized state,
+// returns the topic of the live session after pair, returns null after
+// session_delete.
+// ---------------------------------------------------------------------------
+describe("session-manager.getActiveSessionTopic() — Plan 04-04 Q2", () => {
+  it("returns null when the SignClient singleton has not been initialized", () => {
+    // No prior `pair()` call — `_isWalletConnectClientInitialized()` is
+    // false. The accessor must short-circuit WITHOUT triggering init,
+    // otherwise a read on an unpaired session would burn a relay handshake.
+    expect(getActiveSessionTopic()).toBeNull();
+    // The init spy MUST NOT have fired — proves the short-circuit.
+    expect(initSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns the topic of the live session after a successful pair", async () => {
+    const session = buildMockSession({ chainId: 1, address: ADDRESS, topic: TOPIC });
+    const pending = pair();
+    await waitUntilConnectCalled();
+    mockSignClient._simulateApproval(session);
+    await pending;
+
+    // After pair, the session is in the store with `expiry > now`. The
+    // accessor walks the same `findLiveSession(client)` path `getStatus`
+    // uses, returning the topic verbatim.
+    mockSignClient._setSessionsInStore([session]);
+    expect(getActiveSessionTopic()).toBe(TOPIC);
+  });
+
+  it("returns null after session_delete clears the store", async () => {
+    const session = buildMockSession({ chainId: 1, address: ADDRESS, topic: TOPIC });
+    const pending = pair();
+    await waitUntilConnectCalled();
+    mockSignClient._simulateApproval(session);
+    await pending;
+
+    // Simulate Ledger-side disconnect — emit session_delete + drain the
+    // store. The accessor's `findLiveSession` filter returns undefined;
+    // accessor returns null.
+    mockSignClient._simulateSessionDelete(session.topic);
+    mockSignClient._setSessionsInStore([]);
+    expect(getActiveSessionTopic()).toBeNull();
   });
 });

@@ -108,6 +108,21 @@ export function _isWalletConnectClientInitialized(): boolean {
   return cachedClient !== undefined;
 }
 
+/**
+ * Synchronous accessor for the cached singleton. Returns `null` when init
+ * has not yet completed (no `await` of `getWalletConnectClient()` has
+ * resolved). Does NOT trigger initialization — read-only, side-effect-free.
+ *
+ * Used by `session-manager.getActiveSessionTopic()` (Plan 04-04 Q2 locked
+ * decision) so the send-transaction handler can resolve the WC session
+ * topic without re-entering the async init path. The async version
+ * `getWalletConnectClient()` remains the canonical accessor for code that
+ * needs to ensure the client is ready (e.g. `pair()`, `disconnect()`).
+ */
+export function getWalletConnectClientOrNull(): SignClientType | null {
+  return cachedClient ?? null;
+}
+
 export function _resetWalletConnectClientForTesting(): void {
   cachedClient = undefined;
   initInFlight = undefined;
