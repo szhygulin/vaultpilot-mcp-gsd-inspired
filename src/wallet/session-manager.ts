@@ -25,9 +25,11 @@ import { getSdkError } from "@walletconnect/utils";
 
 import { log } from "../diagnostics/logger.js";
 import { parseEvmAccountId } from "./caip.js";
+import { isUserRejectedError } from "./wc-errors.js";
 import {
   _isWalletConnectClientInitialized,
   getWalletConnectClient,
+  getWalletConnectClientOrNull,
 } from "./walletconnect-client.js";
 
 // Required namespaces declared on every pairing. Phase 4 inherits these
@@ -219,6 +221,28 @@ export async function getStatus(): Promise<LedgerStatus | null> {
 }
 
 /**
+ * Return the topic of the currently-live WC session, or `null` when no
+ * session OR when the SignClient singleton has not been initialized yet.
+ *
+ * Sync (no Promise wrapper) and side-effect-free: does NOT trigger
+ * `SignClient.init` — short-circuits to `null` on uninitialized state, the
+ * same shape `getStatus()` uses to avoid spending a relay handshake on a
+ * pre-pair status read. The sync surface lets Plan 04-04's
+ * `send_transaction` handler resolve the topic for `signClient.request`
+ * without re-entering the async init path (which would race against the
+ * already-running pair flow in concurrent-call scenarios).
+ *
+ * Q2 locked decision (research § Open Questions).
+ */
+export function getActiveSessionTopic(): string | null {
+  if (!_isWalletConnectClientInitialized()) return null;
+  const client = getWalletConnectClientOrNull();
+  if (!client) return null;
+  const session = findLiveSession(client);
+  return session?.topic ?? null;
+}
+
+/**
  * Disconnect the named session and clear the in-memory cache. Idempotent
  * on the cache side; the underlying WC SDK may throw on no-such-topic but
  * we let that propagate to the caller (Phase 4's signing flow needs to
@@ -261,16 +285,6 @@ async function ensureSessionDeleteListener(client: WalletConnectClient): Promise
     if (cachedSessionTopic === topic) cachedSessionTopic = undefined;
   });
   sessionDeleteListenerRegistered = true;
-}
-
-function isUserRejectedError(err: unknown): boolean {
-  if (typeof err !== "object" || err === null) return false;
-  const candidate = err as { code?: unknown; message?: unknown };
-  if (candidate.code === 5000) return true;
-  if (typeof candidate.message === "string" && /user rejected/i.test(candidate.message)) {
-    return true;
-  }
-  return false;
 }
 
 export function _resetSessionManagerForTesting(): void {
