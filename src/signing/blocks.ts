@@ -12,11 +12,15 @@
 //   - LEDGER_BLIND_SIGN_HASH_TEMPLATE  — PREP-04 + A1 mitigation (full + chunked)
 //   - AGENT_TASK_TEMPLATE              — PREP-05 (agent runs viem checks locally)
 //   - VERIFY_BEFORE_SIGNING_TEMPLATE   — used by 04-03 + 04-05 (user-facing summary)
+//   - build4byteBlock(...)             — PREP-06 (selector cross-check, four kinds)
 //
-// Plan 04-05 will add `build4byteBlock(...)` to this file alongside
-// `chunkHex` — do NOT anticipate it here.
+// Plan 04-03 imports `build4byteBlock` from this file — no inline version
+// lives in `preview_send.ts` or `get_tx_verification.ts`. Same format-fanout-
+// sentinel discipline as the four block templates above.
 
 import type { Hex } from "viem";
+
+import type { FourbyteResult } from "../clients/fourbyte.js";
 
 // Verbatim PREPARE RECEIPT (PREP-02 — verbatim args, NO normalization).
 // PrepareArgs field types are `string` (not Address / not bigint) so the
@@ -95,4 +99,59 @@ export function chunkHex(hex: Hex): string {
   const groups = body.match(/.{1,4}/g);
   // body.length === 64 → groups is always 16 entries, never null.
   return (groups as string[]).join(" ");
+}
+
+/**
+ * Render the PREP-06 4byte cross-check block from a `FourbyteResult`.
+ *
+ * Output is a multi-line `4BYTE CROSS-CHECK` block whose body depends on
+ * `result.kind`:
+ *
+ *   - `not-applicable` (selector === null, native sends): names the
+ *     condition explicitly ("no function call data — native value
+ *     transfer"); the user sees a deliberate not-applicable status,
+ *     not a missing block.
+ *   - `found`: shows the selector AND the verbatim `text_signature`.
+ *     The signature ships through VERBATIM — never parsed, never
+ *     used in dispatch decisions (T-4BYTE-1). Cross-check artifact
+ *     only.
+ *   - `not-found`: shows the selector + a "no signature found in
+ *     4byte.directory" note. User decides whether to proceed; the
+ *     LEDGER BLIND-SIGN HASH match is the load-bearing check.
+ *   - `error`: shows the selector + the verbatim upstream error
+ *     message (HTTP status, timeout, network unreachable). NEVER
+ *     masked as `not-found` (PREP-06 + T-4BYTE-MASK-1).
+ *
+ * Used by:
+ *   - Plan 04-03 `preview_send` (first emission)
+ *   - Plan 04-05 `get_tx_verification` (re-emission)
+ *
+ * Both call sites import THIS function — no inline duplicate exists.
+ */
+export function build4byteBlock(selector: Hex | null, result: FourbyteResult): string {
+  switch (result.kind) {
+    case "not-applicable":
+      return [
+        "4BYTE CROSS-CHECK",
+        "  status:   not-applicable (no function call data — native value transfer)",
+      ].join("\n");
+    case "found":
+      return [
+        "4BYTE CROSS-CHECK",
+        `  selector:  ${selector ?? "(null)"}`,
+        `  signature: ${result.textSignature}`,
+      ].join("\n");
+    case "not-found":
+      return [
+        "4BYTE CROSS-CHECK",
+        `  selector: ${selector ?? "(null)"}`,
+        "  status:   no known signature found in 4byte.directory",
+      ].join("\n");
+    case "error":
+      return [
+        "4BYTE CROSS-CHECK",
+        `  selector: ${selector ?? "(null)"}`,
+        `  error:    ${result.message}`,
+      ].join("\n");
+  }
 }
