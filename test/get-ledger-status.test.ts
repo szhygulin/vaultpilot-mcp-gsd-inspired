@@ -65,6 +65,8 @@ describe("get_ledger_status tool — paired + unpaired branches (PAIR-02)", () =
   it("returns full status envelope when getStatus resolves to a LedgerStatus (paired)", async () => {
     getStatusSpy.mockResolvedValueOnce({
       paired: true,
+      accounts: [ADDRESS],
+      activeAccount: ADDRESS,
       address: ADDRESS,
       chainId: 1,
       sessionTopicLast8: SESSION_TOPIC_LAST8,
@@ -76,6 +78,7 @@ describe("get_ledger_status tool — paired + unpaired branches (PAIR-02)", () =
     expect(result.structuredContent).toEqual({
       paired: true,
       address: ADDRESS,
+      accounts: [ADDRESS],
       chainId: 1,
       sessionTopicLast8: SESSION_TOPIC_LAST8,
     });
@@ -84,6 +87,35 @@ describe("get_ledger_status tool — paired + unpaired branches (PAIR-02)", () =
     expect(text).toContain(ADDRESS);
     expect(text).toMatch(/chainId:\s+1/);
     expect(text).toMatch(/sessionTopicLast8:\s+deadbeef/);
+    expect(text).toMatch(/accounts:\s+\[/);
+  });
+
+  it("surfaces all approved accounts in the paired envelope (multi-account session)", async () => {
+    const ADDRESSES = [
+      ADDRESS,
+      "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as const,
+      "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC" as const,
+    ];
+    getStatusSpy.mockResolvedValueOnce({
+      paired: true,
+      accounts: ADDRESSES,
+      activeAccount: ADDRESSES[1],
+      address: ADDRESSES[1],
+      chainId: 1,
+      sessionTopicLast8: SESSION_TOPIC_LAST8,
+    });
+
+    const result = await callTool({});
+    const sc = result.structuredContent as {
+      paired: boolean;
+      address: string;
+      accounts: string[];
+    };
+    expect(sc.address).toBe(ADDRESSES[1]);
+    expect(sc.accounts).toEqual(ADDRESSES);
+
+    const text = result.content[0]?.text ?? "";
+    for (const a of ADDRESSES) expect(text).toContain(a);
   });
 });
 

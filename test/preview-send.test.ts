@@ -137,6 +137,8 @@ const FIXTURE_C_PRESIGN_HASH =
 
 const PAIRED_STATUS = {
   paired: true as const,
+  accounts: [FIXTURE_C_TO as `0x${string}`],
+  activeAccount: FIXTURE_C_TO as `0x${string}`,
   address: FIXTURE_C_TO as `0x${string}`,
   chainId: 1,
   sessionTopicLast8: "deadbeef",

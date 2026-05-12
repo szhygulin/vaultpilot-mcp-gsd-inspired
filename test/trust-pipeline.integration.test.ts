@@ -143,6 +143,8 @@ const FIXTURE_TOPIC =
   "0xfeedfacecafebeef0000000000000000000000000000000000000000c0ffee";
 const PAIRED_STATUS = {
   paired: true as const,
+  accounts: [FIXTURE_TO as `0x${string}`],
+  activeAccount: FIXTURE_TO as `0x${string}`,
   address: FIXTURE_TO as `0x${string}`,
   chainId: 1,
   sessionTopicLast8: "00c0ffee",
