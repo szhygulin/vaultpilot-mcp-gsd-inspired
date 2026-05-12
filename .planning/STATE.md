@@ -5,16 +5,16 @@
 See: .planning/PROJECT.md (updated 2026-05-12)
 
 **Core value:** The user trusts what the Ledger screen shows — nothing else. Tampering at any layer between the agent and the device produces a visible mismatch on-screen before signing.
-**Current focus:** Phase 3 — WalletConnect pairing — **code-complete; verify-phase pending real-Ledger smoke**
+**Current focus:** Phase 4 — Native ETH send (the trust pipeline) — **code-complete; combined Phase 3+4 verify-phase pending real-Ledger smoke**
 
 ## Current Position
 
-Phase: 3 of 10 (WalletConnect pairing) — **code-complete**. Plans 03-01 (WC sign-client + session manager + CAIP parser) + 03-02 (`pair_ledger_live` + `get_ledger_status` tools) shipped via PR #8 + PR #9; 90/90 tests pass; typecheck + build clean. Verify-phase gate is the only thing between Phase 3 and "done": exercise real Ledger pairing against live WC relay + `WALLETCONNECT_PROJECT_ID` from cloud.walletconnect.com.
-Plan: 2 of 2 done in current phase
-Status: Phase 3 code-complete. Verify-phase pending (manual, requires Ledger device).
-Last activity: 2026-05-12 — Phase 3 planned + executed. Planning bundle (RESEARCH + VALIDATION + PATTERNS + 2 PLAN files) shipped as PR #7. Then 03-01 shipped as PR #8 (4 atomic commits, 18 new test cases, 4 deviations — 2 were genuine SDK-API corrections vs the plan: `storageOptions.database` not `dbName`; `parseAccountId` returns `{ namespace, reference, address }` not `{ chainId, address }`). Then 03-02 shipped as PR #9 (2 atomic commits, 15 new test cases, zero deviations — clean run benefited from 03-01's upstream fixes).
+Phase: 4 of 10 (Native ETH send — the trust pipeline) — **code-complete**. All 5 plans shipped via PRs #12, #13, #14, #15, #16; 196/196 tests pass; typecheck + build clean. The cryptographic-binding chain is anchored end-to-end via Fixture A (`payloadFingerprint = 0x7e1867b2...`) at prepare + send-time re-check and Fixture C (`presignHash = 0xb28e4824...`) at preview; integration test asserts byte-identity at every transition. PREP-07 schema gate ships as a genuine protocol-boundary defense via the MCP SDK's `AjvJsonSchemaValidator` (architectural fix at `src/server.ts`), not a soft handler check. Combined Phase 3+4 verify-phase is the only thing between v1.0 trust pipeline and "done".
+Plan: 5 of 5 done in current phase
+Status: Phase 4 code-complete. Combined Phase 3+4 verify-phase pending (manual, requires real Ledger device).
+Last activity: 2026-05-12 — Phase 4 planned + executed. Planning bundle (RESEARCH + VALIDATION + PATTERNS + 5 PLAN files) shipped as PR #11 (BLOCK → PASS after 6 inline plan-checker fixes, including the schema-gate test methodology). Then 04-01 (signing infrastructure) shipped as PR #12 (7 atomic commits, 33 new tests, 3 minor deviations). Then 04-02 (prepare_native_send) + 04-05 (4byte + get_tx_verification) shipped in parallel as PR #13 + PR #14 (3 + 6 atomic commits, +10 + +26 new tests; PR #14 had a trivial register-all.ts conflict resolved via rebase). Then 04-03 (preview_send) shipped as PR #15 (1 atomic commit, +15 new tests, 2 minor deviations). Finally 04-04 (send_transaction + integration test) shipped as PR #16 (1 atomic commit, +22 new tests, 2 deviations — one a load-bearing architectural fix to `src/server.ts` adding the MCP SDK's `AjvJsonSchemaValidator` at the CallToolRequest dispatcher, since the low-level `Server` class doesn't validate per-tool inputSchema by default).
 
-Progress: [███░░░░░░░] 9/30 plans (30%) — phases 1 + 2 of 10 done; phase 3 code-complete
+Progress: [█████░░░░░] 14/30 plans (47%) — phases 1 + 2 of 10 done; phases 3 + 4 code-complete (verify-phase pending)
 
 ## Performance Metrics
 
@@ -61,7 +61,7 @@ None yet.
 
 - **Phase 1 verify-phase open**: requires user with a Claude Code instance to run `claude mcp add vaultpilot-mcp -- node /Users/s/dev/vaultpilot/vaultpilot-mcp-gsd-inspired/dist/index.js` and confirm `claude mcp list` shows it as connected. The in-process initialize-handshake test covers server construction; the real-stdio path is the only thing not yet exercised.
 - **Phase 3 verify-phase pending**: requires `WALLETCONNECT_PROJECT_ID` from https://cloud.walletconnect.com + a Ledger device with Ledger Live paired. Manual flow: `WALLETCONNECT_PROJECT_ID=<real> npm start` → from Claude Code call `pair_ledger_live` → paste `wcUri` into Ledger Live → Connect a Dapp → approve on device → call `get_ledger_status` → confirm address matches Ledger Live → Settings → Connected Apps. Also resolves research § Assumption A2 (whether Ledger Live's UI surfaces the session topic) — if not, edit `VERIFY_ON_DEVICE_TEMPLATE` in `src/tools/pair_ledger_live.ts` to address-only + update Test 1's regex.
-- **Phase 4 prerequisite**: A real Ledger device with the Ethereum app installed + Ledger Live paired is required for the Phase 4 verify-phase step (the trust-pipeline milestone is moot without device-side hash verification). Phase 3 verify-phase confirms the WC pairing seam Phase 4 will route signing over.
+- **Combined Phase 3+4 verify-phase pending**: requires a real Ledger device with the Ethereum app + Ledger Live paired + `WALLETCONNECT_PROJECT_ID` from cloud.walletconnect.com + a small mainnet ETH balance to broadcast a return-able test transaction. Manual flow batched (per user direction): `WALLETCONNECT_PROJECT_ID=<real> ETHEREUM_RPC_URL=<key-or-publicnode> npm start` → from Claude Code: `pair_ledger_live` → paste wcUri into Ledger Live → approve on device → `get_ledger_status` confirms address matches Ledger Live UI → `prepare_native_send({ to: <return-able addr>, valueWei: "<small> })` → `preview_send({ handle })` → compare `LEDGER BLIND-SIGN HASH` block (full + 4-char-chunked) against device screen → confirm on device → `send_transaction({ handle, previewToken, userDecision: "send" })` → assert returned `txHash` matches Etherscan. Also resolves Assumption A1 (does Ledger device display full hex or chunked form on blind-sign?) and Assumption A2 (does Ledger Live UI surface the session topic?). If A1 differs, edit `LEDGER_BLIND_SIGN_HASH_TEMPLATE` in `src/signing/blocks.ts` accordingly. If A2 differs, edit `VERIFY_ON_DEVICE_TEMPLATE` in `src/tools/pair_ledger_live.ts` to address-only.
 
 ### Phase 1 retro
 
@@ -83,6 +83,15 @@ None yet.
 - **Plan-checker's 3 MEDIUM flags were correctly graded**: R1 (multi-digit chainId test) was a 1-line plan edit before commit; R2 (session_delete listener test independence) + R3 (A2 code-level fallback) were both correctly classified as residuals — neither blocks Phase 3 verify-phase or Phase 4 dependency. Plan-checker didn't catch the 2 SDK-API issues that execute-phase later caught — they only surface against installed type defs, not against plan-text reading.
 - **Zero parallel agents in Phase 3**: 03-02 strictly depends on 03-01 (imports session-manager + walletconnect-client + env helpers). Sequential execution was the right call; no worktree races because no parallelism to race.
 
+### Phase 4 retro
+
+- **Plan-checker BLOCKER caught the load-bearing test methodology gap.** The originally-planned PREP-07 schema-gate test was an in-test ajv compile (proves the schema-as-written rejects, NOT that the SDK validates before invoking the handler). Plan-checker correctly graded this as BLOCK and prescribed the fix: dispatch through the actual SDK pipeline with a `vi.fn()` handler spy. The fix surfaced at planning gate, before any code shipped — saved a round of execute-then-realize.
+- **Architectural fix correctly scoped at execute time.** At execute-phase, the 04-04 agent discovered the MCP SDK's low-level `Server` class doesn't validate per-tool `inputSchema` by default — only the high-level `McpServer` does, which this project doesn't use. Implementing PREP-07 as a per-handler check would have been the soft-check pattern PREP-07 explicitly forbids. The agent applied the global CLAUDE.md "System-Rejection-Reframing" rule correctly: fixed the SDK integration in `src/server.ts` using the SDK's own `AjvJsonSchemaValidator` at the `CallToolRequest` dispatcher. This makes PREP-07 a genuine protocol-boundary defense for ALL tools (defense-in-depth retroactively for Phase 1+2+3 tools too), not just `send_transaction`. **Lesson**: when an SDK constraint blocks a load-bearing security property, fixing the SDK integration is the right architectural scope — much better than per-tool defensive checks that each ship a hole.
+- **Parallel execution worked at the right granularity.** 04-02 + 04-05 ran in parallel worktrees (both depend only on 04-01); both PRs trivially conflicted on `register-all.ts` (both added import lines at the same final position); resolved via rebase — 30 seconds of work. The merge order is what matters: 04-01 → (04-02 ∥ 04-05) → 04-03 → 04-04. Phase 3's "no parallelism because of strict deps" lesson became Phase 4's "parallelism wherever deps allow + accept the trivial rebase cost".
+- **Fixture anchoring paid off end-to-end.** Fixture A (`payloadFingerprint = 0x7e1867b2...`) and Fixture C (`presignHash = 0xb28e4824...`) are hardcoded literals in `test/signing-fingerprint.test.ts` + `test/signing-presign-hash.test.ts` (04-01), re-asserted in `test/prepare-native-send.test.ts` (04-02), re-asserted in `test/preview-send.test.ts` (04-03), and asserted byte-identical-end-to-end in `test/trust-pipeline.integration.test.ts` (04-04). Drift in any layer breaks the test at exactly that layer. The cryptographic-binding chain is testable.
+- **PR-volume: 6 PRs in one phase.** Phase 4 alone shipped: PR #11 (planning bundle) + PR #12 + PR #13 + PR #14 + PR #15 + PR #16. Each PR was small enough to review in 5-10 min, atomic enough to revert cleanly, and named via conventional commits so the git log reads as a build narrative. Plan-as-PR-batching pattern held up.
+- **Single-atomic-commit per plan after 04-01.** 04-01 needed 7 atomic commits (Wave 0 helpers + 5 W1 primitives, each a cohesive unit). 04-02 + 04-03 + 04-04 each shipped as 1 atomic commit covering handler + side-effect-import + tests. 04-05 shipped 6 atomic commits (TDD-ordered). The granularity matched the plan's `<execution_context>` `Commit shape:` declaration, which was right.
+
 ## Deferred Items
 
 | Category | Item | Status | Deferred At |
@@ -91,6 +100,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-12 (Phase 3 code-complete)
-Stopped at: Phase 3 plans 03-01 + 03-02 shipped via PR #8 + PR #9; verify-phase pending real-Ledger smoke
-Resume file: None — next action is the manual Phase 3 verify-phase (requires Ledger device + WALLETCONNECT_PROJECT_ID), OR `/gsd-plan-phase 4` if the user wants to plan ahead while waiting for hardware
+Last session: 2026-05-12 (Phase 4 code-complete — full v1.0 trust pipeline shipped)
+Stopped at: Phase 4 all 5 plans shipped via PRs #12-16; combined Phase 3+4 verify-phase pending real-Ledger smoke
+Resume file: None — next action is the manual combined Phase 3+4 verify-phase (requires Ledger device + `WALLETCONNECT_PROJECT_ID` + small mainnet ETH balance), OR `/gsd-plan-phase 5` if the user wants to plan ahead (Phase 5 = demo mode + diagnostics; depends on Phase 4 patterns being stable, which they now are)
