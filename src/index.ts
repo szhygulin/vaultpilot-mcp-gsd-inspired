@@ -13,8 +13,8 @@ async function main(): Promise<void> {
   }
 
   if (args.includes("--version") || args.includes("-v")) {
-    const { version } = await import("../package.json", { with: { type: "json" } });
-    process.stdout.write(`${version}\n`);
+    const pkg = await import("../package.json", { with: { type: "json" } });
+    process.stdout.write(`${pkg.default.version}\n`);
     process.exit(0);
   }
 
