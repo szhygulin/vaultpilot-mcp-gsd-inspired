@@ -158,6 +158,39 @@ export class InvalidPairingHandleError extends Error {
   }
 }
 
+/**
+ * Thrown by `setActiveAccount` when no live WC session exists. Same
+ * mode-of-failure as `getStatus() === null`; the tool layer maps it to
+ * the `WALLET_NOT_PAIRED` error envelope.
+ */
+export class NotPairedError extends Error {
+  constructor() {
+    super(
+      "no live Ledger session; call pair_ledger_live to pair before selecting an active account",
+    );
+    this.name = "NotPairedError";
+  }
+}
+
+/**
+ * Thrown by `setActiveAccount` when the requested address is not among
+ * the accounts the live session approved. The set of valid addresses is
+ * surfaced so the caller can self-correct without a separate
+ * `get_ledger_status` round-trip.
+ */
+export class AccountNotInSessionError extends Error {
+  public readonly requested: string;
+  public readonly accounts: Address[];
+  constructor(requested: string, accounts: Address[]) {
+    super(
+      `address ${requested} is not in the current Ledger session; approved accounts: ${accounts.join(", ")}`,
+    );
+    this.name = "AccountNotInSessionError";
+    this.requested = requested;
+    this.accounts = accounts;
+  }
+}
+
 // Module-scoped state. Cleared by `_resetSessionManagerForTesting`.
 let inFlightApproval: Promise<PairResult> | undefined;
 let cachedSessionTopic: string | undefined;
@@ -488,6 +521,50 @@ export function getActiveSessionTopic(): string | null {
   if (!client) return null;
   const session = findLiveSession(client);
   return session?.topic ?? null;
+}
+
+/**
+ * Switch the active account for the live WC session. The active account
+ * is what `prepare_*` / `preview_send` / `send_transaction` pass as
+ * `from`; the Ledger device still signs whichever address the user
+ * confirms on-screen, so this is a server-side convenience selector, not
+ * a security boundary.
+ *
+ * Address comparison is checksum-insensitive (via `getAddress`), so
+ * callers passing lowercase / mixed-case hex work identically.
+ *
+ * Throws:
+ *  - `NotPairedError` when no live session exists.
+ *  - `AccountNotInSessionError` when `address` is not among the accounts
+ *    the live session approved. The error carries the in-session list so
+ *    the tool layer can surface it for self-correction.
+ */
+export async function setActiveAccount(address: string): Promise<LedgerStatus> {
+  const client = await getWalletConnectClient();
+  const live = findLiveSession(client);
+  if (!live) {
+    throw new NotPairedError();
+  }
+  // Reuse the same parser the status path uses so behavior cannot drift.
+  const accounts = (live.namespaces.eip155?.accounts ?? []).map(
+    (c) => parseEvmAccountId(c).address,
+  );
+  let normalized: Address;
+  try {
+    normalized = getAddress(address);
+  } catch {
+    // `getAddress` throws on malformed hex. Surface as
+    // "not in session" — the tool-layer schema gate catches malformed
+    // input upstream; this is defense-in-depth.
+    throw new AccountNotInSessionError(address, accounts);
+  }
+  const match = accounts.find((a) => getAddress(a) === normalized);
+  if (!match) {
+    throw new AccountNotInSessionError(address, accounts);
+  }
+  activeAccountByTopic.set(live.topic, normalized);
+  cachedSessionTopic = live.topic;
+  return sessionToStatus(live);
 }
 
 /**
