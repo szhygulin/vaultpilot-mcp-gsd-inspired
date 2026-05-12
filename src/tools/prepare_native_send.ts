@@ -13,11 +13,15 @@
 //
 // Three load-bearing invariants asserted by `test/prepare-native-send.test.ts`:
 //
-//   1. **Demo-mode check FIRES FIRST** (T-DEMO-1) — BEFORE `getStatus` or
-//      `createHandle`. Both spies must observe zero calls in demo mode. A
-//      future contributor that reorders the demo check below the pairing
-//      check would silently leak real-RPC behavior into a simulation
-//      context. Matches Phase 3 03-02's `pair_ledger_live` precedent.
+//   1. **Demo-mode check FIRES FIRST** (T-DEMO-1, T-NULL-PERSONA-1) — BEFORE
+//      `getStatus`. In demo mode (Plan 05-02 / Q-CONTRADICTION-PREP Option B):
+//      use `getActivePersona().address` as `from`; refuse with `WRONG_MODE` if
+//      persona is null. `getStatus` is NEVER called in demo mode — defense
+//      against accidental WC-session reads when no pairing is needed.
+//      `createHandle` IS called in demo mode (Phase 5 — Q-CONTRADICTION-PREP
+//      Option B); the handle flows through preview + send like real mode.
+//      `signClient.request` is NEVER called in demo mode (the gate is in
+//      `send_transaction`).
 //
 //   2. **PREPARE RECEIPT is VERBATIM** (PREP-02 + T-PREP-RCPT-1) — the
 //      block reads from `args.to` + `args.valueWei` (RAW agent strings).
@@ -29,7 +33,10 @@
 //   3. **`payloadFingerprint` computed AT PREPARE TIME** (PREP-03 + T-BIND-1)
 //      via Plan 04-01's `computePayloadFingerprint`. Stored on the handle
 //      record; Plan 04-04 re-checks at send time as the drift gate.
-//      Fixture A inputs → `0x7e1867b2...` (Test 6).
+//      Fixture A inputs → `0x7e1867b2...` (Test 6). PREP-03's preimage is
+//      `chainId || to || valueWei || data` — `from` is NOT in the preimage,
+//      so Fixture A holds REGARDLESS of whether `from` is the paired Ledger
+//      address (real mode) or the persona address (Plan 05-02 demo mode).
 //
 // `chainId: 1` hard-coded per Q3 locked decision (research § Open Questions).
 // Phase 8 PREP-40 generalizes every `prepare_*` with a mandatory `chain`
@@ -45,6 +52,7 @@
 import { type Address, type Hex, getAddress } from "viem";
 
 import { isDemoMode } from "../config/env.js";
+import { getActivePersona } from "../demo/state.js";
 import { PREPARE_RECEIPT_TEMPLATE } from "../signing/blocks.js";
 import {
   type ErrorCode,
@@ -83,7 +91,8 @@ const DESCRIPTION = [
   "Requires a paired Ledger (call pair_ledger_live first if get_ledger_status shows paired: false).",
   "Returns `{ handle, chainId: 1, to, valueWei, payloadFingerprint, prepareReceipt }` plus a PREPARE RECEIPT text block surfacing the verbatim args.",
   "The agent MUST pass the handle to preview_send next — without preview + the resulting previewToken, send_transaction refuses.",
-  "Failure modes: WALLET_NOT_PAIRED if no live session, INVALID_INPUT if to/valueWei malformed, DEMO_MODE_REFUSED if VAULTPILOT_DEMO=true.",
+  "In demo mode, succeeds against the active persona's address (set via set_demo_wallet); send_transaction returns a simulation envelope instead of broadcasting.",
+  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona is set, INVALID_INPUT if to/valueWei malformed.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -107,29 +116,6 @@ const INPUT_SCHEMA = {
 
 registerTool("prepare_native_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
   try {
-    // T-DEMO-1 mitigation: demo-mode check FIRST — before session-manager,
-    // before handle-store. Both spies must observe ZERO calls in this
-    // branch (asserted by `toHaveBeenCalledTimes(0)` in the test suite).
-    // `DEMO_MODE_REFUSED` is in the 13-code ErrorCode union (Plan 04-01's
-    // single source of truth); there is NO `INTERNAL_ERROR + cause`
-    // fallback shape.
-    if (isDemoMode()) {
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text:
-              "error: demo mode is active; signing tools refuse in demo mode. Use `set_demo_wallet` to select a curated persona for read-only flows. (Phase 5 lifts this for send_transaction to a simulation envelope; prepare_native_send remains refused.)",
-          },
-        ],
-        structuredContent: errEnvelope(
-          "DEMO_MODE_REFUSED",
-          "demo mode is active; signing tools are disabled",
-        ),
-      };
-    }
-
     // T-ADDR-1: validate `to` shape BEFORE any state read. Refuses with
     // INVALID_INPUT and names the offending value in the text response so
     // the agent can self-correct. NO handle is created.
@@ -185,26 +171,63 @@ registerTool("prepare_native_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       };
     }
 
-    // T-PAIR-1: confirm pairing. `getStatus()` returns `LedgerStatus | null`;
-    // null means no live session. NO handle is created on the unpaired
-    // branch (defense against state-pollution attacks — `createHandle` spy
-    // observes zero calls in Test 2).
-    const status = await getStatus();
-    if (status === null) {
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text:
-              "error: no live Ledger session. Call `pair_ledger_live` to pair a Ledger via WalletConnect, then retry.",
-          },
-        ],
-        structuredContent: errEnvelope(
-          "WALLET_NOT_PAIRED",
-          "no live Ledger session",
-        ),
-      };
+    // SENDER resolution (Plan 05-02 / Q-CONTRADICTION-PREP Option B):
+    // In demo mode, the active persona's address is `from`; in real mode,
+    // the paired Ledger's address is `from`. T-DEMO-1 + T-NULL-PERSONA-1
+    // mitigation: demo branch SKIPS `getStatus()` (no WC pairing exists in
+    // demo), so the `getStatus` spy observes zero calls in the demo arm.
+    // The `WRONG_MODE` refusal here is defense-in-depth — auto-demo seeds
+    // `whale` so `getActivePersona()` is non-null in practice; the explicit
+    // `VAULTPILOT_DEMO=true` arm without a prior `set_demo_wallet` call is
+    // the only way to reach the null branch.
+    //
+    // T-DEMO-FROM-LEAK-1 mitigation: persona address surfaces in the
+    // receipt + structuredContent as `from`; the simulation banner in
+    // `send_transaction` (Plan 04-04 — locked here) AND the auto-demo
+    // NOTICE (Plan 05-03) make clear the user is NOT signing — they have
+    // no key for this address.
+    let fromAddress: Address;
+    if (isDemoMode()) {
+      const persona = getActivePersona();
+      if (persona === null) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                "error: demo mode is active but no persona set. Call `set_demo_wallet({ persona: \"whale\" | \"defi-degen\" | \"stable-saver\" | \"staking-maxi\" })` first.",
+            },
+          ],
+          structuredContent: errEnvelope(
+            "WRONG_MODE",
+            "demo mode active but no persona set; call set_demo_wallet first",
+          ),
+        };
+      }
+      fromAddress = persona.address;
+    } else {
+      // T-PAIR-1: confirm pairing. `getStatus()` returns `LedgerStatus | null`;
+      // null means no live session. NO handle is created on the unpaired
+      // branch (defense against state-pollution attacks).
+      const status = await getStatus();
+      if (status === null) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                "error: no live Ledger session. Call `pair_ledger_live` to pair a Ledger via WalletConnect, then retry.",
+            },
+          ],
+          structuredContent: errEnvelope(
+            "WALLET_NOT_PAIRED",
+            "no live Ledger session",
+          ),
+        };
+      }
+      fromAddress = status.address;
     }
 
     // chainId hard-coded to 1 (Ethereum mainnet) — v1.0 is mainnet-only.
@@ -256,17 +279,23 @@ registerTool("prepare_native_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       structuredContent: {
         handle,
         chainId: 1,
+        // `from` surfaces the resolved sender (persona address in demo,
+        // paired Ledger address in real mode). Plan 05-02 addition. The
+        // PREPARE_RECEIPT_TEMPLATE text block is unchanged (PREP-02
+        // invariant — receipt is shared with get_tx_verification re-emit
+        // and stays bound to args.to + args.valueWei verbatim).
+        from: fromAddress,
         to,
         valueWei: rawValueWei,
         payloadFingerprint,
       },
     };
   } catch (err) {
-    // Defensive catch-all — the four explicit refusal paths above should
-    // cover all expected failures. INTERNAL_ERROR is the unstructured
-    // fallback (matches Phase 3 03-02 precedent — NOT a demo-mode
-    // fallback; that path is fully covered by the locked DEMO_MODE_REFUSED
-    // code in Plan 04-01's ErrorCode union).
+    // Defensive catch-all — the explicit refusal paths above should cover
+    // all expected failures. INTERNAL_ERROR is the unstructured fallback
+    // (matches Phase 3 03-02 precedent — NOT a demo-mode fallback; the
+    // explicit demo paths above are WRONG_MODE for null-persona (Plan
+    // 05-02) and the persona-aware success branch).
     const message = err instanceof Error ? err.message : String(err);
     return {
       isError: true,

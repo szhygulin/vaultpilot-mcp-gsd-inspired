@@ -88,7 +88,10 @@ vi.mock("viem/actions", async () => {
 });
 
 import { _resetDemoModeForTesting, isDemoMode } from "../src/config/env.js";
-import { _resetActivePersonaForTesting } from "../src/demo/state.js";
+import {
+  _resetActivePersonaForTesting,
+  setActivePersona,
+} from "../src/demo/state.js";
 import {
   _peekHandleForTesting,
   _resetHandleStoreForTesting,
@@ -533,11 +536,19 @@ describe("send_transaction — BROADCAST_FAILED on non-rejection WC error (T-BRO
 
 // ---------------------------------------------------------------------------
 // Test 9 — DEMO-05 simulation envelope; no broadcast (T-DEMO-1, 04-04-10)
+//
+// Plan 05-02 evolution: stub setActivePersona("whale") in this test; the new
+// `account: persona.address` field is passed to viem.call. Assert the spy
+// received whale's address as `account`. Plan 04-04's envelope shape is
+// preserved unchanged.
 // ---------------------------------------------------------------------------
+const WHALE_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+
 describe("send_transaction — DEMO-05 simulation envelope (T-DEMO-1, 04-04-10)", () => {
-  it("VAULTPILOT_DEMO=true + send → runs eth_call, returns simulated:true, signClient.request NOT called", async () => {
+  it("(9a) VAULTPILOT_DEMO=true + whale active + send → runs eth_call with account=whale; simulated:true; signClient.request NOT called", async () => {
     process.env[DEMO_KEY] = "true";
     _resetDemoModeForTesting();
+    setActivePersona("whale");
     expect(isDemoMode()).toBe(true);
     const { handle, previewToken } = seedPreviewedHandle();
     scriptPairedMocks();
@@ -562,6 +573,16 @@ describe("send_transaction — DEMO-05 simulation envelope (T-DEMO-1, 04-04-10)"
     expect(mockSignClientHolder.current!.__requestSpy).not.toHaveBeenCalled();
     // call() was invoked for revert detection.
     expect(callSpy).toHaveBeenCalledTimes(1);
+    // Plan 05-02: viem.call received `account: <whale-address>`. Load-bearing
+    // assertion that the persona's address reaches the simulation as
+    // msg.sender (defense against caller-dependent reverts).
+    const callArgs = callSpy.mock.calls[0]?.[1] as {
+      account: string;
+      to: string;
+      value: bigint;
+      data: string;
+    };
+    expect(callArgs.account).toBe(WHALE_ADDRESS);
     // Handle status remains `previewed` — no real broadcast, no transition.
     const lookupResult = lookup(handle);
     if (!lookupResult.ok) throw new Error("post-simulation: handle not found");
@@ -569,6 +590,26 @@ describe("send_transaction — DEMO-05 simulation envelope (T-DEMO-1, 04-04-10)"
     // Text content carries the SIMULATION banner.
     expect(result.content[0]?.type).toBe("text");
     expect(result.content[0]?.text).toContain("SIMULATION (demo mode)");
+  });
+
+  it("(9c) T-NULL-PERSONA-1 — demo on but no persona → WRONG_MODE; viem.call + signClient.request NEVER called", async () => {
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    _resetActivePersonaForTesting();
+    expect(isDemoMode()).toBe(true);
+    const { handle, previewToken } = seedPreviewedHandle();
+    scriptPairedMocks();
+
+    const result = await callTool({ handle, previewToken, userDecision: "send" });
+
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as { errorCode: string };
+    expect(sc.errorCode).toBe("WRONG_MODE");
+    expect(result.content[0]?.text ?? "").toMatch(/set_demo_wallet/);
+
+    // Defense: NEITHER the simulation NOR the WC forwarding fired.
+    expect(callSpy).not.toHaveBeenCalled();
+    expect(mockSignClientHolder.current!.__requestSpy).not.toHaveBeenCalled();
   });
 });
 

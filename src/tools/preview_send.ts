@@ -15,11 +15,15 @@
 //
 // Three non-negotiable invariants asserted by `test/preview-send.test.ts`:
 //
-//   1. **SENDER address from `getStatus().address`** (T-PIN-1, T-FROM-1) —
-//      `getTransactionCount` reads the SENDER's nonce, NOT `tx.to`'s nonce.
-//      Research § Code Example 3 line 666 names this explicitly as the
-//      anti-foot-gun. Test 1 asserts the mock spy is called with the
-//      paired address from `getStatus()`.
+//   1. **SENDER address from `getStatus().address`** (real mode) OR
+//      `getActivePersona().address` (demo mode per Q-CONTRADICTION-PREP
+//      Option B / Plan 05-02). `getTransactionCount` reads the SENDER's
+//      nonce, NOT `tx.to`'s nonce. Research § Code Example 3 line 666 names
+//      this explicitly as the anti-foot-gun. Test 1 asserts the mock spy is
+//      called with the paired address from `getStatus()`; Plan 05-02 demo
+//      test asserts it is called with the persona's address. Under matched
+//      RPC pins, Fixture C `0xb28e4824...` holds across both modes (the
+//      cryptographic-binding chain regression value).
 //
 //   2. **`presignHash` matches Fixture C byte-for-byte** (T-PRESIGN-1) — for
 //      the documented inputs (chainId 1, nonce 7, gas 21000, maxFeePerGas
@@ -44,12 +48,13 @@
 // `src/signing/blocks.ts` (Plan 04-05) — NOT inlined here. Format-fanout-
 // sentinel: one helper, one home.
 
-import { type Hex } from "viem";
+import { type Address, type Hex } from "viem";
 import { estimateFeesPerGas, estimateGas, getTransactionCount } from "viem/actions";
 
 import { getEthereumClient } from "../chains/ethereum.js";
 import { lookupSelector } from "../clients/fourbyte.js";
 import { isDemoMode } from "../config/env.js";
+import { getActivePersona } from "../demo/state.js";
 import {
   AGENT_TASK_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
@@ -88,7 +93,8 @@ const DESCRIPTION = [
   "Do NOT skip preview_send and call send_transaction directly — send_transaction's schema-level gate refuses without a valid previewToken (which only this tool mints).",
   "Returns `{ previewToken, presignHash, chainId, nonce, gas, maxFeePerGas, maxPriorityFeePerGas, selector, fourbyte }` plus the three-block text payload (LEDGER BLIND-SIGN HASH, AGENT TASK, 4BYTE CROSS-CHECK) and a VERIFY BEFORE SIGNING summary.",
   "Idempotent re-preview (Q4): calling preview_send twice on the same handle re-pins fresh nonce/gas/fees and INVALIDATES the prior previewToken. Only the most recent token matches at send time — call again after a long pause to freshen the pin.",
-  "Failure modes: HANDLE_NOT_FOUND if the handle is unknown, HANDLE_EXPIRED past 15-min TTL, WRONG_STATUS on already-sent or cancelled handles, WALLET_NOT_PAIRED if the WalletConnect session has dropped, DEMO_MODE_REFUSED if VAULTPILOT_DEMO=true.",
+  "In demo mode, succeeds against the active persona's address as the SENDER for nonce/gas/fees resolution; the LEDGER BLIND-SIGN HASH block is emitted unchanged so the rehearsal exercises the same verification ritual the real flow uses.",
+  "Failure modes: HANDLE_NOT_FOUND if the handle is unknown, HANDLE_EXPIRED past 15-min TTL, WRONG_STATUS on already-sent or cancelled handles, WALLET_NOT_PAIRED if the WalletConnect session has dropped (real mode), WRONG_MODE if demo mode is on but no persona is set.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -105,27 +111,6 @@ const INPUT_SCHEMA = {
 
 registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
   try {
-    // T-DEMO-1 mitigation: demo-mode check FIRST — before handle-store
-    // lookup, before viem reads, before 4byte. All downstream spies must
-    // observe ZERO calls in this branch (Test 10). Matches Plan 04-02
-    // precedent.
-    if (isDemoMode()) {
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text:
-              "error: demo mode is active; preview_send refuses in demo mode. Use `set_demo_wallet` to select a curated persona for read-only flows. (Phase 5 evolves demo mode for send_transaction simulation; preview_send remains refused.)",
-          },
-        ],
-        structuredContent: errEnvelope(
-          "DEMO_MODE_REFUSED",
-          "demo mode is active; signing tools are disabled",
-        ),
-      };
-    }
-
     const handleArg = typeof args.handle === "string" ? args.handle : "";
 
     // Lookup the handle. `HANDLE_NOT_FOUND` and `HANDLE_EXPIRED` (15-min
@@ -161,35 +146,63 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       };
     }
 
-    // T-PAIR-1 defense-in-depth: confirm pairing AT PREVIEW TIME. The
-    // session may have dropped between prepare and preview (Ledger app
-    // closed, Live disconnected, WC relay timeout). Surface as
-    // WALLET_NOT_PAIRED — the user re-pairs and re-calls preview_send.
-    const status = await getStatus();
-    if (status === null) {
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text:
-              "error: no live Ledger session. Call `pair_ledger_live` to re-pair via WalletConnect, then retry preview_send.",
-          },
-        ],
-        structuredContent: errEnvelope(
-          "WALLET_NOT_PAIRED",
-          "no live Ledger session at preview time",
-        ),
-      };
+    // SENDER resolution (Plan 05-02 / Q-CONTRADICTION-PREP Option B):
+    // In demo mode, the active persona's address is the SENDER for
+    // `getTransactionCount` + `estimateGas`; in real mode, the paired
+    // Ledger's address is the SENDER. T-DEMO-1 + T-NULL-PERSONA-1
+    // mitigation: demo branch SKIPS `getStatus()` (no WC pairing in demo)
+    // so the `getStatus` spy observes zero calls in the demo arm.
+    //
+    // T-PIN-1 / T-FROM-1: SENDER is NEVER `record.tx.to`. Research §
+    // Code Example 3 line 666 explicit anti-foot-gun: a contributor who
+    // reads `tx.to` would compute the recipient's nonce, not the sender's
+    // — leading to a transaction the network would reject. Test 1 asserts
+    // the address passed to `getTransactionCount` matches the resolved
+    // sender; Plan 05-02 demo test asserts the same against persona.
+    let senderAddress: Address;
+    if (isDemoMode()) {
+      const persona = getActivePersona();
+      if (persona === null) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                "error: demo mode is active but no persona set. Call `set_demo_wallet({ persona: \"whale\" | \"defi-degen\" | \"stable-saver\" | \"staking-maxi\" })` first.",
+            },
+          ],
+          structuredContent: errEnvelope(
+            "WRONG_MODE",
+            "demo mode active but no persona set; call set_demo_wallet first",
+          ),
+        };
+      }
+      senderAddress = persona.address;
+    } else {
+      // T-PAIR-1 defense-in-depth: confirm pairing AT PREVIEW TIME. The
+      // session may have dropped between prepare and preview (Ledger app
+      // closed, Live disconnected, WC relay timeout). Surface as
+      // WALLET_NOT_PAIRED — the user re-pairs and re-calls preview_send.
+      const status = await getStatus();
+      if (status === null) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                "error: no live Ledger session. Call `pair_ledger_live` to re-pair via WalletConnect, then retry preview_send.",
+            },
+          ],
+          structuredContent: errEnvelope(
+            "WALLET_NOT_PAIRED",
+            "no live Ledger session at preview time",
+          ),
+        };
+      }
+      senderAddress = status.address;
     }
-    // T-PIN-1 / T-FROM-1: SENDER is `status.address` (from `getStatus()`),
-    // NOT `record.tx.to`. Research § Code Example 3 line 666 explicit
-    // anti-foot-gun: a contributor who reads `tx.to` would compute the
-    // recipient's nonce, not the sender's — leading to a transaction the
-    // network would reject (or in a weird collision case, re-spend a
-    // recipient's nonce on the sender). Test 1 asserts the address passed
-    // to `getTransactionCount` matches `status.address`.
-    const senderAddress = status.address;
 
     // Resolve nonce / fees / gas concurrently. Pin AT PREVIEW TIME
     // (research § Anti-Patterns line 416). RPC errors here are

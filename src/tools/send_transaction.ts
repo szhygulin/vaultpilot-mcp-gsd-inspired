@@ -39,18 +39,23 @@
 // No broadcast. The handle is NOT immediately evicted; lazy TTL reclaims
 // it at the 15-min mark.
 //
-// Demo mode (DEMO-05 anticipated): unlike `prepare_native_send` +
-// `preview_send` (which refuse), `send_transaction` in demo mode runs the
-// unsigned tx through `eth_call` for revert detection and returns a
-// structured simulation envelope. NOTHING is signed; NOTHING is broadcast.
-// Phase 5 evolves the implementation (persona-aware mocks); the envelope
-// shape is locked HERE so Phase 5 doesn't reshape it.
+// Demo mode (DEMO-05 — Plan 05-02 wired): `userDecision: "send"` in demo
+// mode passes the active persona's address as `account` to viem.call so
+// the simulation has a meaningful msg.sender. NOTHING is signed; NOTHING
+// is broadcast. The simulation envelope shape is locked HERE (Phase 4
+// 04-04); Plan 05-02 only added the `account` field to the viem.call and
+// the persona-null defense (refuses with WRONG_MODE if isDemoMode is true
+// but getActivePersona() is null — the explicit-demo-without-set_demo_wallet
+// path). Q-CONTRADICTION-PREP Option B: under this plan, `prepare_native_send`
+// + `preview_send` ALSO succeed in demo (against persona address); the demo
+// pipeline is rehearsable end-to-end through the actual tool surface.
 
 import { type Hex, toHex } from "viem";
 import { call } from "viem/actions";
 
 import { getEthereumClient } from "../chains/ethereum.js";
 import { isDemoMode } from "../config/env.js";
+import { getActivePersona } from "../demo/state.js";
 import {
   type ErrorCode,
   type StructuredError,
@@ -310,17 +315,43 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
       };
     }
 
-    // DEMO-05 anticipated: demo-mode `userDecision: "send"` runs the
+    // DEMO-05 (Plan 05-02 wired): demo-mode `userDecision: "send"` runs the
     // unsigned tx through eth_call for revert detection. NOTHING signed;
-    // NOTHING broadcast. The simulation envelope shape is locked here for
-    // Phase 5 to inherit (T-DEMO-1 mitigation — `signClient.request` spy
-    // observes ZERO calls in this branch).
+    // NOTHING broadcast. The simulation envelope shape is locked here
+    // (Phase 4 — T-DEMO-1 mitigation; `signClient.request` spy observes
+    // ZERO calls in this branch). Plan 05-02 added `account: persona.address`
+    // so the simulation has a meaningful msg.sender (defense against reverts
+    // that depend on caller — common for token approval / staking flows).
     if (isDemoMode()) {
+      // T-NULL-PERSONA-1: explicit `VAULTPILOT_DEMO=true` without prior
+      // `set_demo_wallet` → `getActivePersona()` is null. viem accepts
+      // `account: undefined` (msg.sender defaults to 0x0) but the
+      // simulation result becomes meaningless for caller-dependent reverts.
+      // Refuse explicitly so the agent sees a clear signal to call
+      // `set_demo_wallet` first.
+      const persona = getActivePersona();
+      if (persona === null) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                "error: demo mode is active but no persona set. Call `set_demo_wallet({ persona: \"whale\" | \"defi-degen\" | \"stable-saver\" | \"staking-maxi\" })` first.",
+            },
+          ],
+          structuredContent: errEnvelope(
+            "WRONG_MODE",
+            "demo mode active but no persona set; call set_demo_wallet first",
+          ),
+        };
+      }
       const client = getEthereumClient();
       let simulationResult: Hex | null = null;
       let simulationError: string | null = null;
       try {
         const callResult = await call(client, {
+          account: persona.address,
           to: record.tx.to,
           value: record.tx.valueWei,
           data: record.tx.data,
