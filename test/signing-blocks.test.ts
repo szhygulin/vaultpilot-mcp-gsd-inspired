@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
+import type { Hex } from "viem";
 
 import {
   AGENT_TASK_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
   PREPARE_RECEIPT_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
+  build4byteBlock,
   chunkHex,
 } from "../src/signing/blocks.js";
+import type { FourbyteResult } from "../src/clients/fourbyte.js";
 
 describe("PREPARE_RECEIPT_TEMPLATE — verbatim substitution (PREP-02, T-PREP-RCPT-1)", () => {
   it("substitutes a LOWERCASE address verbatim — no checksum normalization", () => {
@@ -98,5 +101,64 @@ describe("chunkHex — splits 32-byte hex into 16 four-char groups", () => {
     expect(() =>
       chunkHex(`0xZZZZ${"00".repeat(30)}` as `0x${string}`),
     ).toThrow(/32-byte 0x-prefixed hex/);
+  });
+});
+
+describe("build4byteBlock — renders the four FourbyteResult kinds verbatim", () => {
+  it("kind: 'not-applicable' (selector === null, native send) — block shows not-applicable", () => {
+    const result: FourbyteResult = { kind: "not-applicable" };
+    const block = build4byteBlock(null, result);
+
+    expect(block).toContain("4BYTE CROSS-CHECK");
+    expect(block).toContain("not-applicable");
+    // Native sends have no selector — the block names that condition
+    // explicitly so the user understands why no decode is shown.
+    expect(block.toLowerCase()).toMatch(/no\s+function\s+call\s+data|data\s+is\s+0x|native/);
+  });
+
+  it("kind: 'found' — block shows selector + verbatim text_signature", () => {
+    const selector = "0xa9059cbb" as Hex;
+    const result: FourbyteResult = {
+      kind: "found",
+      textSignature: "transfer(address,uint256)",
+    };
+    const block = build4byteBlock(selector, result);
+
+    expect(block).toContain("4BYTE CROSS-CHECK");
+    expect(block).toContain("0xa9059cbb");
+    expect(block).toContain("transfer(address,uint256)");
+  });
+
+  it("kind: 'not-found' — block shows selector + 'no signature found' note", () => {
+    const selector = "0xdeadbeef" as Hex;
+    const result: FourbyteResult = { kind: "not-found" };
+    const block = build4byteBlock(selector, result);
+
+    expect(block).toContain("4BYTE CROSS-CHECK");
+    expect(block).toContain("0xdeadbeef");
+    expect(block.toLowerCase()).toMatch(/no\s+(known\s+)?signature|not\s+found/);
+  });
+
+  it("kind: 'error' — block shows the verbatim error message (PREP-06 no silent fallback)", () => {
+    const selector = "0xa9059cbb" as Hex;
+    const result: FourbyteResult = {
+      kind: "error",
+      message: "4byte.directory unreachable (timeout 1.5s)",
+    };
+    const block = build4byteBlock(selector, result);
+
+    expect(block).toContain("4BYTE CROSS-CHECK");
+    expect(block).toContain("0xa9059cbb");
+    // Verbatim error message ships through to the user — never masked.
+    expect(block).toContain("4byte.directory unreachable (timeout 1.5s)");
+  });
+
+  it("adversarial text_signature surfaces verbatim — never re-parsed (T-4BYTE-1)", () => {
+    const selector = "0xa9059cbb" as Hex;
+    const adversarial = "transfer(address,uint256) /* OWNED */";
+    const result: FourbyteResult = { kind: "found", textSignature: adversarial };
+    const block = build4byteBlock(selector, result);
+
+    expect(block).toContain(adversarial);
   });
 });
