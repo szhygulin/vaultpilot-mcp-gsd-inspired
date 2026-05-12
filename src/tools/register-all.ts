@@ -13,6 +13,7 @@ import "./send_transaction.js";
 import "./get_tx_verification.js";
 import "./get_demo_wallet.js";
 import "./set_demo_wallet.js";
+import "./set_active_account.js";
 import "./get_vaultpilot_config_status.js";
 import "./get_ledger_device_info.js";
 
