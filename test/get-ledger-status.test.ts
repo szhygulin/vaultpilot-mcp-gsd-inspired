@@ -16,6 +16,12 @@ vi.mock("../src/wallet/session-manager.js", async () => {
     pair: vi.fn(async () => {
       throw new Error("pair should not be called from get_ledger_status tests");
     }),
+    pairStart: vi.fn(async () => {
+      throw new Error("pairStart should not be called from get_ledger_status tests");
+    }),
+    pairWait: vi.fn(async () => {
+      throw new Error("pairWait should not be called from get_ledger_status tests");
+    }),
     disconnect: vi.fn(async () => undefined),
   };
 });
@@ -103,9 +109,11 @@ describe("get_ledger_status tool — handler shape", () => {
 });
 
 describe("register-all.ts wiring — Phase 3 tools registered (smoke)", () => {
-  it("both pair_ledger_live AND get_ledger_status are present after register-all import", () => {
+  it("pair_ledger_live, pair_ledger_live_start, pair_ledger_live_wait, get_ledger_status all present after register-all import", () => {
     const names = listRegisteredTools().map((t) => t.name);
     expect(names).toContain("pair_ledger_live");
+    expect(names).toContain("pair_ledger_live_start");
+    expect(names).toContain("pair_ledger_live_wait");
     expect(names).toContain("get_ledger_status");
   });
 });

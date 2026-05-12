@@ -22,6 +22,7 @@ vi.mock("@walletconnect/sign-client", () => {
 
 import {
   ApprovalTimeoutError,
+  InvalidPairingHandleError,
   PendingPairingError,
   UserRejectedPairingError,
   _resetSessionManagerForTesting,
@@ -29,6 +30,8 @@ import {
   getActiveSessionTopic,
   getStatus,
   pair,
+  pairStart,
+  pairWait,
 } from "../src/wallet/session-manager.js";
 import {
   _resetWalletConnectClientForTesting,
@@ -338,5 +341,165 @@ describe("session-manager.getActiveSessionTopic() — Plan 04-04 Q2", () => {
     mockSignClient._simulateSessionDelete(session.topic);
     mockSignClient._setSessionsInStore([]);
     expect(getActiveSessionTopic()).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pairStart + pairWait — two-phase pairing flow (bug fix for WC URI deadlock)
+//
+// Root cause: pair() awaits approval() before returning anything, meaning the
+// wcUri that must reach the user is trapped until the 60s race resolves.
+// Fix: pairStart() calls client.connect(), emits wcUri immediately, parks
+// the approval promise under a handle. pairWait(handle) retrieves + races
+// the parked promise against a timeout.
+// ---------------------------------------------------------------------------
+describe("session-manager.pairStart() — URI returned immediately, handle parked", () => {
+  it("returns wcUri + a non-empty handle BEFORE approval fires", async () => {
+    // pairStart MUST return before the approval deferred is resolved.
+    // We DON'T call _simulateApproval before awaiting pairStart — if the
+    // implementation awaited approval() inside pairStart, this would hang.
+    const startPromise = pairStart();
+    // Wait for connect() to be called so the mock captures the deferred.
+    await waitUntilConnectCalled();
+    const startResult = await startPromise;
+
+    expect(startResult.wcUri).toBe(mockSignClient._wcUri);
+    expect(startResult.pairingHandle).toMatch(/^wch-\d+-\d+$/);
+    // connect() fired exactly once.
+    expect(mockSignClient.client.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it("pairWait(handle) returns LedgerStatus after approval", async () => {
+    const session = buildMockSession({ chainId: 1, address: ADDRESS, topic: TOPIC });
+
+    const startPromise = pairStart();
+    await waitUntilConnectCalled();
+    const { pairingHandle } = await startPromise;
+
+    // Approval fires AFTER pairStart returns — simulating the user pasting
+    // the URI into Ledger Live and approving.
+    const waitPromise = pairWait(pairingHandle);
+    mockSignClient._simulateApproval(session);
+
+    const status = await waitPromise;
+    expect(status).toEqual({
+      paired: true,
+      address: ADDRESS,
+      chainId: 1,
+      sessionTopicLast8: "00c0ffee",
+    });
+  });
+
+  it("pairWait throws InvalidPairingHandleError for an unknown handle", async () => {
+    await expect(pairWait("wch-0-bogus")).rejects.toBeInstanceOf(InvalidPairingHandleError);
+  });
+
+  it("pairWait throws ApprovalTimeoutError when budget elapses with no approval", async () => {
+    // Use fake timers. pairStart itself calls client.connect() which is an
+    // async mock — it resolves via a microtask (not a timer), so
+    // advanceTimersByTimeAsync will flush it before the 60s timer fires.
+    // We do NOT use waitUntilConnectCalled here because setImmediate is
+    // also mocked under fake timers; advanceTimersByTimeAsync drives both.
+    vi.useFakeTimers();
+
+    const startPromise = pairStart();
+    // Advance enough for connect() to resolve (microtask) and for pairStart
+    // to return. A tiny advancement flushes microtasks.
+    await vi.advanceTimersByTimeAsync(1);
+    const { pairingHandle } = await startPromise;
+
+    const waitPromise = pairWait(pairingHandle, 60_000);
+    // Attach catch so the rejection doesn't surface as unhandled while we
+    // advance fake timers.
+    const settled = waitPromise.catch((err) => err);
+    await vi.advanceTimersByTimeAsync(60_001);
+
+    const err = await settled;
+    expect(err).toBeInstanceOf(ApprovalTimeoutError);
+  });
+
+  it("pairWait wraps WC user-rejected in UserRejectedPairingError", async () => {
+    const wcError = { code: 5000, message: "User rejected." };
+
+    const startPromise = pairStart();
+    await waitUntilConnectCalled();
+    const { pairingHandle } = await startPromise;
+
+    const waitPromise = pairWait(pairingHandle);
+    mockSignClient._simulateRejection(wcError);
+
+    let caught: unknown;
+    try {
+      await waitPromise;
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(UserRejectedPairingError);
+    expect((caught as UserRejectedPairingError).cause).toEqual(wcError);
+  });
+
+  it("pairStart reuses cached live session, returns wcUri '' + handle 'cached'", async () => {
+    // Warm up the WalletConnect client by completing a real pair() first
+    // (no session in store yet — pair() will call connect()).
+    const session = buildMockSession({ chainId: 1, address: ADDRESS, topic: TOPIC });
+    const first = pair();
+    await waitUntilConnectCalled(1);
+    mockSignClient._simulateApproval(session);
+    await first;
+
+    // Now seed the session store so findLiveSession() returns it.
+    mockSignClient._setSessionsInStore([session]);
+
+    // Reset connect spy count so the assertion below is relative to this
+    // pairStart() call only.
+    mockSignClient.client.connect.mockClear();
+
+    // pairStart() should see the live session and short-circuit.
+    const result = await pairStart();
+    expect(result.wcUri).toBe("");
+    expect(result.pairingHandle).toBe("cached");
+    // connect() must NOT be called when returning cached session.
+    expect(mockSignClient.client.connect).toHaveBeenCalledTimes(0);
+  });
+
+  it("second pairStart() while one is in flight throws PendingPairingError", async () => {
+    const first = pairStart();
+    await waitUntilConnectCalled();
+    await expect(pairStart()).rejects.toBeInstanceOf(PendingPairingError);
+
+    // Clean up.
+    const { pairingHandle } = await first;
+    const session = buildMockSession({ chainId: 1, address: ADDRESS, topic: TOPIC });
+    const waitPromise = pairWait(pairingHandle);
+    mockSignClient._simulateApproval(session);
+    await waitPromise;
+  });
+
+  it("force:true on pairStart clears stale handle before re-connecting", async () => {
+    // Start phase-1. Do NOT resolve the approval — we want a stale handle.
+    const firstStartPromise = pairStart();
+    await waitUntilConnectCalled(1);
+    const { pairingHandle: oldHandle } = await firstStartPromise;
+
+    // Force a new pairStart. This clears pendingHandles and reconnects.
+    // The inFlightApproval is also held by the first start's pairResultProxy,
+    // but force: true bypasses the pending check and calls disconnect first.
+    const freshStart = pairStart({ force: true });
+    await waitUntilConnectCalled(2);
+    const { pairingHandle: newHandle } = await freshStart;
+
+    // Old handle should be gone.
+    await expect(pairWait(oldHandle)).rejects.toBeInstanceOf(InvalidPairingHandleError);
+
+    // New handle resolves normally.
+    const newSession = buildMockSession({
+      chainId: 1,
+      address: ADDRESS,
+      topic: "0xaaaa000000000000000000000000000000000000000000000000000000feed99",
+    });
+    const waitNew = pairWait(newHandle);
+    mockSignClient._simulateApproval(newSession);
+    const status = await waitNew;
+    expect(status.paired).toBe(true);
   });
 });

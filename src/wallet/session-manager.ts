@@ -7,12 +7,21 @@
 //   - `pair({ force? })`: connect and race the WC `approval()` against a
 //     60s timeout (PAIR-01). With an existing live session, returns the
 //     cached one unless `force: true` (PAIR-05).
+//   - `pairStart({ force? })`: phase-1 of the two-phase pairing flow —
+//     calls `client.connect()`, surfaces the WC URI immediately, parks the
+//     `approval` promise under a generated handle. Returns immediately.
+//   - `pairWait(handle, timeoutMs?)`: phase-2 — retrieves the parked
+//     `approval` promise and races it against a timeout. Returns
+//     `LedgerStatus` once the user approves in Ledger Live.
 //   - `getStatus()`: derive `{ address, chainId, sessionTopicLast8 }` from
 //     the WC session store, filtering by `expiry > now` (T-WC-EXP-1).
 //   - `disconnect(topic)`: tear down the named session.
 //
 // Concurrency rules (research § Pitfall 3): only one in-flight `pair()`
 // at a time. Second `pair()` while one is pending → `PendingPairingError`.
+// The two-phase flow (`pairStart`/`pairWait`) shares the same in-flight
+// guard: a `pairStart` while one is already started but not yet resolved
+// also throws `PendingPairingError`.
 //
 // Listener lifecycle: a single `session_delete` listener is registered on
 // the SignClient the first time a session is observed. It clears the
@@ -70,6 +79,17 @@ export interface PairResult {
   status: LedgerStatus;
 }
 
+/**
+ * Result of `pairStart()`. The `wcUri` is surfaced to the agent immediately
+ * so the user can paste it into Ledger Live. The `pairingHandle` is an
+ * opaque token passed to `pairWait()` to collect the session once the user
+ * approves.
+ */
+export interface PairStartResult {
+  wcUri: string;
+  pairingHandle: string;
+}
+
 export class ApprovalTimeoutError extends Error {
   constructor() {
     super(
@@ -105,10 +125,47 @@ export class PendingPairingError extends Error {
   }
 }
 
+/**
+ * Thrown by `pairWait()` when the supplied handle is not found in the
+ * in-flight store — either it was never created, it already resolved/timed
+ * out, or `force: true` cleared it.
+ */
+export class InvalidPairingHandleError extends Error {
+  constructor(handle: string) {
+    super(
+      `Pairing handle "${handle}" is not active. ` +
+        "Call pair_ledger_live_start to obtain a fresh handle, then pair_ledger_live_wait with that handle.",
+    );
+    this.name = "InvalidPairingHandleError";
+  }
+}
+
 // Module-scoped state. Cleared by `_resetSessionManagerForTesting`.
 let inFlightApproval: Promise<PairResult> | undefined;
 let cachedSessionTopic: string | undefined;
 let sessionDeleteListenerRegistered = false;
+
+/**
+ * In-flight store for two-phase pairing. Maps pairingHandle → approval
+ * settlement promise. A handle is added by `pairStart()` and removed once
+ * `pairWait()` consumes it (success or error) or when `force: true` clears
+ * state in a subsequent `pairStart()` / `pair()`.
+ *
+ * Invariant: at most ONE entry at a time (same single-in-flight constraint
+ * as `inFlightApproval`). The guard is the shared `inFlightApproval` slot —
+ * while a handle is parked, `inFlightApproval` is set; a second `pairStart`
+ * will see a non-null `inFlightApproval` and throw `PendingPairingError`.
+ */
+const pendingHandles = new Map<string, Promise<LedgerStatus>>();
+
+// Simple monotonic counter for handle generation. Prefixed with "wch-" so
+// tests can assert the shape without pattern-matching raw hex or UUIDs.
+let handleCounter = 0;
+
+function generateHandle(): string {
+  handleCounter += 1;
+  return `wch-${handleCounter}-${Date.now()}`;
+}
 
 type WalletConnectClient = Awaited<ReturnType<typeof getWalletConnectClient>>;
 
@@ -150,6 +207,10 @@ export async function pair(
       });
       if (cachedSessionTopic === existing.topic) cachedSessionTopic = undefined;
     }
+    // Clear any parked two-phase handle so a subsequent pairWait with a
+    // stale handle gets InvalidPairingHandleError rather than resolving
+    // against a disconnected approval promise.
+    pendingHandles.clear();
   } else {
     const existing = findLiveSession(client);
     if (existing) {
@@ -201,6 +262,166 @@ export async function pair(
     return await operation;
   } finally {
     inFlightApproval = undefined;
+  }
+}
+
+/**
+ * Phase-1 of the two-phase pairing flow.
+ *
+ * Calls `client.connect()` to obtain the WC pairing URI immediately, parks
+ * the `approval` promise in the pending-handles store, and returns
+ * `{ wcUri, pairingHandle }` without waiting for approval. The agent surfaces
+ * `wcUri` to the user who pastes it into Ledger Live → Settings →
+ * WalletConnect → Connect. The agent then calls `pairWait(pairingHandle)` to
+ * block until the user approves.
+ *
+ * Guards:
+ * - `force: false` (default): cached live session → returned with empty `wcUri`
+ *   and a sentinel handle `"cached"`. `pairWait("cached")` will still
+ *   produce `InvalidPairingHandleError`; the caller should use
+ *   `get_ledger_status` instead when `wcUri` is empty (agent routing hint
+ *   in the tool description).
+ * - `force: true`: disconnects any existing session first, clears stale
+ *   handles.
+ * - Concurrent `pairStart` while an approval is in flight →
+ *   `PendingPairingError`.
+ *
+ * Throws: `MissingProjectIdError`, `PendingPairingError`.
+ */
+export async function pairStart(
+  { force = false }: { force?: boolean } = {},
+): Promise<PairStartResult> {
+  // Same in-flight guard as pair() — one approval at a time.
+  if (!force && inFlightApproval) {
+    throw new PendingPairingError();
+  }
+
+  const client = await getWalletConnectClient();
+  await ensureSessionDeleteListener(client);
+
+  if (force) {
+    const existing = findLiveSession(client);
+    if (existing) {
+      await client.disconnect({
+        topic: existing.topic,
+        reason: getSdkError("USER_DISCONNECTED"),
+      });
+      if (cachedSessionTopic === existing.topic) cachedSessionTopic = undefined;
+    }
+    pendingHandles.clear();
+  } else {
+    const existing = findLiveSession(client);
+    if (existing) {
+      const status = sessionToStatus(existing);
+      cachedSessionTopic = existing.topic;
+      // Return the cached-session sentinel so the tool layer can detect
+      // "already paired" without a separate getStatus() round-trip.
+      return { wcUri: "", pairingHandle: "cached" };
+    }
+  }
+
+  // Call connect() — this does one relay round-trip and returns uri +
+  // approval() immediately. The URI is available NOW; we must NOT await
+  // approval() here.
+  const { uri, approval } = await client.connect({
+    requiredNamespaces: REQUIRED_NAMESPACES,
+  });
+  if (!uri) {
+    throw new Error("WalletConnect returned no URI; relay unreachable?");
+  }
+
+  const handle = generateHandle();
+
+  // Build the settlement promise and park it. The promise wraps approval()
+  // with user-rejected detection and updates session state on success. It
+  // does NOT apply its own timeout — the timeout belongs to pairWait() so
+  // the agent controls the budget per call.
+  const settlementPromise: Promise<LedgerStatus> = (async () => {
+    let session: SessionTypes.Struct;
+    try {
+      session = await approval();
+    } catch (err) {
+      if (isUserRejectedError(err)) {
+        throw new UserRejectedPairingError(err);
+      }
+      throw err;
+    } finally {
+      // Always clean up the handle so pairWait with a resolved/rejected
+      // handle gets InvalidPairingHandleError on a second call.
+      pendingHandles.delete(handle);
+    }
+    const status = sessionToStatus(session);
+    cachedSessionTopic = session.topic;
+    return status;
+  })();
+
+  // Suppress unhandled-rejection tracking on `settlementPromise` and on
+  // the derived `pairResultProxy`. Both are stored but never directly
+  // awaited by callers — callers go through `pairWait()` which races the
+  // settlement promise. Without these noop catches, any rejection that fires
+  // before `pairWait` is called (or after a timeout) becomes a Node.js
+  // unhandled rejection even though the error will propagate correctly once
+  // `pairWait` runs. Errors still reach callers through the race result.
+  void settlementPromise.catch(() => {
+    // Intentional noop — rejection surfaces via pairWait().
+  });
+
+  pendingHandles.set(handle, settlementPromise);
+
+  // Stake the in-flight slot. It is released when settlementPromise settles.
+  // `pairResultProxy` is only checked for truthiness (concurrent-call guard);
+  // it is never awaited, so we suppress its rejection too.
+  const pairResultProxy: Promise<PairResult> = settlementPromise.then(
+    (status) => ({ wcUri: uri, status }),
+  );
+  void pairResultProxy.catch(() => {
+    // Intentional noop — rejection surfaces via pairWait().
+  });
+  inFlightApproval = pairResultProxy;
+  void settlementPromise.finally(() => {
+    if (inFlightApproval === pairResultProxy) {
+      inFlightApproval = undefined;
+    }
+  }).catch(() => {
+    // Intentional noop — suppresses unhandled-rejection on the finally-derived promise.
+  });
+
+  log("info", `pairStart: URI obtained, handle=${handle}, awaiting user approval in Ledger Live`);
+
+  return { wcUri: uri, pairingHandle: handle };
+}
+
+/**
+ * Phase-2 of the two-phase pairing flow.
+ *
+ * Retrieves the parked `approval` promise for `handle` and races it against
+ * a timeout (default: `APPROVAL_TIMEOUT_MS = 60s`). Returns `LedgerStatus`
+ * once the user approves in Ledger Live.
+ *
+ * Throws:
+ * - `InvalidPairingHandleError` if `handle` is not found (stale, already
+ *   resolved, or never created).
+ * - `ApprovalTimeoutError` if the user does not approve within `timeoutMs`.
+ * - `UserRejectedPairingError` if the user rejects in Ledger Live.
+ */
+export async function pairWait(
+  handle: string,
+  timeoutMs: number = APPROVAL_TIMEOUT_MS,
+): Promise<LedgerStatus> {
+  const settlementPromise = pendingHandles.get(handle);
+  if (!settlementPromise) {
+    throw new InvalidPairingHandleError(handle);
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new ApprovalTimeoutError()), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([settlementPromise, timeoutPromise]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -291,4 +512,6 @@ export function _resetSessionManagerForTesting(): void {
   inFlightApproval = undefined;
   cachedSessionTopic = undefined;
   sessionDeleteListenerRegistered = false;
+  pendingHandles.clear();
+  handleCounter = 0;
 }
