@@ -21,6 +21,7 @@
 
 import { vi } from "vitest";
 import type { SessionTypes } from "@walletconnect/types";
+import type { Hex } from "viem";
 
 /**
  * A mocked `SignClient` instance plus a scenario-control API.
@@ -30,6 +31,13 @@ import type { SessionTypes } from "@walletconnect/types";
  * `_simulate*` BEFORE awaiting the operation under test — the approval
  * Promise returned from `connect()` will be resolved/rejected by whichever
  * `_simulate*` method was last called.
+ *
+ * Plan 04-01 extension (additive — Phase 3 API preserved verbatim): the
+ * `client.request(...)` shim consults `_setRequestResponse(method, hash)` /
+ * `_setRequestRejection(method, err)` maps so Phase 4's `send_transaction`
+ * forwarding tests can script `eth_sendTransaction` responses without a
+ * real WalletConnect relay. Every invocation is captured on `__requestSpy`
+ * for call-arg assertions.
  */
 export interface MockSignClient {
   /** Pretends to be a `SignClient` for the session-manager + walletconnect-client. */
@@ -39,6 +47,7 @@ export interface MockSignClient {
     session: { getAll: ReturnType<typeof vi.fn> };
     on: ReturnType<typeof vi.fn>;
     off: ReturnType<typeof vi.fn>;
+    request: ReturnType<typeof vi.fn>;
   };
 
   /** Resolve the pending `approval()` Promise with the given session. */
@@ -55,6 +64,23 @@ export interface MockSignClient {
   _simulateSessionDelete: (topic: string) => void;
   /** Replace the array returned by `client.session.getAll()`. */
   _setSessionsInStore: (sessions: SessionTypes.Struct[]) => void;
+
+  // ----- Plan 04-01 extension (Phase 4 eth_sendTransaction scripting) -----
+
+  /**
+   * Script the value `signClient.request({ request: { method, ... } })`
+   * resolves to. Resolution priority: rejection map > response map > default
+   * "no scripted response" reject. Last-write wins for the same method.
+   */
+  _setRequestResponse: (method: string, hash: Hex) => void;
+  /**
+   * Script the error `signClient.request({ request: { method, ... } })`
+   * rejects with. Wins over `_setRequestResponse` for the same method.
+   */
+  _setRequestRejection: (method: string, err: { code?: number; message: string }) => void;
+  /** Spy capturing every `signClient.request(...)` invocation (for call-arg assertions). */
+  __requestSpy: ReturnType<typeof vi.fn>;
+
   /**
    * The pairing URI returned from `connect()`. Defaults to a fixed test
    * value; override if a test needs to assert a custom URI shape.
@@ -72,6 +98,29 @@ export function createMockSignClient(): MockSignClient {
   let resolveApproval: ((session: SessionTypes.Struct) => void) | undefined;
   let rejectApproval: ((err: unknown) => void) | undefined;
   const sessionDeleteHandlers: Array<(args: { topic: string }) => void> = [];
+
+  // Plan 04-01 extension: per-method response/rejection maps for
+  // `signClient.request(...)` scripting. Resolution priority on each call:
+  //   1. rejection map (wins if set for the method)
+  //   2. response map (returns the scripted hash)
+  //   3. default reject so a missing setup fails loudly
+  const requestResponses = new Map<string, Hex>();
+  const requestRejections = new Map<string, { code?: number; message: string }>();
+  const requestSpy = vi.fn(async (params: { topic: string; chainId: string; request: { method: string; params: unknown } }) => {
+    const method = params?.request?.method;
+    if (typeof method !== "string") {
+      throw new Error("MockSignClient: signClient.request called without request.method");
+    }
+    const rejection = requestRejections.get(method);
+    if (rejection) {
+      throw rejection;
+    }
+    const response = requestResponses.get(method);
+    if (response !== undefined) {
+      return response;
+    }
+    throw new Error(`MockSignClient: no scripted response for method ${method}`);
+  });
 
   const mock: MockSignClient = {
     client: {
@@ -107,6 +156,7 @@ export function createMockSignClient(): MockSignClient {
         }
         return mock.client;
       }),
+      request: requestSpy,
     },
     _simulateApproval: (session) => {
       if (!resolveApproval) {
@@ -139,6 +189,13 @@ export function createMockSignClient(): MockSignClient {
     _setSessionsInStore: (sessions) => {
       sessionsInStore = sessions;
     },
+    _setRequestResponse: (method, hash) => {
+      requestResponses.set(method, hash);
+    },
+    _setRequestRejection: (method, err) => {
+      requestRejections.set(method, err);
+    },
+    __requestSpy: requestSpy,
     _wcUri: "wc:test-uri@2?relay-protocol=irn&symKey=deadbeef",
   };
 
