@@ -6,7 +6,7 @@ The journey: a working trust pipeline first (one chain, one signing flow, end-to
 
 ## Milestones
 
-- 📋 **v1.0 MVP** — Phases 1-5 (Ethereum native sends, demo mode, install + diagnostics)
+- 🟡 **v1.0 MVP** — Phases 1-5 **code-complete**; combined Phase 3+4+5 verify-phase is the ship gate (real Ledger + small mainnet broadcast + auto-demo + persona rehearsal + diagnostics)
 - 📋 **v1.1 Aave + ERC-20 lifecycle** — Phases 6-7 (transfer + approve + revoke + WETH unwrap + Aave V3)
 - 📋 **v1.2 Multi-EVM + token tooling** — Phase 8 (5 EVM chains + `resolve_token` + `get_token_allowances`)
 - 📋 **v1.3 Hardening + skill** — Phase 9 (companion skill, three verification tools, dispatch allowlist)
@@ -122,9 +122,11 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 05-01: Demo-mode runtime flag resolution (env > config > auto-detect) + curated persona registry + `set_demo_wallet` state
-- [ ] 05-02: Demo-mode signing intercepts (refuse `pair_ledger_live`, simulate `send_transaction`) + simulation envelope shape
-- [ ] 05-03: `get_vaultpilot_config_status` + `get_ledger_device_info` + once-per-session update check + auto-demo first-response NOTICE
+- [x] 05-01: Demo-mode runtime flag resolution (env > config > auto-detect) + curated persona registry + `set_demo_wallet` state — PR #19
+- [x] 05-02: Demo-mode signing intercepts (Q-CONTRADICTION-PREP Option B — `prepare_native_send` + `preview_send` succeed in demo via persona address; `send_transaction` simulates) + simulation envelope shape — PR #20
+- [x] 05-03: `get_vaultpilot_config_status` + `get_ledger_device_info` + once-per-session update check + auto-demo first-response NOTICE dispatcher-wrap + INSTRUCTIONS rewrite — PR #21
+
+**Status**: code-complete; **v1.0 MVP feature set DONE** (Phases 1-5 cover INST + READ + PAIR + PREP + DEMO + DIAG entire requirement set). Combined Phase 3+4+5 verify-phase is the v1.0 ship gate.
 
 ---
 
