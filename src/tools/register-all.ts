@@ -11,6 +11,8 @@ import "./send_transaction.js";
 import "./get_tx_verification.js";
 import "./get_demo_wallet.js";
 import "./set_demo_wallet.js";
+import "./get_vaultpilot_config_status.js";
+import "./get_ledger_device_info.js";
 
 export function registerAllTools(): void {
   // Tool modules register on import. Phase 2+ adds imports above this comment.
