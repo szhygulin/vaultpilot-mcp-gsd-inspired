@@ -285,7 +285,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 3. WalletConnect pairing | v1.0 | 0/2 | Not started | - |
 | 4. Native ETH send (the trust pipeline) | v1.0 | 0/5 | Not started | - |
 | 5. Demo mode + diagnostics | v1.0 | 0/3 | Not started | - |
-| 6. ERC-20 lifecycle (transfer + approve + revoke + WETH unwrap) | v1.1 | 0/4 | Not started | - |
+| 6. ERC-20 lifecycle (transfer + approve + revoke + WETH unwrap) | v1.1 | 0/4 | Planned (bundle on `plan/phase-06`) | - |
 | 7. Aave V3 (Ethereum) | v1.1 | 0/4 | Not started | - |
 | 8. Multi-EVM fan-out + token tooling | v1.2 | 0/5 | Not started | - |
 | 9. Hardening (skill + three verification tools + dispatch allowlist) | v1.3 | 0/5 | Not started | - |
