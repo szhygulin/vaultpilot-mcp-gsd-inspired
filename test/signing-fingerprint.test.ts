@@ -42,6 +42,29 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     expect(fp).toBe("0x20fe784f2025af75b0f47cbb71c217c7c121caee89bb64a91b6419282348108c");
   });
 
+  it("Fixture D — USDC transfer fingerprint (hardcoded literal anchor, Phase 6 / Plan 06-02)", () => {
+    // 100 USDC transfer to 0x70997970... — decimals=6 → 100_000_000n = 0x5f5e100.
+    // Recipient + amount embedded in the canonical viem-encoded transfer
+    // calldata (lowercase; hexToBytes is case-insensitive). USDC contract
+    // address case-preserved in EIP-55.
+    const usdcContract = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as Address;
+    const usdcData =
+      "0xa9059cbb00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c80000000000000000000000000000000000000000000000000000000005f5e100" as Hex;
+    expect(usdcData.length).toBe(138);
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: usdcContract,
+      valueWei: 0n,
+      data: usdcData,
+    });
+
+    // Hardcoded literal anchor (Plan 06-02 hardening — execute-time
+    // computation pinned forever). Cross-linked from
+    // test/prepare-token-send.test.ts and test/preview-send.erc20.test.ts.
+    expect(fp).toBe("0x52f396cfab6f8f4dfbf10b36734e7d22e944d54657a72dc2c8d67e91f8c49f85");
+  });
+
   it("invalid `to` (not a 0x-prefixed 20-byte hex) → throws via viem.hexToBytes", () => {
     expect(() =>
       computePayloadFingerprint({

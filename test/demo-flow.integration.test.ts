@@ -312,10 +312,15 @@ describe("demo flow — prepare → preview → send simulation under whale pers
     expect(mockSignClientHolder.current!.__requestSpy).toHaveBeenCalledTimes(0);
 
     // Plan 05-02 load-bearing: viem.call received `account: <whale>` so
-    // the simulation has a meaningful msg.sender.
+    // the simulation has a meaningful msg.sender. Plan 06-02 (DF-1 LOCKED)
+    // adds preview-time simulation for ALL tx shapes (defense-in-depth
+    // uniform — research § Topic 9), so viem.call fires TWICE in this
+    // flow: once at preview, once at send. Both must use the persona
+    // address as `account`.
     const callCalls = mockPublicHolder.current!.__spies.call.mock.calls;
-    expect(callCalls).toHaveLength(1);
+    expect(callCalls).toHaveLength(2);
     expect((callCalls[0]?.[1] as { account: string }).account).toBe(WHALE_ADDRESS);
+    expect((callCalls[1]?.[1] as { account: string }).account).toBe(WHALE_ADDRESS);
 
     // SIMULATION banner in the text content.
     expect(sendResult.content[0]?.text).toContain("SIMULATION (demo mode)");
@@ -360,8 +365,12 @@ describe("demo flow — prepare → preview → send simulation under whale pers
     const sc = sendResult.structuredContent as { userCancelled: boolean };
     expect(sc.userCancelled).toBe(true);
 
-    // No simulation (viem.call), no broadcast (signClient.request).
-    expect(mockPublicHolder.current!.__spies.call).not.toHaveBeenCalled();
+    // No send-time simulation, no broadcast (signClient.request). Plan
+    // 06-02 (DF-1 LOCKED) adds preview-time simulation for ALL tx shapes,
+    // so viem.call DID fire ONCE during the preview_send call earlier in
+    // this test — but the send_transaction cancel branch did NOT invoke
+    // it. Assert one call total (the preview-time one), not zero.
+    expect(mockPublicHolder.current!.__spies.call).toHaveBeenCalledTimes(1);
     expect(mockSignClientHolder.current!.__requestSpy).not.toHaveBeenCalled();
 
     const cancelledLookup = lookup(handle);

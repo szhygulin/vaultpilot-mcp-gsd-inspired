@@ -55,11 +55,14 @@ import { getEthereumClient } from "../chains/ethereum.js";
 import { lookupSelector } from "../clients/fourbyte.js";
 import { isDemoMode } from "../config/env.js";
 import { getActivePersona } from "../demo/state.js";
+import { _protocols, type Erc20Decoded } from "../protocols/erc20.js";
 import {
   AGENT_TASK_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
   build4byteBlock,
+  buildDecodedArgsBlock,
+  buildSimulationBlock,
   chunkHex,
 } from "../signing/blocks.js";
 import {
@@ -69,6 +72,8 @@ import {
 } from "../signing/error-codes.js";
 import { lookup, transitionToPreviewed } from "../signing/handle-store.js";
 import { computePresignHash } from "../signing/presign-hash.js";
+import { _simulation } from "../signing/simulation.js";
+import { loadEthereumTokenRegistry } from "../tokens/registry.js";
 import { getStatus } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
 
@@ -307,6 +312,45 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // block; the user sees the failure mode, not a fake "no match".
     const fourbyte = await lookupSelector(selector);
 
+    // Phase 6 — Plan 06-02: selector-routed ABI decode for the DECODED ARGS
+    // block. `decodeErc20Call` returns a discriminated union; the unknown
+    // branch fires for native sends (data === "0x") AND for unrecognized
+    // selectors. T-DECODE-LIE-1 mitigation: viem's `decodeFunctionData` is
+    // ABI-driven (the on-chain function signature hash is SOT — never trusts
+    // the agent). _protocols indirection for ESM spy-affordance.
+    const decodedArgs: Erc20Decoded = _protocols.decodeErc20Call(record.tx.data);
+
+    // Resolve token-decimals context for the DECODED ARGS block.
+    // For transfer/approve, `record.tx.to` is the TOKEN CONTRACT (NOT the
+    // recipient) — the registry lookup is against that. Off-list tokens
+    // surface tokenContext === null and the block emits the raw bigint
+    // amount + a "decimals unknown" note.
+    let tokenContext: { symbol: string; decimals: number } | null = null;
+    if (decodedArgs.kind === "transfer" || decodedArgs.kind === "approve") {
+      const registry = loadEthereumTokenRegistry();
+      const entry = registry.find((e) => e.address === record.tx.to);
+      tokenContext = entry
+        ? { symbol: entry.symbol, decimals: entry.decimals }
+        : null;
+    }
+    // Plan 06-04 fills the withdraw branch — WETH context from
+    // src/config/contracts.ts. Stub here keeps the structure for the
+    // next plan without affecting 06-02 tests.
+
+    const decodedArgsBlock = buildDecodedArgsBlock(decodedArgs, tokenContext);
+
+    // Phase 6 — Plan 06-02: wide eth_call simulation. DF-1 LOCKED. Runs for
+    // ALL tx shapes including native sends (defense-in-depth uniform per
+    // research § Topic 9). _simulation indirection for ESM spy-affordance.
+    // T-SIMULATION-RPC-FAIL-1 mitigation: runPreviewSimulation NEVER throws —
+    // RPC failures demote to `status: "error"` and remain non-blocking.
+    const simulationResult = await _simulation.runPreviewSimulation({
+      client,
+      sender: senderAddress,
+      tx: { to: record.tx.to, valueWei: record.tx.valueWei, data: record.tx.data },
+    });
+    const simulationBlock = buildSimulationBlock(simulationResult);
+
     // PREP-04 + A1 mitigation: LEDGER block carries BOTH the unbroken
     // 0x-prefixed hex AND the 16-group chunked form. The device may
     // chunk/truncate the display; the user can match either way.
@@ -329,15 +373,38 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // re-emit.
     const fourbyteBlock = build4byteBlock(selector, fourbyte);
 
-    const text = [
+    // Filter empty decoded-args block (unknown-kind / native sends) so the
+    // text-array join doesn't emit a stray empty block alongside the 4byte
+    // not-applicable surface.
+    const blocks: string[] = [
       ledgerBlock,
       "",
       agentBlock,
       "",
       fourbyteBlock,
+      ...(decodedArgsBlock !== "" ? ["", decodedArgsBlock] : []),
+      "",
+      simulationBlock,
       "",
       VERIFY_BEFORE_SIGNING_TEMPLATE,
-    ].join("\n");
+    ];
+    const text = blocks.join("\n");
+
+    // Serialize decodedArgs for structuredContent — bigints → strings for
+    // JSON safety. Mirror the `gas: gasEstimate.toString()` convention.
+    const decodedArgsForJson =
+      decodedArgs.kind === "transfer"
+        ? { kind: "transfer" as const, to: decodedArgs.to, amount: decodedArgs.amount.toString() }
+        : decodedArgs.kind === "approve"
+          ? {
+              kind: "approve" as const,
+              spender: decodedArgs.spender,
+              amount: decodedArgs.amount.toString(),
+              isUnlimited: decodedArgs.isUnlimited,
+            }
+          : decodedArgs.kind === "withdraw"
+            ? { kind: "withdraw" as const, amount: decodedArgs.amount.toString() }
+            : { kind: "unknown" as const, selector: decodedArgs.selector };
 
     return {
       content: [{ type: "text", text }],
@@ -353,6 +420,12 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
         maxPriorityFeePerGas: fees.maxPriorityFeePerGas.toString(),
         selector,
         fourbyte,
+        decodedArgs: decodedArgsForJson,
+        simulation: {
+          status: simulationResult.status,
+          resultData: simulationResult.resultData,
+          errorMessage: simulationResult.errorMessage,
+        },
       },
     };
   } catch (err) {

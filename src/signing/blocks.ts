@@ -18,9 +18,11 @@
 // lives in `preview_send.ts` or `get_tx_verification.ts`. Same format-fanout-
 // sentinel discipline as the four block templates above.
 
-import type { Hex } from "viem";
+import { formatUnits, type Hex } from "viem";
 
 import type { FourbyteResult } from "../clients/fourbyte.js";
+import type { Erc20Decoded } from "../protocols/erc20.js";
+import type { SimulationResult } from "./simulation.js";
 
 // Verbatim PREPARE RECEIPT (PREP-02 — verbatim args, NO normalization).
 // PrepareArgs field types are `string` (not Address / not bigint) so the
@@ -154,4 +156,136 @@ export function build4byteBlock(selector: Hex | null, result: FourbyteResult): s
         `  error:    ${result.message}`,
       ].join("\n");
   }
+}
+
+// -----------------------------------------------------------------------------
+// Phase 6 — Plan 06-02 additive extensions. The Phase 4 templates above stay
+// unchanged (FROZEN — Plan 04-02 / 04-03 / 04-05 callers byte-identical).
+// -----------------------------------------------------------------------------
+
+/**
+ * ERC-20 PREPARE RECEIPT (PREP-02 — verbatim agent args, NO normalization).
+ *
+ * Parallel template to PREPARE_RECEIPT_TEMPLATE for ERC-20 prepare tools.
+ * 06-PATTERNS.md line 97 calls this out explicitly: token-aware receipts are
+ * semantically different from native-send receipts (three fields, all of
+ * which the user must inspect on the device), so a second template is the
+ * clean shape — NOT a widening of the native template.
+ *
+ * Substituted by `prepare_token_send.ts` (06-02) and reused by
+ * `prepare_token_approve.ts` / `prepare_revoke_approval.ts` (06-03) with the
+ * `{TO}` slot relabeled as `spender` in the inheriting receipt text. Plan
+ * 06-04's `prepare_weth_unwrap` ships its own receipt template (no `to`).
+ */
+export const ERC20_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  tokenAddress: {TOKEN_ADDRESS}",
+  "  to:           {TO}",
+  "  amount:       {AMOUNT}",
+].join("\n");
+
+/**
+ * DECODED ARGS block — transfer(to, amount) shape. Preview-time-decoded
+ * args from the prepared transaction's calldata, surfaced for the agent's
+ * CHECKS PERFORMED block to corroborate.
+ *
+ * Plan 06-02 ships this template + the transfer branch of
+ * `buildDecodedArgsBlock`. Plan 06-03 adds the approve template (with the
+ * `⚠ UNLIMITED APPROVAL` conditional sub-block). Plan 06-04 adds the
+ * withdraw template (WETH unwrap).
+ */
+export const DECODED_ARGS_TEMPLATE_TRANSFER: string = [
+  "DECODED ARGS",
+  "  function:  transfer",
+  "  token:     {TOKEN}",
+  "  recipient: {RECIPIENT}",
+  "  amount:    {AMOUNT_HUMAN}",
+  "  amountWei: {AMOUNT_WEI}",
+].join("\n");
+
+/**
+ * Render the DECODED ARGS block from an `Erc20Decoded` result + optional
+ * token decimals context.
+ *
+ *   - `kind: "transfer"`: substitute the transfer template; render
+ *     `amountHuman` via `formatUnits(amount, tokenContext.decimals)` when
+ *     `tokenContext` is non-null, else show the raw bigint amount with a
+ *     "(decimals unknown — call get_token_metadata)" note.
+ *   - `kind: "approve"`: stub block (Plan 06-03 replaces with the real
+ *     approve template + UNLIMITED APPROVAL surfacing).
+ *   - `kind: "withdraw"`: stub block (Plan 06-04 replaces with the WETH
+ *     unwrap surfacing).
+ *   - `kind: "unknown"`: returns empty string — preview_send filters empty
+ *     blocks from the text-array join so native sends (selector === null,
+ *     `decodeErc20Call("0x")` → unknown) don't emit a stray empty block.
+ *
+ * `tokenContext` is supplied by preview_send from the top-50 token registry
+ * lookup against `record.tx.to` (the token contract). Off-list tokens
+ * surface `null` and the block emits the raw bigint amount.
+ */
+export function buildDecodedArgsBlock(
+  decoded: Erc20Decoded,
+  tokenContext: { symbol: string; decimals: number } | null,
+): string {
+  switch (decoded.kind) {
+    case "transfer": {
+      const amountHuman =
+        tokenContext !== null
+          ? `${formatUnits(decoded.amount, tokenContext.decimals)} ${tokenContext.symbol}`
+          : `${decoded.amount.toString()} (decimals unknown — call get_token_metadata)`;
+      return DECODED_ARGS_TEMPLATE_TRANSFER
+        .replace("{TOKEN}", tokenContext !== null ? tokenContext.symbol : "(off-list token)")
+        .replace("{RECIPIENT}", decoded.to)
+        .replace("{AMOUNT_HUMAN}", amountHuman)
+        .replace("{AMOUNT_WEI}", decoded.amount.toString());
+    }
+    case "approve":
+      // TODO(plan 06-03) — replace stub with the real approve template
+      // (spender + amount + ⚠ UNLIMITED APPROVAL conditional sub-block).
+      return [
+        "DECODED ARGS",
+        "  function:  approve",
+        "  (Plan 06-03 adds the spender/amount/⚠ UNLIMITED APPROVAL surfacing)",
+      ].join("\n");
+    case "withdraw":
+      // TODO(plan 06-04) — replace stub with the real WETH unwrap surfacing.
+      return [
+        "DECODED ARGS",
+        "  function:  withdraw",
+        "  (Plan 06-04 adds the WETH unwrap arg surfacing)",
+      ].join("\n");
+    case "unknown":
+      // preview_send filters empty strings from the text-array join so
+      // native sends (selector === null) don't emit a stray DECODED ARGS
+      // block alongside the 4byte not-applicable block.
+      return "";
+  }
+}
+
+/**
+ * Render the SIMULATION block from a `SimulationResult`. Trust-boundary prose
+ * is part of the block itself: the note line names the simulation as a
+ * non-binding cross-check (the trust anchor is the device hash match) and
+ * the residual T-SIMULATION-FALSE-OK-1 limitation.
+ *
+ * Emitted for ALL tx shapes (native + transfer + approve + withdraw) —
+ * defense-in-depth uniform per research § Topic 9 (DF-1 LOCKED).
+ */
+export function buildSimulationBlock(result: SimulationResult): string {
+  const lines = ["SIMULATION (preview-time eth_call)", `  status: ${result.status}`];
+  if (result.status === "ok") {
+    lines.push(`  result: ${result.resultData ?? "0x"}`);
+  } else if (result.status === "revert") {
+    lines.push(`  revert: ${result.errorMessage ?? "(no reason provided)"}`);
+  } else {
+    lines.push(`  error:  ${result.errorMessage ?? "(unknown)"}`);
+  }
+  lines.push(
+    "  note:   This simulation predicts the on-chain outcome. A 'revert' means",
+    "          the transaction would fail when broadcast — review the args",
+    "          before confirming. An 'ok' status does NOT guarantee broadcast",
+    "          success (gas/nonce drift can still revert). The trust anchor is",
+    "          the LEDGER BLIND-SIGN HASH match above, not this simulation.",
+  );
+  return lines.join("\n");
 }
