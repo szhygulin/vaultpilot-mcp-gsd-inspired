@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: MVP
+status: verifying
+stopped_at: "Phase 5 all 3 plans shipped via PRs #19-21; v1.0 MVP code-complete; combined Phase 3+4+5 verify-phase pending real-Ledger smoke"
+last_updated: "2026-05-13T07:44:52.571Z"
+last_activity: "2026-05-12 — Phase 5 planned + executed. Planning bundle (RESEARCH + VALIDATION + PATTERNS + 3 PLAN files) shipped as PR #18 (PASS after 2 inline plan-checker fixes + 1 accepted residual; Q-CONTRADICTION-PREP Option B + Q-NPM resolved via AskUserQuestion before planning). Then 05-01 (demo state + persona registry + ErrorCode 13→14 with WRONG_MODE + get/set_demo_wallet) shipped as PR #19 (+29 tests, 3 ESM-mechanics deviations). Then 05-02 (Q-CONTRADICTION-PREP Option B — REMOVES demo refusal from prepare_native_send + preview_send; persona address as `from`; integration test re-anchors Fixture A + C under demo `from`) shipped as PR #20 (+9 net tests, zero substantive deviations). Finally 05-03 (DIAG tools + update check + auto-demo NOTICE dispatcher-wrap + INSTRUCTIONS rewrite) shipped as PR #21 (+26 tests, 2 minor deviations; secret-safety audit via 3-sentinel substring scan; dispatcher-wrap at src/server.ts one-change architectural-scope-correct per Phase 4 precedent)."
+progress:
+  total_phases: 5
+  completed_phases: 0
+  total_plans: 17
+  completed_plans: 2
+  percent: 12
+---
+
 # Project State
 
 ## Project Reference
@@ -19,6 +35,7 @@ Progress: [██████████] 17/30 plans (57%) — phases 1-5 of 1
 ## Performance Metrics
 
 **Velocity:**
+
 - Total plans completed: 0
 - Average duration: —
 - Total execution time: —
@@ -30,12 +47,17 @@ Progress: [██████████] 17/30 plans (57%) — phases 1-5 of 1
 | - | - | - | - |
 
 **Recent Trend:**
+
 - Last 5 plans: —
 - Trend: —
 
 *Updated after each plan completion*
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 8 edited: Added plan 08-05 (WalletConnect proposal namespace expansion) and success criterion #8 — surfaced during physical-device testing: WC pairing only offered Ethereum accounts even though src/wallet/session-manager.ts:57-59 has a Phase 8 fan-out comment. Plan count 4→5; Progress row 0/4→0/5.
 
 ### Decisions
 
