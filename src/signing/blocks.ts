@@ -18,9 +18,10 @@
 // lives in `preview_send.ts` or `get_tx_verification.ts`. Same format-fanout-
 // sentinel discipline as the four block templates above.
 
-import { formatUnits, type Hex } from "viem";
+import { formatUnits, type Address, type Hex } from "viem";
 
 import type { FourbyteResult } from "../clients/fourbyte.js";
+import { _contracts } from "../config/contracts.js";
 import type { Erc20Decoded } from "../protocols/erc20.js";
 import type { SimulationResult } from "./simulation.js";
 
@@ -204,6 +205,51 @@ export const DECODED_ARGS_TEMPLATE_TRANSFER: string = [
 ].join("\n");
 
 /**
+ * ERC-20 APPROVE PREPARE RECEIPT (PREP-02). Plan 06-03 ships a dedicated
+ * template (distinct from `ERC20_PREPARE_RECEIPT_TEMPLATE` which uses a
+ * `to:` slot — approves have no `to`, only a `spender:`). The two templates
+ * stay separate per the format-fanout-sentinel rule + 06-PATTERNS.md line 97:
+ * approve receipts are semantically a different shape from transfer
+ * receipts; one block, one home.
+ *
+ * Substituted by `prepare_token_approve.ts` and `prepare_revoke_approval.ts`
+ * — both go through the shared `prepareApproveInternal` helper so the
+ * substitution shape stays byte-identical between the two tools.
+ */
+export const APPROVE_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  tokenAddress: {TOKEN_ADDRESS}",
+  "  spender:      {SPENDER}",
+  "  amount:       {AMOUNT}",
+].join("\n");
+
+/**
+ * DECODED ARGS block — approve(spender, amount) shape. Plan 06-03 ships the
+ * full surface: function/token/spender/spenderLabel/amount/amountWei plus a
+ * conditional `⚠ UNLIMITED APPROVAL` substitution + revoke-hint line.
+ *
+ * The `{REVOKE_HINT}` slot is filtered out when empty so the bounded path
+ * emits a tight block; the unlimited path adds the one-line revoke pointer
+ * directly after `amountWei:`.
+ *
+ * Unlimited threshold per research § Topic 6 is STRICT equality to
+ * MAX_UINT256 (Etherscan / Revoke.cash / OpenZeppelin consensus). Fuzzy
+ * `> 1e30` thresholds are explicitly rejected — `decodeErc20Call` returns
+ * `isUnlimited: amount === MAX_UINT256` (src/protocols/erc20.ts line 158),
+ * the only sentinel.
+ */
+export const DECODED_ARGS_TEMPLATE_APPROVE: string = [
+  "DECODED ARGS",
+  "  function:     approve",
+  "  token:        {TOKEN}",
+  "  spender:      {SPENDER}",
+  "  spenderLabel: {SPENDER_LABEL}",
+  "  amount:       {AMOUNT_HUMAN}",
+  "  amountWei:    {AMOUNT_WEI}",
+  "{REVOKE_HINT}",
+].join("\n");
+
+/**
  * Render the DECODED ARGS block from an `Erc20Decoded` result + optional
  * token decimals context.
  *
@@ -226,6 +272,7 @@ export const DECODED_ARGS_TEMPLATE_TRANSFER: string = [
 export function buildDecodedArgsBlock(
   decoded: Erc20Decoded,
   tokenContext: { symbol: string; decimals: number } | null,
+  recordTxTo: Address,
 ): string {
   switch (decoded.kind) {
     case "transfer": {
@@ -239,14 +286,47 @@ export function buildDecodedArgsBlock(
         .replace("{AMOUNT_HUMAN}", amountHuman)
         .replace("{AMOUNT_WEI}", decoded.amount.toString());
     }
-    case "approve":
-      // TODO(plan 06-03) — replace stub with the real approve template
-      // (spender + amount + ⚠ UNLIMITED APPROVAL conditional sub-block).
-      return [
-        "DECODED ARGS",
-        "  function:  approve",
-        "  (Plan 06-03 adds the spender/amount/⚠ UNLIMITED APPROVAL surfacing)",
-      ].join("\n");
+    case "approve": {
+      // PREP-29 unlimited surfacing: STRICT equality to MAX_UINT256 only
+      // (decoded.isUnlimited is the source of truth, set by
+      // decodeErc20Call). No fuzzy `> 1e30` thresholds — industry-aligned
+      // per research § Topic 6 (Etherscan / Revoke.cash / OpenZeppelin
+      // consensus).
+      //
+      // PREP-30 spender label: lookupSpender via the `_contracts`
+      // indirection (ESM spy-affordance). The fallback string is the
+      // canonical PREP-30 literal — tested byte-identically in
+      // test/preview-send.erc20.test.ts.
+      const spenderRow = _contracts.lookupSpender(decoded.spender);
+      const spenderLabel =
+        spenderRow?.label ?? "(unknown spender — no prior interaction recorded)";
+
+      const amountHuman = decoded.isUnlimited
+        ? "⚠ UNLIMITED APPROVAL"
+        : tokenContext !== null
+          ? `${formatUnits(decoded.amount, tokenContext.decimals)} ${tokenContext.symbol}`
+          : `${decoded.amount.toString()} (decimals unknown — call get_token_metadata)`;
+
+      const revokeHint = decoded.isUnlimited
+        ? "  (call prepare_revoke_approval with the same tokenAddress + spender to revoke)"
+        : "";
+
+      const tokenSlot = tokenContext !== null ? tokenContext.symbol : recordTxTo;
+
+      // Filter empty REVOKE_HINT line so the bounded path emits a tight
+      // block (no trailing blank line) — same shape as the transfer
+      // branch's filter-empty-on-join discipline.
+      const lines = DECODED_ARGS_TEMPLATE_APPROVE
+        .replace("{TOKEN}", String(tokenSlot))
+        .replace("{SPENDER}", decoded.spender)
+        .replace("{SPENDER_LABEL}", spenderLabel)
+        .replace("{AMOUNT_HUMAN}", amountHuman)
+        .replace("{AMOUNT_WEI}", decoded.amount.toString())
+        .replace("{REVOKE_HINT}", revokeHint)
+        .split("\n")
+        .filter((line) => line !== "");
+      return lines.join("\n");
+    }
     case "withdraw":
       // TODO(plan 06-04) — replace stub with the real WETH unwrap surfacing.
       return [

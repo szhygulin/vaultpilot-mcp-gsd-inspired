@@ -10,6 +10,8 @@ import "./pair_ledger_live_wait.js";
 import "./get_ledger_status.js";
 import "./prepare_native_send.js";
 import "./prepare_token_send.js";
+import "./prepare_token_approve.js";
+import "./prepare_revoke_approval.js";
 import "./preview_send.js";
 import "./send_transaction.js";
 import "./get_tx_verification.js";
