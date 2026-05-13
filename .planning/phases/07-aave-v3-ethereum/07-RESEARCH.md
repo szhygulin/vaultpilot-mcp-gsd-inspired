@@ -544,7 +544,7 @@ For the planner's mental model — confirm with pattern-mapper.
 - `src/signing/error-codes.ts` — existing codes cover all Phase 7 failure modes (no new codes needed unless `RATE_LIMITED` is genuinely new — verify against current `ErrorCode` enum at execute-time).
 - `src/tools/send_transaction.ts` — three gates (`previewToken`, `userDecision`, `payloadFingerprint`) unchanged.
 
-## Open Questions
+## Open Questions (RESOLVED — see Recommendation per question; all 4 reflected in the plan bundle)
 
 1. **Persona footprint for integration-test fixtures (A7).**
    - What we know: the current persona registry has `whale` = vitalik, `defi-degen` = Binance hot wallet, `stable-saver` / `staking-maxi`.
