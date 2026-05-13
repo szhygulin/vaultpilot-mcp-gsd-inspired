@@ -77,6 +77,10 @@ registerTool(
       process.env.WALLETCONNECT_PROJECT_ID,
     );
     const ethereumRpcUrlPresent = Boolean(process.env.ETHEREUM_RPC_URL);
+    // Plan 07-04 — Q-CONFIG-LEAK extension. Boolean ONLY; the key value
+    // NEVER appears in the response (asserted by Test 14 in
+    // test/get-vaultpilot-config-status.test.ts).
+    const etherscanApiKeyPresent = Boolean(process.env.ETHERSCAN_API_KEY);
 
     const status = await getStatus();
     const pairedAccountCount = status === null ? 0 : 1;
@@ -106,6 +110,7 @@ registerTool(
       activePersonaSlug,
       walletConnectProjectIdPresent,
       ethereumRpcUrlPresent,
+      etherscanApiKeyPresent,
       pairedAccountCount,
       wcSessionTopicSuffix,
       walletConnectStoragePersistent,
@@ -126,6 +131,7 @@ registerTool(
     lines.push(`  activePersonaSlug:               ${activePersonaSlug ?? "(none)"}`);
     lines.push(`  walletConnectProjectIdPresent:   ${walletConnectProjectIdPresent}`);
     lines.push(`  ethereumRpcUrlPresent:           ${ethereumRpcUrlPresent}`);
+    lines.push(`  etherscanApiKeyPresent:          ${etherscanApiKeyPresent}`);
     lines.push(`  pairedAccountCount:              ${pairedAccountCount}`);
     lines.push(`  wcSessionTopicSuffix:            ${wcSessionTopicSuffix ?? "(none)"}`);
     lines.push(`  walletConnectStoragePersistent:  ${walletConnectStoragePersistent}`);

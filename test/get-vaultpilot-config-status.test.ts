@@ -35,12 +35,15 @@ const RPC_KEY = "ETHEREUM_RPC_URL";
 const WC_KEY = "WALLETCONNECT_PROJECT_ID";
 const SUPPRESS_KEY = "VAULTPILOT_DISABLE_UPDATE_CHECK";
 const WC_STORAGE_KEY = "VAULTPILOT_WC_STORAGE";
+// Plan 07-04 — new env var surfaced as etherscanApiKeyPresent boolean.
+const ETHERSCAN_KEY = "ETHERSCAN_API_KEY";
 
 let savedDemo: string | undefined;
 let savedRpc: string | undefined;
 let savedWc: string | undefined;
 let savedSuppress: string | undefined;
 let savedWcStorage: string | undefined;
+let savedEtherscan: string | undefined;
 let mock: MockConfigFile | undefined;
 
 async function callTool(): Promise<ToolHandlerResult> {
@@ -55,11 +58,13 @@ beforeEach(() => {
   savedWc = process.env[WC_KEY];
   savedSuppress = process.env[SUPPRESS_KEY];
   savedWcStorage = process.env[WC_STORAGE_KEY];
+  savedEtherscan = process.env[ETHERSCAN_KEY];
 
   process.env[DEMO_KEY] = "false";
   delete process.env[RPC_KEY];
   delete process.env[WC_KEY];
   delete process.env[SUPPRESS_KEY];
+  delete process.env[ETHERSCAN_KEY];
   // VAULTPILOT_WC_STORAGE inherits the global pin ("memory" from
   // test/setup.ts). Individual tests override below.
 
@@ -78,6 +83,8 @@ afterEach(() => {
   else process.env[SUPPRESS_KEY] = savedSuppress;
   if (savedWcStorage === undefined) delete process.env[WC_STORAGE_KEY];
   else process.env[WC_STORAGE_KEY] = savedWcStorage;
+  if (savedEtherscan === undefined) delete process.env[ETHERSCAN_KEY];
+  else process.env[ETHERSCAN_KEY] = savedEtherscan;
 
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
@@ -98,6 +105,7 @@ describe("get_vaultpilot_config_status — shape (DIAG-01)", () => {
       activePersonaSlug: null,
       walletConnectProjectIdPresent: expect.any(Boolean),
       ethereumRpcUrlPresent: expect.any(Boolean),
+      etherscanApiKeyPresent: expect.any(Boolean),
       pairedAccountCount: expect.any(Number),
       wcSessionTopicSuffix: null,
       walletConnectStoragePersistent: expect.any(Boolean),
@@ -263,5 +271,52 @@ describe("get_vaultpilot_config_status — walletConnectStoragePersistent (#25 #
     const tool = getRegisteredTool("get_vaultpilot_config_status");
     expect(tool).toBeDefined();
     expect(tool?.description).toMatch(/persist/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 07-04 — etherscanApiKeyPresent boolean surface (DIAG-01 extension).
+// Q-CONFIG-LEAK lock applies to the new env var: the boolean ONLY, never
+// the value. Test 14 asserts the value never leaks even when the env var
+// is set to a unique sentinel string.
+// ---------------------------------------------------------------------------
+describe("get_vaultpilot_config_status — etherscanApiKeyPresent (Plan 07-04)", () => {
+  it("Test 22 — env unset → etherscanApiKeyPresent false; text-block line matches", async () => {
+    delete process.env[ETHERSCAN_KEY];
+
+    const result = await callTool();
+    const sc = result.structuredContent as { etherscanApiKeyPresent: boolean };
+
+    expect(sc.etherscanApiKeyPresent).toBe(false);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/etherscanApiKeyPresent:\s+false/);
+  });
+
+  it("Test 23 — env set → etherscanApiKeyPresent true; text-block line matches", async () => {
+    process.env[ETHERSCAN_KEY] = "any-value";
+
+    const result = await callTool();
+    const sc = result.structuredContent as { etherscanApiKeyPresent: boolean };
+
+    expect(sc.etherscanApiKeyPresent).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/etherscanApiKeyPresent:\s+true/);
+  });
+
+  it("Test 24 (LOAD-BEARING) — ETHERSCAN_API_KEY value never appears in response (T-CONFIG-LEAK-EXTENDS-1)", async () => {
+    const ETHERSCAN_SECRET = "secret-etherscan-key-do-not-leak-987654321";
+    process.env[ETHERSCAN_KEY] = ETHERSCAN_SECRET;
+
+    const result = await callTool();
+    const serialized = JSON.stringify(result);
+    const text = result.content[0]?.text ?? "";
+
+    // Load-bearing assertions — substring scan across the entire response.
+    expect(serialized).not.toContain(ETHERSCAN_SECRET);
+    expect(text).not.toContain(ETHERSCAN_SECRET);
+
+    // The boolean is set correctly without leaking the value.
+    const sc = result.structuredContent as { etherscanApiKeyPresent: boolean };
+    expect(sc.etherscanApiKeyPresent).toBe(true);
   });
 });

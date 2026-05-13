@@ -50,6 +50,10 @@ export function getWalletConnectProjectId(): string | undefined {
   return read("WALLETCONNECT_PROJECT_ID");
 }
 
+export function getEtherscanApiKey(): string | undefined {
+  return read("ETHERSCAN_API_KEY");
+}
+
 /**
  * Resolution result discriminant. Five arms cover every distinguishable
  * path through the env > config > auto-detect chain — Plan 05-03's NOTICE
