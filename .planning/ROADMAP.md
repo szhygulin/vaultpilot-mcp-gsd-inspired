@@ -170,10 +170,10 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 07-01: `src/config/contracts.ts` SOT table for Aave V3 + chain-id keying + regression test
-- [ ] 07-02: `get_lending_positions` reader (UiPoolDataProviderV3) + health-factor math
-- [ ] 07-03: `prepare_aave_supply` + `prepare_aave_withdraw` + `simulate_position_change`
-- [ ] 07-04: `check_contract_security` (Etherscan ABI + verified-source check + role enumeration)
+- [ ] 07-01-PLAN.md — `src/config/contracts.ts` SOT extension: 5 Aave V3 typed slots (Pool + PoolAddressesProvider + UiPoolDataProviderV3 + AaveOracle + IncentivesController) + 5 getters + regression test. `KNOWN_SPENDERS_ETHEREUM` unchanged (Aave V3 Pool already at row 0 per 06-03)
+- [ ] 07-02-PLAN.md — `get_lending_positions` reader (UiPoolDataProviderV3) + sibling-shelf helper `src/chains/aave-v3.ts` (parseAbi struct refs) + pure-bigint health-factor math `src/signing/aave-health.ts`
+- [ ] 07-03-PLAN.md — `prepare_aave_supply` + `prepare_aave_withdraw` (mechanical clones of `prepare_weth_unwrap`) + `simulate_position_change` (4-action enum supply/withdraw/borrow/repay) + `src/protocols/aave-v3.ts` + `preview_send` selector-dispatch extension + Fixtures G/H + lifecycle integration test. **NO LEDGER NOTICE for Aave** (research § Topic 6 verified clear-sign coverage)
+- [ ] 07-04-PLAN.md — `check_contract_security` (Etherscan V2 unified-API; verified-source + age + proxy + privileged-role enumeration) + `src/clients/etherscan.ts` (5-arm discriminated union + per-session rate-limit) + `ETHERSCAN_API_KEY` lazy env helper + `etherscanApiKeyPresent` boolean in `get_vaultpilot_config_status`. Parallel-eligible with 07-03
 
 ---
 
