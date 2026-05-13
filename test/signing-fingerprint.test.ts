@@ -65,6 +65,29 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     expect(fp).toBe("0x52f396cfab6f8f4dfbf10b36734e7d22e944d54657a72dc2c8d67e91f8c49f85");
   });
 
+  it("Fixture E — WETH approve(Uniswap V3 SwapRouter, MAX_UINT256) fingerprint (hardcoded literal anchor, Phase 6 / Plan 06-03)", () => {
+    // 68-byte approve(spender, amount) calldata = 0x + 8-hex selector
+    // (0x095ea7b3) + 64-hex spender (left-padded address) + 64-hex amount
+    // (MAX_UINT256 = (1n << 256n) - 1n; 64 hex `f`s).
+    const wethContract = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" as Address;
+    const approveData =
+      "0x095ea7b3000000000000000000000000e592427a0aece92de3edee1f18e0157c05861564ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" as Hex;
+    expect(approveData.length).toBe(138);
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: wethContract,
+      valueWei: 0n,
+      data: approveData,
+    });
+
+    // Hardcoded literal anchor (Plan 06-03 hardening — execute-time
+    // computation pinned forever). Cross-linked from
+    // test/prepare-token-approve.test.ts. Drift in the preimage assembly
+    // for approve-shape data breaks THIS exact assertion at PR-review time.
+    expect(fp).toBe("0x46e20ff806defcabda8eb090f6cba368cb5b84ad058ff9eefd08c662185a8f5a");
+  });
+
   it("invalid `to` (not a 0x-prefixed 20-byte hex) → throws via viem.hexToBytes", () => {
     expect(() =>
       computePayloadFingerprint({

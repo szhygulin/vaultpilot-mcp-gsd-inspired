@@ -337,7 +337,7 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // src/config/contracts.ts. Stub here keeps the structure for the
     // next plan without affecting 06-02 tests.
 
-    const decodedArgsBlock = buildDecodedArgsBlock(decodedArgs, tokenContext);
+    const decodedArgsBlock = buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
 
     // Phase 6 — Plan 06-02: wide eth_call simulation. DF-1 LOCKED. Runs for
     // ALL tx shapes including native sends (defense-in-depth uniform per

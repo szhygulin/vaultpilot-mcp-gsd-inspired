@@ -389,3 +389,173 @@ describe("preview_send — simulation called with sender + tx fields", () => {
     expect(callArgs.data).toBe(TRANSFER_DATA);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 6 — Plan 06-03: approve DECODED ARGS surfacing.
+// ---------------------------------------------------------------------------
+
+const WETH_CHECKSUMMED = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" as Address;
+const UNI_V3_CHECKSUMMED = "0xE592427A0AEce92De3Edee1F18E0157C05861564" as Address;
+const UNI_V3_LOWERCASE = UNI_V3_CHECKSUMMED.toLowerCase() as Address;
+const UNKNOWN_SPENDER = "0xDeAdBeefdEAdbeefdeAdbEEFDeaDbEEFdeAdBEEf" as Address;
+const FIXTURE_E_FINGERPRINT =
+  "0x46e20ff806defcabda8eb090f6cba368cb5b84ad058ff9eefd08c662185a8f5a" as Hex;
+
+// WETH approve(Uniswap V3, MAX_UINT256) — Fixture E calldata.
+const APPROVE_MAX_DATA =
+  "0x095ea7b3000000000000000000000000e592427a0aece92de3edee1f18e0157c05861564ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" as Hex;
+
+// WETH approve(Uniswap V3, MAX_UINT256 - 1n) — bounded (high amount, NOT the
+// unlimited sentinel; STRICT-equality threshold per research § Topic 6).
+const APPROVE_MAX_MINUS_ONE_DATA =
+  "0x095ea7b3000000000000000000000000e592427a0aece92de3edee1f18e0157c05861564fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe" as Hex;
+
+// USDC approve(Uniswap V3, 100_000_000n) — bounded, decimals=6 known.
+const APPROVE_USDC_100_DATA =
+  "0x095ea7b3000000000000000000000000e592427a0aece92de3edee1f18e0157c058615640000000000000000000000000000000000000000000000000000000005f5e100" as Hex;
+
+// WETH approve(UNKNOWN_SPENDER, MAX_UINT256) — unknown-spender label
+// fallback.
+const APPROVE_UNKNOWN_SPENDER_DATA =
+  "0x095ea7b3000000000000000000000000deadbeefdeadbeefdeadbeefdeadbeefdeadbeefffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" as Hex;
+
+// WETH approve(uniswap-V3 LOWERCASE address, MAX_UINT256) — case-insensitive
+// spender-label lookup. Same on-the-wire bytes; the test ensures the decoded
+// `spender` (which viem checksums) routes to the known-spender table even
+// when the agent passed the lowercase form.
+const APPROVE_LOWERCASE_DATA = APPROVE_MAX_DATA; // identical calldata bytes
+
+function seedApproveHandle(data: Hex, txTo: Address = WETH_CHECKSUMMED): string {
+  return createHandle({
+    args: {
+      to: "",
+      valueWei: "0",
+      tokenAddress: txTo.toLowerCase(),
+      spender: UNI_V3_LOWERCASE,
+      amount: "max",
+    },
+    tx: {
+      chainId: 1,
+      to: txTo,
+      valueWei: 0n,
+      data,
+    },
+    payloadFingerprint: FIXTURE_E_FINGERPRINT,
+  });
+}
+
+describe("preview_send — DECODED ARGS approve(spender, MAX_UINT256) — UNLIMITED (PREP-29)", () => {
+  it("⚠ UNLIMITED APPROVAL label + revoke hint + known spender label surface byte-identically", async () => {
+    const handle = seedApproveHandle(APPROVE_MAX_DATA);
+    scriptFixtureCMocks();
+    lookupSelectorSpy.mockResolvedValueOnce({
+      kind: "found",
+      textSignature: "approve(address,uint256)",
+    });
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+
+    expect(text).toContain("DECODED ARGS");
+    expect(text).toContain("function:     approve");
+    expect(text).toContain("token:        WETH");
+    expect(text).toContain(`spender:      ${UNI_V3_CHECKSUMMED}`);
+    expect(text).toContain("spenderLabel: Uniswap V3 SwapRouter");
+    // Unlimited label — STRICT byte-identical assertion (no renaming
+    // tolerated; T-UNLIMITED-THRESHOLD-DRIFT-1 + T-UNLIMITED-AGENT-DECEPTION-1
+    // mitigation).
+    expect(text).toContain("amount:       ⚠ UNLIMITED APPROVAL");
+    expect(text).toContain(
+      "amountWei:    115792089237316195423570985008687907853269984665640564039457584007913129639935",
+    );
+    // Revoke hint surfaces VERBATIM.
+    expect(text).toContain(
+      "(call prepare_revoke_approval with the same tokenAddress + spender to revoke)",
+    );
+
+    const sc = result.structuredContent as {
+      decodedArgs: { kind: string; isUnlimited?: boolean };
+    };
+    expect(sc.decodedArgs.kind).toBe("approve");
+    expect(sc.decodedArgs.isUnlimited).toBe(true);
+  });
+});
+
+describe("preview_send — DECODED ARGS approve(spender, MAX_UINT256 - 1n) — bounded (T-UNLIMITED-THRESHOLD-DRIFT-1)", () => {
+  it("max-minus-one → NO unlimited label; numeric amount surfaces; no revoke hint", async () => {
+    const handle = seedApproveHandle(APPROVE_MAX_MINUS_ONE_DATA);
+    scriptFixtureCMocks();
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+
+    expect(text).toContain("DECODED ARGS");
+    expect(text).toContain("function:     approve");
+    // STRICT-equality guard: max-minus-one is NOT the unlimited sentinel.
+    expect(text).not.toContain("⚠ UNLIMITED APPROVAL");
+    expect(text).not.toContain("prepare_revoke_approval with the same");
+    // The bounded amount surfaces as a numeric (WETH decimals=18 from registry).
+    expect(text).toContain("amount:       115792089237316195423570985008687907853269984665640564039457.584007913129639934 WETH");
+
+    const sc = result.structuredContent as {
+      decodedArgs: { kind: string; isUnlimited?: boolean };
+    };
+    expect(sc.decodedArgs.kind).toBe("approve");
+    expect(sc.decodedArgs.isUnlimited).toBe(false);
+  });
+});
+
+describe("preview_send — DECODED ARGS approve(USDC, Uniswap V3, 100) — bounded with token context", () => {
+  it("known token (USDC, decimals=6) + known spender → formatted amount + label", async () => {
+    const handle = seedApproveHandle(APPROVE_USDC_100_DATA, USDC_CHECKSUMMED);
+    scriptFixtureCMocks();
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+
+    expect(text).toContain("function:     approve");
+    expect(text).toContain("token:        USDC");
+    expect(text).toContain("spenderLabel: Uniswap V3 SwapRouter");
+    expect(text).toContain("amount:       100 USDC");
+    expect(text).toContain("amountWei:    100000000");
+    expect(text).not.toContain("⚠ UNLIMITED APPROVAL");
+  });
+});
+
+describe("preview_send — DECODED ARGS unknown spender (PREP-30 fallback literal)", () => {
+  it("unknown spender → fallback label `(unknown spender — no prior interaction recorded)` surfaces verbatim", async () => {
+    const handle = seedApproveHandle(APPROVE_UNKNOWN_SPENDER_DATA);
+    scriptFixtureCMocks();
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+
+    expect(text).toContain("function:     approve");
+    expect(text).toContain("spenderLabel: (unknown spender — no prior interaction recorded)");
+  });
+});
+
+describe("preview_send — DECODED ARGS case-insensitive spender lookup (T-SPENDER-CASE-1)", () => {
+  it("lowercase Uniswap V3 router in calldata → label still surfaces (lookupSpender normalizes)", async () => {
+    // viem.decodeFunctionData returns the spender in checksummed form
+    // regardless of the calldata byte-order. The case-insensitivity is
+    // enforced INSIDE lookupSpender (via getAddress); this test confirms
+    // the integration path doesn't introduce a regression.
+    const handle = seedApproveHandle(APPROVE_LOWERCASE_DATA);
+    scriptFixtureCMocks();
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("spenderLabel: Uniswap V3 SwapRouter");
+  });
+});
