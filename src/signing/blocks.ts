@@ -23,6 +23,7 @@ import { formatUnits, type Address, type Hex } from "viem";
 import type { FourbyteResult } from "../clients/fourbyte.js";
 import { _contracts } from "../config/contracts.js";
 import type { Erc20Decoded } from "../protocols/erc20.js";
+import { WETH9_DECIMALS } from "../protocols/weth9.js";
 import type { SimulationResult } from "./simulation.js";
 
 // Verbatim PREPARE RECEIPT (PREP-02 — verbatim args, NO normalization).
@@ -250,6 +251,71 @@ export const DECODED_ARGS_TEMPLATE_APPROVE: string = [
 ].join("\n");
 
 /**
+ * WETH UNWRAP PREPARE RECEIPT (PREP-02). Plan 06-04 ships a dedicated
+ * template — WETH unwrap has no `to` (no recipient; the burn returns native
+ * ETH to the caller) and no `spender` (no approval surface), so the receipt
+ * has two slots: tokenAddress + amount. The receipt is short by design — the
+ * operation is unambiguous, and the agent that surfaces an extra slot has
+ * drifted from the SOT.
+ *
+ * Substituted by `prepare_weth_unwrap.ts`. Format-fanout-sentinel: one
+ * block, one home.
+ */
+export const WETH_UNWRAP_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    WETH unwrap",
+  "  tokenAddress: {TOKEN_ADDRESS}",
+  "  amount:       {AMOUNT}",
+].join("\n");
+
+/**
+ * DECODED ARGS block — withdraw(amount) shape. Plan 06-04 replaces Plan
+ * 06-02's TODO stub with the real WETH9 surfacing. The `{TOKEN}` slot
+ * renders the WETH9 contract address + a "(WETH9 — canonical)" label so the
+ * user can cross-check against src/config/contracts.ts. The `{AMOUNT_HUMAN}`
+ * slot uses formatUnits(amount, WETH9_DECIMALS=18); the `{AMOUNT_WEI}` slot
+ * carries the raw bigint string.
+ */
+export const DECODED_ARGS_TEMPLATE_WITHDRAW: string = [
+  "DECODED ARGS",
+  "  function:  withdraw",
+  "  token:     {TOKEN}",
+  "  amount:    {AMOUNT_HUMAN}",
+  "  amountWei: {AMOUNT_WEI}",
+].join("\n");
+
+/**
+ * LEDGER NOTICE block — emitted in preview_send ABOVE the LEDGER BLIND-SIGN
+ * HASH for the WETH9.withdraw selector. Research § Topic 5 (A2 mitigation):
+ * the Ledger Ethereum app's ERC-20 clear-sign plugin does NOT cover WETH9's
+ * withdraw method, so the device will display the raw hash rather than
+ * decoded args. Devices ship with blind-sign DISABLED by default; the user
+ * hits a confusing refusal ("Blind signing is not enabled") unless they
+ * enable the setting first.
+ *
+ * The block carries the exact Ledger UI navigation path so the user can
+ * enable the setting without leaving the rehearsal. Non-cryptographic UX
+ * defense — the trust anchor remains the LEDGER BLIND-SIGN HASH match
+ * (which the block re-anchors in its closing line).
+ *
+ * Conditional emission: ONLY for the withdraw selector. Transfer + approve
+ * + revoke are clear-signed on known tokens; native sends have no selector
+ * to dispatch on. preview_send's selector-routed condition is
+ * `selector === WETH9_SELECTORS.withdraw && record.tx.to === getWethAddress(1)`.
+ */
+export const LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE: string = [
+  "LEDGER NOTICE",
+  "  WETH unwrap is NOT covered by the Ledger Ethereum app's ERC-20 clear-sign plugin.",
+  "  Your device will likely BLIND-SIGN this transaction (display a raw hash, no decoded args).",
+  "  If your device refuses with \"Blind signing is not enabled\":",
+  "    1. Open the Ethereum app on your device",
+  "    2. Settings → Blind signing → Enabled",
+  "    3. Retry send_transaction",
+  "  Match the LEDGER BLIND-SIGN HASH below CHARACTER-FOR-CHARACTER against",
+  "  the value your device displays — this is the cryptographic anchor.",
+].join("\n");
+
+/**
  * Render the DECODED ARGS block from an `Erc20Decoded` result + optional
  * token decimals context.
  *
@@ -327,13 +393,20 @@ export function buildDecodedArgsBlock(
         .filter((line) => line !== "");
       return lines.join("\n");
     }
-    case "withdraw":
-      // TODO(plan 06-04) — replace stub with the real WETH unwrap surfacing.
-      return [
-        "DECODED ARGS",
-        "  function:  withdraw",
-        "  (Plan 06-04 adds the WETH unwrap arg surfacing)",
-      ].join("\n");
+    case "withdraw": {
+      // Plan 06-04: real WETH9.withdraw surfacing. WETH9_DECIMALS is hard-
+      // coded to 18 (the canonical contract is immutable on mainnet) so no
+      // registry/RPC lookup is needed for the formatUnits call.
+      //
+      // The `{TOKEN}` slot renders the WETH9 contract address from
+      // record.tx.to + a "(WETH9 — canonical)" label so the user can cross-
+      // check against src/config/contracts.ts. tokenContext is ignored here
+      // (callers may pass null) — the WETH9 decimals constant is the SOT.
+      return DECODED_ARGS_TEMPLATE_WITHDRAW
+        .replace("{TOKEN}", `${recordTxTo} (WETH9 — canonical)`)
+        .replace("{AMOUNT_HUMAN}", `${formatUnits(decoded.amount, WETH9_DECIMALS)} WETH`)
+        .replace("{AMOUNT_WEI}", decoded.amount.toString());
+    }
     case "unknown":
       // preview_send filters empty strings from the text-array join so
       // native sends (selector === null) don't emit a stray DECODED ARGS

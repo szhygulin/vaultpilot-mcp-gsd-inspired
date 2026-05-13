@@ -559,3 +559,166 @@ describe("preview_send — DECODED ARGS case-insensitive spender lookup (T-SPEND
     expect(text).toContain("spenderLabel: Uniswap V3 SwapRouter");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 6 — Plan 06-04: WETH9.withdraw DECODED ARGS + LEDGER NOTICE block +
+// insufficient-WETH revert simulation.
+// ---------------------------------------------------------------------------
+
+// Fixture F calldata: WETH9.withdraw(1e18). Selector 0x2e1a7d4d + 32-byte
+// left-padded amount (1e18 hex = 0xde0b6b3a7640000).
+const WITHDRAW_FIXTURE_F_DATA =
+  "0x2e1a7d4d0000000000000000000000000000000000000000000000000de0b6b3a7640000" as Hex;
+const FIXTURE_F_FINGERPRINT =
+  "0x81a70e4a703de01b67ad1aaff7d97be8dde3ae6703a652a462f7de9e30e36596" as Hex;
+
+function seedWithdrawHandle(data: Hex = WITHDRAW_FIXTURE_F_DATA, txTo: Address = WETH_CHECKSUMMED): string {
+  return createHandle({
+    args: {
+      to: "",
+      valueWei: "0",
+      tokenAddress: txTo,
+      amount: "1.0",
+    },
+    tx: {
+      chainId: 1,
+      to: txTo,
+      valueWei: 0n,
+      data,
+    },
+    payloadFingerprint: FIXTURE_F_FINGERPRINT,
+  });
+}
+
+describe("preview_send — Plan 06-04 — DECODED ARGS withdraw (PREP-29 replaces stub)", () => {
+  it("withdraw branch surfaces function/token/amount/amountWei from WETH9 calldata", async () => {
+    const handle = seedWithdrawHandle();
+    scriptFixtureCMocks();
+    lookupSelectorSpy.mockResolvedValueOnce({
+      kind: "found",
+      textSignature: "withdraw(uint256)",
+    });
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+
+    expect(text).toContain("DECODED ARGS");
+    expect(text).toContain("function:  withdraw");
+    expect(text).toContain(`token:     ${WETH_CHECKSUMMED} (WETH9 — canonical)`);
+    expect(text).toContain("amount:    1 WETH");
+    expect(text).toContain("amountWei: 1000000000000000000");
+
+    const sc = result.structuredContent as {
+      decodedArgs: { kind: string; amount?: string };
+    };
+    expect(sc.decodedArgs.kind).toBe("withdraw");
+    expect(sc.decodedArgs.amount).toBe("1000000000000000000");
+  });
+});
+
+describe("preview_send — Plan 06-04 — LEDGER NOTICE block (research § Topic 5 A2 mitigation)", () => {
+  it("withdraw selector + canonical WETH9 tx.to → NOTICE block present AT THE TOP; structuredContent.ledgerNotice === 'weth-unwrap-blind-sign'", async () => {
+    const handle = seedWithdrawHandle();
+    scriptFixtureCMocks();
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+
+    // The exact NOTICE prose is asserted verbatim — drift in the wording
+    // breaks this test at PR-review time.
+    expect(text).toContain("LEDGER NOTICE");
+    expect(text).toContain(
+      "WETH unwrap is NOT covered by the Ledger Ethereum app's ERC-20 clear-sign plugin.",
+    );
+    expect(text).toContain("Settings → Blind signing → Enabled");
+
+    // NOTICE appears BEFORE the LEDGER BLIND-SIGN HASH block (top-of-response
+    // discipline — actionable prerequisites precede artifacts to verify).
+    const noticeIdx = text.indexOf("LEDGER NOTICE");
+    const hashIdx = text.indexOf("LEDGER BLIND-SIGN HASH");
+    expect(noticeIdx).toBeGreaterThanOrEqual(0);
+    expect(hashIdx).toBeGreaterThan(noticeIdx);
+
+    const sc = result.structuredContent as { ledgerNotice: string | null };
+    expect(sc.ledgerNotice).toBe("weth-unwrap-blind-sign");
+  });
+
+  it("transfer handle → NOTICE block ABSENT; structuredContent.ledgerNotice === null", async () => {
+    const handle = seedTransferHandle();
+    scriptFixtureCMocks();
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+    expect(text).not.toContain("LEDGER NOTICE");
+
+    const sc = result.structuredContent as { ledgerNotice: string | null };
+    expect(sc.ledgerNotice).toBeNull();
+  });
+
+  it("approve handle → NOTICE block ABSENT; structuredContent.ledgerNotice === null", async () => {
+    const handle = seedApproveHandle(APPROVE_MAX_DATA);
+    scriptFixtureCMocks();
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+    expect(text).not.toContain("LEDGER NOTICE");
+
+    const sc = result.structuredContent as { ledgerNotice: string | null };
+    expect(sc.ledgerNotice).toBeNull();
+  });
+
+  it("native send handle → NOTICE block ABSENT; structuredContent.ledgerNotice === null", async () => {
+    const handle = seedNativeHandle();
+    scriptFixtureCMocks();
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+    expect(text).not.toContain("LEDGER NOTICE");
+
+    const sc = result.structuredContent as { ledgerNotice: string | null };
+    expect(sc.ledgerNotice).toBeNull();
+  });
+});
+
+describe("preview_send — Plan 06-04 — insufficient-WETH revert simulation (T-INSUFFICIENT-WETH-NO-WARN-1)", () => {
+  it("withdraw + viem.call reverts → SIMULATION status: revert; LEDGER + NOTICE blocks intact", async () => {
+    const handle = seedWithdrawHandle();
+    scriptFixtureCMocks();
+    // Solidity 0.8+ underflow on uint256 subtraction surfaces via the
+    // panic-code reason; viem's call() throws with the revert reason text
+    // in the error message.
+    callSpy.mockRejectedValueOnce(
+      new Error(
+        "execution reverted: 0x4e487b710000000000000000000000000000000000000000000000000000000000000011",
+      ),
+    );
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+    // LEDGER block intact — trust anchor preserved.
+    expect(text).toContain("LEDGER BLIND-SIGN HASH");
+    // NOTICE block intact — actionable prerequisite preserved.
+    expect(text).toContain("LEDGER NOTICE");
+    // SIMULATION shows revert.
+    expect(text).toContain("status: revert");
+
+    const sc = result.structuredContent as {
+      simulation: { status: string };
+      ledgerNotice: string | null;
+    };
+    expect(sc.simulation.status).toBe("revert");
+    expect(sc.ledgerNotice).toBe("weth-unwrap-blind-sign");
+  });
+});
