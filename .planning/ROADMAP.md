@@ -150,10 +150,10 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 06-01: `get_token_metadata` + decimals/symbol resolution + decimal-amount parsing
-- [ ] 06-02: `prepare_token_send` + ERC-20 ABI encoding + preview-time decoded-arg surfacing
-- [ ] 06-03: `prepare_token_approve` + `prepare_revoke_approval` + approval-class surfacing in `CHECKS PERFORMED` + known-spender table
-- [ ] 06-04: `prepare_weth_unwrap` + canonical WETH address SOT entry + WETH-specific decode
+- [ ] 06-01-PLAN.md — `get_token_metadata` + `parseAmountStrict` (load-bearing decimal guard in `src/signing/amount.ts`, DF-2) + Fixture B literal anchor
+- [ ] 06-02-PLAN.md — `prepare_token_send` + `src/protocols/erc20.ts` (first `src/protocols/` occupant) + preview-time decoded-arg surfacing + wide `eth_call` simulation helper (DF-1) + Fixture D
+- [ ] 06-03-PLAN.md — `prepare_token_approve` + `prepare_revoke_approval` (distinct tool name, shared internal helper) + `⚠ UNLIMITED APPROVAL` surfacing + `src/config/contracts.ts` SOT (first occupant, 11+ KnownSpender entries) + Fixture E
+- [ ] 06-04-PLAN.md — `prepare_weth_unwrap` + `src/protocols/weth9.ts` + canonical WETH SOT migration (consolidates `get_portfolio_summary.ts:17` duplicate) + LEDGER NOTICE block + Fixture F + full ERC-20 lifecycle integration test (persona-cycle `from`-independence)
 
 #### Phase 7: Aave V3 (Ethereum)
 **Goal**: User can read Aave V3 positions and supply/withdraw assets; risk-tooling provides health-factor previews.
@@ -285,7 +285,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 3. WalletConnect pairing | v1.0 | 0/2 | Not started | - |
 | 4. Native ETH send (the trust pipeline) | v1.0 | 0/5 | Not started | - |
 | 5. Demo mode + diagnostics | v1.0 | 0/3 | Not started | - |
-| 6. ERC-20 lifecycle (transfer + approve + revoke + WETH unwrap) | v1.1 | 0/4 | Not started | - |
+| 6. ERC-20 lifecycle (transfer + approve + revoke + WETH unwrap) | v1.1 | 0/4 | Planned (bundle on `plan/phase-06`) | - |
 | 7. Aave V3 (Ethereum) | v1.1 | 0/4 | Not started | - |
 | 8. Multi-EVM fan-out + token tooling | v1.2 | 0/5 | Not started | - |
 | 9. Hardening (skill + three verification tools + dispatch allowlist) | v1.3 | 0/5 | Not started | - |
