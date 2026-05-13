@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { Address, Hex } from "viem";
 
 import {
@@ -20,7 +20,7 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     expect(FINGERPRINT_DOMAIN_TAG.length).toBe(23);
   });
 
-  it("Fixture B — ERC-20-shape forward-looking (Phase 6 reusability anchor)", () => {
+  it("Fixture B — ERC-20 transfer fingerprint (hardcoded literal anchor, Phase 6 hardened)", () => {
     // 68-byte transfer(0x...dEAD, 1e18) calldata = 0x + 8 hex selector + 64 hex to + 64 hex amount.
     const erc20Data =
       "0xa9059cbb000000000000000000000000000000000000000000000000000000000000dEAD0000000000000000000000000000000000000000000000000DE0B6B3A7640000" as Hex;
@@ -34,10 +34,12 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
       data: erc20Data,
     });
 
-    // Snapshot the deterministic output from the fn under test so a future
-    // contributor breaking the preimage assembly for non-empty data sees
-    // this assertion diverge at PR-review time, NOT at Phase 6 verify-phase.
-    expect(fp).toBe(EXPECTED_ERC20_FINGERPRINT);
+    // Hardcoded literal anchor (Phase 6 / Plan 06-01 hardening). Computed
+    // once at execute-time against the in-tree `computePayloadFingerprint`,
+    // pinned forever. Drift in the preimage assembly for non-empty `data`
+    // breaks THIS exact assertion at PR-review time — not at Phase 6+
+    // verify-phase, which was the previous (self-referencing-snapshot) anti-pattern.
+    expect(fp).toBe("0x20fe784f2025af75b0f47cbb71c217c7c121caee89bb64a91b6419282348108c");
   });
 
   it("invalid `to` (not a 0x-prefixed 20-byte hex) → throws via viem.hexToBytes", () => {
@@ -49,18 +51,5 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
         data: "0x",
       }),
     ).toThrow(/hex|notahex/i);
-  });
-});
-
-// Snapshot computed via the fn under test (deterministic — Fixture B inputs)
-// in a beforeAll block. Stored once at module load to keep the assertion
-// against a stable value across re-runs.
-let EXPECTED_ERC20_FINGERPRINT: Hex = "0x";
-beforeAll(() => {
-  EXPECTED_ERC20_FINGERPRINT = computePayloadFingerprint({
-    chainId: 1,
-    to: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as Address,
-    valueWei: 0n,
-    data: "0xa9059cbb000000000000000000000000000000000000000000000000000000000000dEAD0000000000000000000000000000000000000000000000000DE0B6B3A7640000" as Hex,
   });
 });
