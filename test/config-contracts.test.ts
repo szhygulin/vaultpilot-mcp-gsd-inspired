@@ -21,6 +21,11 @@ import { getAddress, type Address } from "viem";
 
 import {
   KNOWN_SPENDERS_ETHEREUM,
+  getAaveV3IncentivesController,
+  getAaveV3Oracle,
+  getAaveV3PoolAddress,
+  getAaveV3PoolAddressesProvider,
+  getAaveV3UiPoolDataProvider,
   getWethAddress,
   lookupSpender,
 } from "../src/config/contracts.js";
@@ -119,6 +124,60 @@ describe("src/config/contracts.ts — Phase 8 forward-compat (ChainId narrowing)
     // set_demo_wallet TS-narrowing test.
     // @ts-expect-error — chainId 999 not in the ChainId union (only `1` ships in v1.x)
     const _wrong = () => getWethAddress(999);
+    expect(typeof _wrong).toBe("function");
+  });
+});
+
+describe("src/config/contracts.ts — Aave V3 typed slots (Phase 7 Plan 07-01)", () => {
+  // Cross-verified addresses from research § Topic 1 (bgd-labs/aave-address-book
+  // + Etherscan). Byte-identity assertions per slot — drift between the SOT
+  // and the research literal fails the test at PR-review time. PREP-24
+  // regression anchor.
+
+  it("getAaveV3PoolAddress(1) returns the canonical Aave V3 Pool address (byte-identical to research literal)", () => {
+    expect(getAaveV3PoolAddress(1)).toBe(getAddress("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"));
+  });
+
+  it("getAaveV3PoolAddressesProvider(1) returns the canonical PoolAddressesProvider", () => {
+    expect(getAaveV3PoolAddressesProvider(1)).toBe(getAddress("0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e"));
+  });
+
+  it("getAaveV3UiPoolDataProvider(1) returns the canonical UiPoolDataProviderV3", () => {
+    expect(getAaveV3UiPoolDataProvider(1)).toBe(getAddress("0x56b7A1012765C285afAC8b8F25C69Bf10ccfE978"));
+  });
+
+  it("getAaveV3Oracle(1) returns the canonical AaveOracle", () => {
+    expect(getAaveV3Oracle(1)).toBe(getAddress("0x54586bE62E3c3580375aE3723C145253060Ca0C2"));
+  });
+
+  it("getAaveV3IncentivesController(1) returns the canonical DEFAULT_INCENTIVES_CONTROLLER", () => {
+    expect(getAaveV3IncentivesController(1)).toBe(getAddress("0x8164Cc65827dcFe994AB23944CBC90e0aa80bFcb"));
+  });
+
+  it("every Aave V3 typed slot is EIP-55 checksummed (corrupted-snapshot guard fires at module load)", () => {
+    for (const addr of [
+      getAaveV3PoolAddress(1),
+      getAaveV3PoolAddressesProvider(1),
+      getAaveV3UiPoolDataProvider(1),
+      getAaveV3Oracle(1),
+      getAaveV3IncentivesController(1),
+    ]) {
+      expect(addr).toBe(getAddress(addr));
+    }
+  });
+
+  it("Aave V3 Pool typed-slot value is byte-identical to KNOWN_SPENDERS_ETHEREUM Aave V3 Pool row (cross-view consistency — T-AAVE-SPENDER-DRIFT-1 anchor)", () => {
+    const spenderRow = KNOWN_SPENDERS_ETHEREUM.find((r) => r.label === "Aave V3 Pool");
+    expect(spenderRow).toBeDefined();
+    expect(getAaveV3PoolAddress(1)).toBe(spenderRow?.address);
+  });
+
+  it("getAaveV3PoolAddress(999) is a TS compile error (ChainId narrows) — proves the v1.1 single-chain lock", () => {
+    // Positive path — narrows to the only known chain.
+    const addr = getAaveV3PoolAddress(1);
+    expect(addr).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    // @ts-expect-error — chainId 999 not in the ChainId union (only `1` ships in v1.x; Phase 8 widens)
+    const _wrong = () => getAaveV3PoolAddress(999);
     expect(typeof _wrong).toBe("function");
   });
 });
