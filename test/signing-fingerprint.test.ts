@@ -88,6 +88,28 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     expect(fp).toBe("0x46e20ff806defcabda8eb090f6cba368cb5b84ad058ff9eefd08c662185a8f5a");
   });
 
+  it("Fixture F — WETH9.withdraw(1e18) fingerprint (hardcoded literal anchor, Phase 6 / Plan 06-04)", () => {
+    // 36-byte WETH9.withdraw(uint256) calldata = 0x + 8-hex selector
+    // (0x2e1a7d4d) + 64-hex amount (1e18 = 0xde0b6b3a7640000, left-padded).
+    const wethContract = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" as Address;
+    const withdrawData =
+      "0x2e1a7d4d0000000000000000000000000000000000000000000000000de0b6b3a7640000" as Hex;
+    expect(withdrawData.length).toBe(74);
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: wethContract,
+      valueWei: 0n,
+      data: withdrawData,
+    });
+
+    // Hardcoded literal anchor (Plan 06-04 hardening — execute-time
+    // computation pinned forever). Cross-linked from
+    // test/prepare-weth-unwrap.test.ts. Drift in the preimage assembly for
+    // WETH-shape data breaks THIS exact assertion at PR-review time.
+    expect(fp).toBe("0x81a70e4a703de01b67ad1aaff7d97be8dde3ae6703a652a462f7de9e30e36596");
+  });
+
   it("invalid `to` (not a 0x-prefixed 20-byte hex) → throws via viem.hexToBytes", () => {
     expect(() =>
       computePayloadFingerprint({

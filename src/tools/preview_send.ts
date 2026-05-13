@@ -53,12 +53,15 @@ import { estimateFeesPerGas, estimateGas, getTransactionCount } from "viem/actio
 
 import { getEthereumClient } from "../chains/ethereum.js";
 import { lookupSelector } from "../clients/fourbyte.js";
+import { getWethAddress } from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
 import { getActivePersona } from "../demo/state.js";
 import { _protocols, type Erc20Decoded } from "../protocols/erc20.js";
+import { WETH9_SELECTORS } from "../protocols/weth9.js";
 import {
   AGENT_TASK_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
+  LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
   build4byteBlock,
   buildDecodedArgsBlock,
@@ -373,10 +376,31 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // re-emit.
     const fourbyteBlock = build4byteBlock(selector, fourbyte);
 
+    // Phase 6 — Plan 06-04: LEDGER NOTICE block. Research § Topic 5 (A2
+    // mitigation). Emitted ABOVE the LEDGER BLIND-SIGN HASH for the
+    // WETH9.withdraw selector — the device's ERC-20 clear-sign plugin does
+    // NOT cover withdraw, and most devices ship with blind-sign disabled.
+    // The block surfaces the exact Ledger UI navigation path so the user
+    // can enable the setting without leaving the rehearsal.
+    //
+    // The condition is two-pronged: the selector must match WETH9.withdraw
+    // AND tx.to must be the canonical WETH9 contract from src/config/
+    // contracts.ts (defense against an unrelated contract that happens to
+    // expose a withdraw(uint256) selector — only the SOT-canonical WETH9
+    // gets the NOTICE).
+    const isWethUnwrap =
+      selector === WETH9_SELECTORS.withdraw && record.tx.to === getWethAddress(1);
+    const ledgerNoticeBlock: string | null = isWethUnwrap
+      ? LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE
+      : null;
+
     // Filter empty decoded-args block (unknown-kind / native sends) so the
     // text-array join doesn't emit a stray empty block alongside the 4byte
-    // not-applicable surface.
-    const blocks: string[] = [
+    // not-applicable surface. The LEDGER NOTICE block (when emitted) goes
+    // AT THE TOP so the user reads it BEFORE the hash — actionable
+    // prerequisites precede artifacts to verify.
+    const blocks: (string | null)[] = [
+      ...(ledgerNoticeBlock !== null ? [ledgerNoticeBlock, ""] : []),
       ledgerBlock,
       "",
       agentBlock,
@@ -388,7 +412,7 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       "",
       VERIFY_BEFORE_SIGNING_TEMPLATE,
     ];
-    const text = blocks.join("\n");
+    const text = blocks.filter((b): b is string => b !== null).join("\n");
 
     // Serialize decodedArgs for structuredContent — bigints → strings for
     // JSON safety. Mirror the `gas: gasEstimate.toString()` convention.
@@ -426,6 +450,10 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
           resultData: simulationResult.resultData,
           errorMessage: simulationResult.errorMessage,
         },
+        // Plan 06-04: tag for forward-looking get_tx_verification re-emit
+        // (Plan 04-05 re-emit will need to pick up this branch in Phase 9).
+        // `null` when not a WETH unwrap; canonical tag string when emitted.
+        ledgerNotice: isWethUnwrap ? ("weth-unwrap-blind-sign" as const) : null,
       },
     };
   } catch (err) {

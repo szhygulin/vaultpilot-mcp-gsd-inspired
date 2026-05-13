@@ -12,6 +12,7 @@ import "./prepare_native_send.js";
 import "./prepare_token_send.js";
 import "./prepare_token_approve.js";
 import "./prepare_revoke_approval.js";
+import "./prepare_weth_unwrap.js";
 import "./preview_send.js";
 import "./send_transaction.js";
 import "./get_tx_verification.js";

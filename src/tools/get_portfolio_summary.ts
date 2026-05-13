@@ -6,6 +6,7 @@ import {
   scanErc20Balances,
   type TokenBalance,
 } from "../chains/erc20-scanner.js";
+import { getWethAddress } from "../config/contracts.js";
 import { getPrices, type PriceQuote } from "../pricing/defillama.js";
 import { registerTool } from "./index.js";
 
@@ -13,8 +14,13 @@ import { registerTool } from "./index.js";
  * Canonical WETH contract on Ethereum mainnet — used as the pricing proxy
  * for native ETH (DefiLlama prices ERC-20 contracts; native ETH has no
  * contract address). WETH is hard-pegged 1:1 to ETH by deposit/withdraw.
+ *
+ * Plan 06-04 (CONFIG-LITERAL-MIGRATION-1): sourced from src/config/contracts.ts
+ * SOT. The literal lives ONLY in src/config/contracts.ts; this consumer
+ * imports getWethAddress so a future contributor cannot accidentally drift
+ * the two copies. Regression-tested at module load (getAddress re-checksums).
  */
-const WETH_ADDRESS: Address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
+const WETH_ADDRESS: Address = getWethAddress(1);
 
 const NATIVE_DECIMALS = 18;
 const DEFAULT_DUST_THRESHOLD_USD = 0.01;
