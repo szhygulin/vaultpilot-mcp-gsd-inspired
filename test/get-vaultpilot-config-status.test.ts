@@ -34,11 +34,13 @@ const DEMO_KEY = "VAULTPILOT_DEMO";
 const RPC_KEY = "ETHEREUM_RPC_URL";
 const WC_KEY = "WALLETCONNECT_PROJECT_ID";
 const SUPPRESS_KEY = "VAULTPILOT_DISABLE_UPDATE_CHECK";
+const WC_STORAGE_KEY = "VAULTPILOT_WC_STORAGE";
 
 let savedDemo: string | undefined;
 let savedRpc: string | undefined;
 let savedWc: string | undefined;
 let savedSuppress: string | undefined;
+let savedWcStorage: string | undefined;
 let mock: MockConfigFile | undefined;
 
 async function callTool(): Promise<ToolHandlerResult> {
@@ -52,11 +54,14 @@ beforeEach(() => {
   savedRpc = process.env[RPC_KEY];
   savedWc = process.env[WC_KEY];
   savedSuppress = process.env[SUPPRESS_KEY];
+  savedWcStorage = process.env[WC_STORAGE_KEY];
 
   process.env[DEMO_KEY] = "false";
   delete process.env[RPC_KEY];
   delete process.env[WC_KEY];
   delete process.env[SUPPRESS_KEY];
+  // VAULTPILOT_WC_STORAGE inherits the global pin ("memory" from
+  // test/setup.ts). Individual tests override below.
 
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
@@ -71,6 +76,8 @@ afterEach(() => {
   else process.env[WC_KEY] = savedWc;
   if (savedSuppress === undefined) delete process.env[SUPPRESS_KEY];
   else process.env[SUPPRESS_KEY] = savedSuppress;
+  if (savedWcStorage === undefined) delete process.env[WC_STORAGE_KEY];
+  else process.env[WC_STORAGE_KEY] = savedWcStorage;
 
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
@@ -93,6 +100,7 @@ describe("get_vaultpilot_config_status — shape (DIAG-01)", () => {
       ethereumRpcUrlPresent: expect.any(Boolean),
       pairedAccountCount: expect.any(Number),
       wcSessionTopicSuffix: null,
+      walletConnectStoragePersistent: expect.any(Boolean),
       configFilePath: expect.any(String),
       configFileExists: expect.any(Boolean),
       configFileMalformed: expect.any(Boolean),
@@ -213,5 +221,47 @@ describe("get_vaultpilot_config_status — updateCheckSuppressed flag", () => {
     const sc = result.structuredContent as { updateCheckSuppressed: boolean };
 
     expect(sc.updateCheckSuppressed).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Quick-260513-c8e — walletConnectStoragePersistent surface (issue #25 #8).
+// Boolean field reflects getWalletConnectStorageMode() === "persist". Under
+// the global test pin (VAULTPILOT_WC_STORAGE=memory) the default value is
+// false; override to "persist" to assert the true branch.
+// ---------------------------------------------------------------------------
+describe("get_vaultpilot_config_status — walletConnectStoragePersistent (#25 #8)", () => {
+  it("Test 19a — under the default (test/setup.ts pin) VAULTPILOT_WC_STORAGE=memory, walletConnectStoragePersistent is false", async () => {
+    // Global pin is "memory" via test/setup.ts; do NOT override here.
+    const result = await callTool();
+    const sc = result.structuredContent as {
+      walletConnectStoragePersistent: boolean;
+    };
+    expect(sc.walletConnectStoragePersistent).toBe(false);
+  });
+
+  it("Test 19b — under VAULTPILOT_WC_STORAGE=persist, walletConnectStoragePersistent is true (override pattern)", async () => {
+    process.env[WC_STORAGE_KEY] = "persist";
+    const result = await callTool();
+    const sc = result.structuredContent as {
+      walletConnectStoragePersistent: boolean;
+    };
+    expect(sc.walletConnectStoragePersistent).toBe(true);
+  });
+
+  it("Test 20 — human-readable text block contains 'walletConnectStoragePersistent: <bool>'", async () => {
+    const result = await callTool();
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/walletConnectStoragePersistent:\s+(true|false)/);
+  });
+
+  it("Test 21 — tool DESCRIPTION mentions persistence so a routing agent finds the tool for 'is my Ledger session persisted?'", async () => {
+    // The DESCRIPTION is what an agent sees during routing. Confirm
+    // the keyword `persist` (case-insensitive) appears in the tool's
+    // registered description.
+    const { getRegisteredTool } = await import("../src/tools/index.js");
+    const tool = getRegisteredTool("get_vaultpilot_config_status");
+    expect(tool).toBeDefined();
+    expect(tool?.description).toMatch(/persist/i);
   });
 });
