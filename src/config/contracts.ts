@@ -18,16 +18,22 @@ import { getAddress, type Address } from "viem";
 export type ChainId = 1;
 
 /**
- * Per-chain canonical contract registry shape. Plan 06-03 ships `weth`
- * (consumed by Plan 06-04's prepare_weth_unwrap). Plan 07 adds `aavePool`.
- * The TYPE of the value is what makes this SOT — `getWethAddress(1)` is
- * type-safe; an unknown chain triggers a compile error rather than a
- * runtime undefined.
+ * Per-chain canonical contract registry shape. Plan 06-03 shipped `weth`
+ * (consumed by Plan 06-04's prepare_weth_unwrap). Plan 07-01 adds the five
+ * Aave V3 typed slots (Pool + PoolAddressesProvider + UiPoolDataProviderV3
+ * + AaveOracle + IncentivesController) — cross-verified addresses from
+ * research § Topic 1. The TYPE of the value is what makes this SOT —
+ * `getWethAddress(1)` / `getAaveV3PoolAddress(1)` are type-safe; an unknown
+ * chain triggers a compile error rather than a runtime undefined.
+ * Phase 8+ may add: lido, eigenLayer, ...
  */
 export interface ContractsForChain {
   weth: Address;
-  // Phase 7 will add: aavePool: Address;
-  // Phase 7+ may add: lido, eigenLayer, ...
+  aavePool: Address;                    // Phase 7 Plan 07-03 — prepare_aave_supply / withdraw tx.to
+  aavePoolAddressesProvider: Address;   // Phase 7 Plan 07-02 — `provider` arg to UiPoolDataProviderV3 calls
+  aaveUiPoolDataProvider: Address;      // Phase 7 Plan 07-02 — get_lending_positions reader target
+  aaveOracle: Address;                  // Phase 7 forward-compat — price oracle (UiPoolDataProviderV3 surfaces priceInMarketReferenceCurrency per-reserve; oracle slot seeded for v1.x-future flexibility)
+  aaveIncentivesController: Address;    // Phase 7 forward-compat — rewards-claim is v2.3+ scope; seed for forward use
 }
 
 const CONTRACTS_RAW: Record<ChainId, ContractsForChain> = {
@@ -38,6 +44,21 @@ const CONTRACTS_RAW: Record<ChainId, ContractsForChain> = {
     // src/tools/get_portfolio_summary.ts:17; Plan 06-04 will migrate that
     // file to import `getWethAddress(1)` from here (the SOT).
     weth: getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
+
+    // Aave V3 Ethereum addresses (Phase 7 Plan 07-01). Cross-verified
+    // against `bgd-labs/aave-address-book/src/AaveV3Ethereum.sol` AND
+    // Etherscan (research § Topic 1). Each address re-checksummed at module
+    // load via `getAddress` (corrupted-snapshot guard).
+    //
+    // The Aave V3 Pool address is an `InitializableImmutableAdminUpgradeabilityProxy`
+    // — the proxy is verified on Etherscan; the implementation lives at a
+    // separate address. Phase 7 calls (`supply` / `withdraw` /
+    // `getUserAccountData`) target the proxy directly.
+    aavePool: getAddress("0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2"),
+    aavePoolAddressesProvider: getAddress("0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e"),
+    aaveUiPoolDataProvider: getAddress("0x56b7A1012765C285afAC8b8F25C69Bf10ccfE978"),
+    aaveOracle: getAddress("0x54586bE62E3c3580375aE3723C145253060Ca0C2"),
+    aaveIncentivesController: getAddress("0x8164Cc65827dcFe994AB23944CBC90e0aa80bFcb"),
   },
 };
 
@@ -50,6 +71,54 @@ const CONTRACTS_RAW: Record<ChainId, ContractsForChain> = {
  */
 export function getWethAddress(chainId: ChainId): Address {
   return CONTRACTS_RAW[chainId].weth;
+}
+
+/**
+ * Get the canonical Aave V3 Pool contract address for the given chain.
+ * Consumed by Plan 07-03's `prepare_aave_supply` / `prepare_aave_withdraw`
+ * / `simulate_position_change` as `tx.to`. The same address is also seeded
+ * in `KNOWN_SPENDERS_ETHEREUM` (row 0) for approval-label discovery; the
+ * regression test asserts cross-view byte-identity between the two views.
+ */
+export function getAaveV3PoolAddress(chainId: ChainId): Address {
+  return CONTRACTS_RAW[chainId].aavePool;
+}
+
+/**
+ * Get the canonical Aave V3 `PoolAddressesProvider` for the given chain.
+ * Consumed by Plan 07-02's `get_lending_positions` — passed as the
+ * `provider` argument to UiPoolDataProviderV3's reader calls.
+ */
+export function getAaveV3PoolAddressesProvider(chainId: ChainId): Address {
+  return CONTRACTS_RAW[chainId].aavePoolAddressesProvider;
+}
+
+/**
+ * Get the canonical Aave V3 `UiPoolDataProviderV3` for the given chain.
+ * Consumed by Plan 07-02's `get_lending_positions` reader as the call
+ * target (`tx.to` for read-only `eth_call`).
+ */
+export function getAaveV3UiPoolDataProvider(chainId: ChainId): Address {
+  return CONTRACTS_RAW[chainId].aaveUiPoolDataProvider;
+}
+
+/**
+ * Get the canonical Aave V3 `AaveOracle` for the given chain. Forward-compat
+ * slot — v1.1 surfaces use the per-reserve `priceInMarketReferenceCurrency`
+ * exposed by UiPoolDataProviderV3 directly; the oracle is seeded for
+ * v1.x-future flexibility.
+ */
+export function getAaveV3Oracle(chainId: ChainId): Address {
+  return CONTRACTS_RAW[chainId].aaveOracle;
+}
+
+/**
+ * Get the canonical Aave V3 `DEFAULT_INCENTIVES_CONTROLLER` for the given
+ * chain. Forward-compat slot — rewards-claim is v2.3+ scope; the address is
+ * seeded so a future plan can wire it without re-touching the SOT shape.
+ */
+export function getAaveV3IncentivesController(chainId: ChainId): Address {
+  return CONTRACTS_RAW[chainId].aaveIncentivesController;
 }
 
 // ---------------------------------------------------------------------------
@@ -73,12 +142,11 @@ export interface KnownSpender {
 }
 
 /**
- * 11 seeded entries from research § Topic 7. Each address re-checksummed at
- * module load. The 12th candidate slot is reserved for Phase 7 (Aave V3
- * Pool gets added at lending-tool time — its row IS already here as the
- * canonical Aave V3 Pool address, but the row count anchor in the regression
- * test asserts `>= 11` so future additions don't force test churn). Order
- * is alphabetical-by-label for readability.
+ * 11 seeded entries from Plan 06-03 research § Topic 7. Each address re-
+ * checksummed at module load. Aave V3 Pool sits at row 0 (alphabetical-by-
+ * label). The row count anchor in the regression test asserts `>= 11` so
+ * future additions (Phase 7+ bridge / DEX / lending integrations) don't
+ * force test churn. Order is alphabetical-by-label for readability.
  */
 export const KNOWN_SPENDERS_ETHEREUM: readonly KnownSpender[] = [
   {
