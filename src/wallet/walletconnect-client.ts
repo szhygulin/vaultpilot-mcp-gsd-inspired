@@ -4,24 +4,19 @@
 // (SignClient.init returns a Promise). Two non-negotiables, both pinned in
 // `SignClient.init` options and asserted by tests:
 //
-//   1. `storageOptions: { database: ":memory:" }` — keeps the WC store off
-//      disk so a fresh process always starts with a fresh pair (per the
-//      security model: "fresh process = fresh pair"). Also prevents a
-//      `walletconnect.db` file from appearing in `process.cwd()` of
-//      whichever shell the user launched their MCP client from.
+//   1. `storageOptions: { database: <resolved> }` — selects the WC v2
+//      session store. Default production mode is `"persist"`: an absolute
+//      path under `~/.vaultpilot-mcp/wc-storage/` with `0o700` perms, so
+//      the user does not re-pair Ledger Live every cold-boot. Opt-out
+//      via `VAULTPILOT_WC_STORAGE=memory` restores the pre-v1.0.1
+//      `:memory:` sentinel (fresh process = fresh pair). Mode is
+//      selected once at SignClient.init and captured for the lifetime of
+//      the singleton; a mode switch requires an MCP restart. The on-disk
+//      path is a DIRECTORY (the SDK's fs-lite driver treats `database` as
+//      a `{ base }` for one-key-per-file storage), not a single file —
+//      see `src/config/wc-storage.ts` top-of-file for the SDK note.
 //   2. `logger: "error"` — pino's default level for some WC versions writes
 //      to stdout, which corrupts the MCP protocol. Pin it explicitly.
-//
-// Note on `:memory:` plumbing: the public TS surface for
-// `KeyValueStorageOptions` is `{ database?: string; table?: string }`. The
-// internal storage constructor reads `opts.database || opts.table ||
-// "walletconnect.db"` and passes that string as `dbName` to its inner Db
-// (which is what triggers the `:memory:` sentinel branch). Therefore the
-// dapp-side opt-in is `storageOptions: { database: ":memory:" }` — NOT
-// `{ dbName: ":memory:" }` as some external WC sketches suggest (that
-// shape silently falls through to the default `walletconnect.db` file).
-// [Source: `@walletconnect/keyvaluestorage@2.x` runtime + type defs;
-// confirmed against installed package 2.x via grep on the dist bundle.]
 
 import { SignClient } from "@walletconnect/sign-client";
 
@@ -32,7 +27,25 @@ import { SignClient } from "@walletconnect/sign-client";
 type SignClientType = InstanceType<typeof SignClient>;
 
 import { getWalletConnectProjectId } from "../config/env.js";
+import {
+  ensureStorageDirWithPerms,
+  getWalletConnectStorageMode,
+  getWalletConnectStoragePath,
+} from "../config/wc-storage.js";
 import { log } from "../diagnostics/logger.js";
+
+/**
+ * Spy-affordance indirection for the wc-storage helpers. Production code
+ * calls `_wcStorage.ensureStorageDirWithPerms(...)` etc. instead of the
+ * raw imports so `vi.spyOn(_wcStorage, "ensureStorageDirWithPerms")` works
+ * across the ESM module boundary (same pattern as
+ * `src/config/config-file.ts::_paths`).
+ */
+export const _wcStorage = {
+  getWalletConnectStorageMode,
+  getWalletConnectStoragePath,
+  ensureStorageDirWithPerms,
+};
 
 const METADATA = {
   name: "VaultPilot MCP",
@@ -81,15 +94,28 @@ export async function getWalletConnectClient(): Promise<SignClientType> {
   if (!projectId) throw new MissingProjectIdError();
 
   initInFlight = (async () => {
-    log("info", "initializing WalletConnect sign-client (in-memory storage)");
+    const storageMode = _wcStorage.getWalletConnectStorageMode();
+    let database: string;
+    if (storageMode === "memory") {
+      database = ":memory:";
+      log("info", "initializing WalletConnect sign-client (in-memory storage)");
+    } else {
+      database = _wcStorage.getWalletConnectStoragePath();
+      _wcStorage.ensureStorageDirWithPerms(database);
+      log(
+        "info",
+        `initializing WalletConnect sign-client (persistent storage at ${database})`,
+      );
+    }
     const client = await SignClient.init({
       projectId,
       metadata: METADATA,
       logger: "error",
-      // See top-of-file note on `:memory:` plumbing. `database` is the
-      // public-type field; the SDK internally resolves it to `dbName` for
-      // the `:memory:` sentinel check.
-      storageOptions: { database: ":memory:" },
+      // `database` is the public-type field; the SDK resolves it to
+      // `dbName` internally. `":memory:"` is the in-memory sentinel; any
+      // other string is treated as a DIRECTORY path by the fs-lite driver.
+      // See `src/config/wc-storage.ts` top-of-file for the SDK note.
+      storageOptions: { database },
     });
     cachedClient = client;
     initInFlight = undefined;

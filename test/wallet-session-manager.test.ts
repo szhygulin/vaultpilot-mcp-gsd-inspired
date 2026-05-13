@@ -29,6 +29,7 @@ import {
   PendingPairingError,
   UserRejectedPairingError,
   _resetSessionManagerForTesting,
+  _storage,
   disconnect,
   getActiveSessionTopic,
   getStatus,
@@ -680,6 +681,138 @@ describe("session-manager.setActiveAccount() — happy path + error classes", ()
     // have been cleared so we read accounts[0] again.
     mockSignClient._setSessionsInStore([session]);
     const status = await getStatus();
+    expect(status?.activeAccount).toBe(MULTI_ACCOUNTS[0]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Quick-260513-c8e — force-re-pair MUST clear the on-disk persisted store
+// (issue #25 acceptance #5). The aggressive read: `force: true` always calls
+// clearPersistedStorage, irrespective of whether a live `existing` session
+// is present. Both pair() and pairStart() force branches participate.
+// ---------------------------------------------------------------------------
+describe("session-manager.pair({ force: true }) — clears persisted on-disk store", () => {
+  it("Test 11: calls clearPersistedStorage BEFORE client.disconnect when an existing live session is present", async () => {
+    // Seed an existing live session.
+    const session = buildMockSession({ chainId: 1, address: ADDRESS, topic: TOPIC });
+    const first = pair();
+    await waitUntilConnectCalled(1);
+    mockSignClient._simulateApproval(session);
+    await first;
+    mockSignClient._setSessionsInStore([session]);
+
+    // Spy on the production storage indirection so we can assert the call
+    // shape AND the call-order against client.disconnect.
+    const clearSpy = vi.spyOn(_storage, "clearPersistedStorage").mockResolvedValue();
+
+    // Force a re-pair.
+    const newSession = buildMockSession({
+      chainId: 1,
+      address: ADDRESS,
+      topic: "0xaaaa000000000000000000000000000000000000000000000000000000feed99",
+    });
+    const second = pair({ force: true });
+    await waitUntilConnectCalled(2);
+    mockSignClient._simulateApproval(newSession);
+    await second;
+
+    // clearPersistedStorage was invoked exactly once.
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+    // …and BEFORE client.disconnect — invocationCallOrder is a global
+    // monotonic counter; lower index = earlier call.
+    const clearOrder = clearSpy.mock.invocationCallOrder[0]!;
+    const disconnectOrder =
+      mockSignClient.client.disconnect.mock.invocationCallOrder[0]!;
+    expect(clearOrder).toBeLessThan(disconnectOrder);
+  });
+
+  it("Test 12: pairStart({ force: true }) calls clearPersistedStorage BEFORE client.disconnect", async () => {
+    // Seed an existing live session (via pair() so the singleton is warm).
+    const session = buildMockSession({ chainId: 1, address: ADDRESS, topic: TOPIC });
+    const first = pair();
+    await waitUntilConnectCalled(1);
+    mockSignClient._simulateApproval(session);
+    await first;
+    mockSignClient._setSessionsInStore([session]);
+
+    const clearSpy = vi.spyOn(_storage, "clearPersistedStorage").mockResolvedValue();
+
+    // Force a phase-1 re-start. We do NOT need to resolve the approval —
+    // pairStart returns once connect() resolves. The clear / disconnect
+    // both fire in the force branch BEFORE connect().
+    const startPromise = pairStart({ force: true });
+    await waitUntilConnectCalled(2);
+    await startPromise;
+
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+    const clearOrder = clearSpy.mock.invocationCallOrder[0]!;
+    const disconnectOrder =
+      mockSignClient.client.disconnect.mock.invocationCallOrder[0]!;
+    expect(clearOrder).toBeLessThan(disconnectOrder);
+  });
+
+  it("Test 13: pair({ force: true }) does NOT throw when no live session exists (clearPersistedStorage no-op arm)", async () => {
+    // No prior pair — store is empty. clearPersistedStorage's `rm({ force: true })`
+    // makes the directory-does-not-exist case a silent no-op.
+    const clearSpy = vi.spyOn(_storage, "clearPersistedStorage").mockResolvedValue();
+
+    const session = buildMockSession({ chainId: 1, address: ADDRESS, topic: TOPIC });
+    const pending = pair({ force: true });
+    await waitUntilConnectCalled(1);
+    mockSignClient._simulateApproval(session);
+    await expect(pending).resolves.toBeDefined();
+
+    // Even without `existing`, the unconditional-clear branch fires.
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Quick-260513-c8e — post-restart resume (issue #25 acceptance #1 + #2).
+// A fresh process whose SignClient deserializes a live session from the WC
+// store must return paired:true via getStatus() WITHOUT a pair() call. And
+// activeAccount === accounts[0] regardless of pre-restart selection
+// (activeAccountByTopic is an in-memory map — cold-boot starts empty).
+// ---------------------------------------------------------------------------
+describe("session-manager — post-restart resume (#25 acceptance #1 + #2)", () => {
+  it("Test 16: getStatus returns paired:true + activeAccount===accounts[0] for a session arriving from the (mocked) store without a prior pair()", async () => {
+    // Simulate "the persisted WC store deserialized into a live session at
+    // boot": warm the SignClient singleton WITHOUT going through pair(), by
+    // calling getActiveSessionTopic which short-circuits when uninitialized
+    // and so won't help. Instead, prime via a single pair() — _resetSessionManagerForTesting
+    // clears activeAccountByTopic but DOES NOT clear the SignClient singleton.
+    // Then drop the in-memory selector via _resetSessionManagerForTesting to
+    // simulate the cold-boot state, and re-seed the store with the live session.
+    const session = buildMultiAccountSession({
+      chainId: 1,
+      addresses: [...MULTI_ACCOUNTS],
+      topic: TOPIC,
+    });
+
+    // Phase A: warm pair() so the singleton is initialized.
+    const pending = pair();
+    await waitUntilConnectCalled();
+    mockSignClient._simulateApproval(session);
+    await pending;
+
+    // Phase B: pre-restart selection — user switched to a non-default account.
+    mockSignClient._setSessionsInStore([session]);
+    await setActiveAccount(MULTI_ACCOUNTS[2]);
+    expect((await getStatus())?.activeAccount).toBe(MULTI_ACCOUNTS[2]);
+
+    // Phase C: simulate process restart by clearing the session-manager
+    // module state. The WC client singleton (and the mocked session store)
+    // survive — they're the analogue of "persisted state deserialized at
+    // boot."
+    _resetSessionManagerForTesting();
+    mockSignClient._setSessionsInStore([session]);
+
+    // Phase D: a fresh getStatus() call after "cold boot" — activeAccount
+    // falls back to accounts[0] because activeAccountByTopic is empty.
+    const status = await getStatus();
+    expect(status).not.toBeNull();
+    expect(status?.paired).toBe(true);
+    expect(status?.accounts).toEqual([...MULTI_ACCOUNTS]);
     expect(status?.activeAccount).toBe(MULTI_ACCOUNTS[0]);
   });
 });
