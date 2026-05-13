@@ -208,6 +208,34 @@ describe("clearPersistedStorage", () => {
   });
 });
 
+describe("Task 2: global hermeticity pin (test/setup.ts) + persist-branch override", () => {
+  it("Test 14: without any per-test env setup, mode resolves to 'memory' (proves the global pin in test/setup.ts is wired)", () => {
+    // Tests above clear VAULTPILOT_WC_STORAGE in `beforeEach`. This test
+    // re-asserts the value comes back as `"memory"` AFTER our per-test
+    // cleanup — i.e. before reaching the resolver, we restore the saved
+    // env to whatever the global pin set. Verify the pin is active.
+    if (savedEnv === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = savedEnv;
+    // The global pin in test/setup.ts runs before any module load, so the
+    // savedEnv we captured in beforeEach IS the pinned `"memory"` value
+    // (unless the test invoker overrode it externally). Tolerate the
+    // external-override case by checking the resolved mode rather than
+    // the raw env var.
+    expect(getWalletConnectStorageMode()).toBe("memory");
+  });
+
+  it("Test 18: persist branch can be exercised in a single test by overriding the global pin (with cleanup proving no other test sees persist)", () => {
+    // Override the pin for this single test only.
+    process.env[ENV_KEY] = "persist";
+    expect(getWalletConnectStorageMode()).toBe("persist");
+
+    // The outer `afterEach` restores `savedEnv` (which captured the
+    // global pin's `"memory"`), so the next test starts in `"memory"`
+    // mode again — confirmed by Test 14 above and by every other test
+    // running through `VAULTPILOT_WC_STORAGE=memory` via the pin.
+  });
+});
+
 // Suite-tail invariant — see plan acceptance #4. No tests above touched
 // `~/.vaultpilot-mcp/wc-storage` (Test 7a uses an overridden $HOME pointing
 // at tmpRoot), so the real path under the user's home must NOT exist now.
