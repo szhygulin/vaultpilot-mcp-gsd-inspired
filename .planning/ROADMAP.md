@@ -7,7 +7,7 @@ The journey: a working trust pipeline first (one chain, one signing flow, end-to
 ## Milestones
 
 - 🟡 **v1.0 MVP** — Phases 1-5 **code-complete**; combined Phase 3+4+5 verify-phase is the ship gate (real Ledger + small mainnet broadcast + auto-demo + persona rehearsal + diagnostics)
-- 📋 **v1.1 Aave + ERC-20 lifecycle** — Phases 6-7 (transfer + approve + revoke + WETH unwrap + Aave V3)
+- 🟡 **v1.1 Aave + ERC-20 lifecycle** — Phase 6 code-complete (ERC-20 lifecycle); Phase 7 (Aave V3) pending; v1.1 verify-phase open
 - 📋 **v1.2 Multi-EVM + token tooling** — Phase 8 (5 EVM chains + `resolve_token` + `get_token_allowances`)
 - 📋 **v1.3 Hardening + skill** — Phase 9 (companion skill, three verification tools, dispatch allowlist)
 - 📋 **v1.4 Distribution** — Phase 10 (binary, installer scripts, setup wizard)
@@ -150,10 +150,12 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 06-01-PLAN.md — `get_token_metadata` + `parseAmountStrict` (load-bearing decimal guard in `src/signing/amount.ts`, DF-2) + Fixture B literal anchor
-- [ ] 06-02-PLAN.md — `prepare_token_send` + `src/protocols/erc20.ts` (first `src/protocols/` occupant) + preview-time decoded-arg surfacing + wide `eth_call` simulation helper (DF-1) + Fixture D
-- [ ] 06-03-PLAN.md — `prepare_token_approve` + `prepare_revoke_approval` (distinct tool name, shared internal helper) + `⚠ UNLIMITED APPROVAL` surfacing + `src/config/contracts.ts` SOT (first occupant, 11+ KnownSpender entries) + Fixture E
-- [ ] 06-04-PLAN.md — `prepare_weth_unwrap` + `src/protocols/weth9.ts` + canonical WETH SOT migration (consolidates `get_portfolio_summary.ts:17` duplicate) + LEDGER NOTICE block + Fixture F + full ERC-20 lifecycle integration test (persona-cycle `from`-independence)
+- [x] 06-01-PLAN.md — `get_token_metadata` + `parseAmountStrict` (load-bearing decimal guard in `src/signing/amount.ts`, DF-2) + Fixture B literal anchor — PR #28
+- [x] 06-02-PLAN.md — `prepare_token_send` + `src/protocols/erc20.ts` (first `src/protocols/` occupant) + preview-time decoded-arg surfacing + wide `eth_call` simulation helper (DF-1) + Fixture D — PR #29
+- [x] 06-03-PLAN.md — `prepare_token_approve` + `prepare_revoke_approval` (distinct tool name, shared internal helper, byte-identity invariant) + `⚠ UNLIMITED APPROVAL` strict-equality surfacing + `src/config/contracts.ts` SOT (first occupant, 11 KnownSpender entries; 12th slot reserved for Phase 7 Aave) + Fixture E — PR #30
+- [x] 06-04-PLAN.md — `prepare_weth_unwrap` + `src/protocols/weth9.ts` + canonical WETH SOT migration (closes T-CONFIG-LITERAL-MIGRATION-1) + LEDGER NOTICE block (A2 defense) + Fixture F + full ERC-20 lifecycle integration test (persona-cycle `from`-independence) — PR #31
+
+**Status**: code-complete; v1.1 verify-phase pending (real-Ledger ERC-20 transfer + approve + WETH unwrap against mainnet; resolves A2 — Ledger CAL clear-sign coverage for WETH9.withdraw in 2026-05).
 
 #### Phase 7: Aave V3 (Ethereum)
 **Goal**: User can read Aave V3 positions and supply/withdraw assets; risk-tooling provides health-factor previews.
@@ -285,7 +287,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 3. WalletConnect pairing | v1.0 | 0/2 | Not started | - |
 | 4. Native ETH send (the trust pipeline) | v1.0 | 0/5 | Not started | - |
 | 5. Demo mode + diagnostics | v1.0 | 0/3 | Not started | - |
-| 6. ERC-20 lifecycle (transfer + approve + revoke + WETH unwrap) | v1.1 | 0/4 | Planned (bundle on `plan/phase-06`) | - |
+| 6. ERC-20 lifecycle (transfer + approve + revoke + WETH unwrap) | v1.1 | 4/4 | Complete (verify-phase open) | 2026-05-13 |
 | 7. Aave V3 (Ethereum) | v1.1 | 0/4 | Not started | - |
 | 8. Multi-EVM fan-out + token tooling | v1.2 | 0/5 | Not started | - |
 | 9. Hardening (skill + three verification tools + dispatch allowlist) | v1.3 | 0/5 | Not started | - |
