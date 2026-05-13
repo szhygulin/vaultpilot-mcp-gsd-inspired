@@ -21,16 +21,23 @@ import {
   MissingProjectIdError,
   _resetWalletConnectClientForTesting,
   _isWalletConnectClientInitialized,
+  _wcStorage,
   getWalletConnectClient,
 } from "../src/wallet/walletconnect-client.js";
 import { parseEvmAccountId } from "../src/wallet/caip.js";
 
 const ENV_KEY = "WALLETCONNECT_PROJECT_ID";
+const STORAGE_KEY = "VAULTPILOT_WC_STORAGE";
 let savedEnv: string | undefined;
+let savedStorageEnv: string | undefined;
 
 beforeEach(() => {
   savedEnv = process.env[ENV_KEY];
+  savedStorageEnv = process.env[STORAGE_KEY];
   delete process.env[ENV_KEY];
+  // The global test setup pins VAULTPILOT_WC_STORAGE=memory. Individual
+  // tests that need the persist branch override in their own beforeEach
+  // (see "persist mode" describe block below).
   _resetWalletConnectClientForTesting();
   mockSignClient = createMockSignClient();
   initSpy = vi.fn(async () => mockSignClient.client);
@@ -39,7 +46,10 @@ beforeEach(() => {
 afterEach(() => {
   if (savedEnv === undefined) delete process.env[ENV_KEY];
   else process.env[ENV_KEY] = savedEnv;
+  if (savedStorageEnv === undefined) delete process.env[STORAGE_KEY];
+  else process.env[STORAGE_KEY] = savedStorageEnv;
   _resetWalletConnectClientForTesting();
+  vi.restoreAllMocks();
 });
 
 describe("getWalletConnectClient", () => {
@@ -51,13 +61,15 @@ describe("getWalletConnectClient", () => {
     expect(initSpy).not.toHaveBeenCalled();
   });
 
-  it("calls SignClient.init with logger=error, database=:memory:, and the project id", async () => {
+  it("Test 8: under memory mode, calls SignClient.init with database=':memory:' + the log message names in-memory storage", async () => {
     process.env[ENV_KEY] = "test-project-id";
+    process.env[STORAGE_KEY] = "memory";
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     await getWalletConnectClient();
     expect(initSpy).toHaveBeenCalledTimes(1);
     // Asserts the pinned init options — these are the load-bearing
-    // mitigations for T-WC-INIT-2 (stdout pollution) and T-WC-STORE-1
-    // (no walletconnect.db on disk).
+    // mitigations for T-WC-INIT-2 (stdout pollution) and the memory-mode
+    // "fresh process = fresh pair" invariant.
     expect(initSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "test-project-id",
@@ -66,8 +78,43 @@ describe("getWalletConnectClient", () => {
     );
     const opts = initSpy.mock.calls[0]?.[0] as { storageOptions: unknown };
     // toEqual on the storageOptions sub-object so a stray extra field
-    // would fail the assertion (defends the "in-memory only" invariant).
+    // would fail the assertion (defends the storageOptions contract).
     expect(opts.storageOptions).toEqual({ database: ":memory:" });
+
+    // Test 10 (memory arm): boot-log names the mode.
+    const stderrCalls = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(stderrCalls).toMatch(/in-memory storage/);
+  });
+
+  it("Test 9 + Test 10 (persist arm): under persist mode, init receives an absolute path + ensureStorageDirWithPerms runs BEFORE init + log names persistent storage", async () => {
+    process.env[ENV_KEY] = "test-project-id";
+    process.env[STORAGE_KEY] = "persist";
+    const ensureSpy = vi
+      .spyOn(_wcStorage, "ensureStorageDirWithPerms")
+      .mockImplementation(() => {
+        /* no-op — do NOT actually mkdir under ~/. The test only needs the
+         * call-order assertion. */
+      });
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    await getWalletConnectClient();
+
+    expect(initSpy).toHaveBeenCalledTimes(1);
+    const opts = initSpy.mock.calls[0]?.[0] as { storageOptions: { database: string } };
+    expect(opts.storageOptions.database).toMatch(/\/\.vaultpilot-mcp\/wc-storage$/);
+
+    // ensureStorageDirWithPerms MUST have been called with the same path
+    // BEFORE SignClient.init (vi.spyOn captures invocationCallOrder on the
+    // mocked function; we assert ordering via the index property).
+    expect(ensureSpy).toHaveBeenCalledTimes(1);
+    expect(ensureSpy).toHaveBeenCalledWith(opts.storageOptions.database);
+    const ensureOrder = ensureSpy.mock.invocationCallOrder[0]!;
+    const initOrder = initSpy.mock.invocationCallOrder[0]!;
+    expect(ensureOrder).toBeLessThan(initOrder);
+
+    // Test 10 (persist arm): boot-log names the path.
+    const stderrCalls = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(stderrCalls).toMatch(/persistent storage at .*\.vaultpilot-mcp\/wc-storage/);
   });
 
   it("dedupes concurrent first-init calls into a single SignClient.init", async () => {

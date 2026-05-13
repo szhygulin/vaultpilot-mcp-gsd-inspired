@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: MVP
+status: verifying
+stopped_at: "Phase 5 all 3 plans shipped via PRs #19-21; v1.0 MVP code-complete; combined Phase 3+4+5 verify-phase pending real-Ledger smoke"
+last_updated: "2026-05-13T09:15:00.000Z"
+last_activity: "2026-05-13 — Quick task 260513-c8e (issue #25 WC session persistence) shipped on fix/wc-session-persist. 3 atomic commits: feat(wc) persist + clear-on-force-re-pair, test(wc) global hermeticity pin via VAULTPILOT_WC_STORAGE=memory in test/setup.ts, feat(diag)+docs(security) walletConnectStoragePersistent boolean in get_vaultpilot_config_status + new SECURITY.md at repo root (resolves dangling src/server.ts:39 INSTRUCTIONS reference). 304→329 tests pass; zero diff in src/signing/ + src/security/; hermeticity verified (~/.vaultpilot-mcp/wc-storage absent post-npm-test). Closes #25."
+progress:
+  total_phases: 5
+  completed_phases: 0
+  total_plans: 17
+  completed_plans: 2
+  percent: 12
+---
+
 # Project State
 
 ## Project Reference
@@ -12,13 +28,16 @@ See: .planning/PROJECT.md (updated 2026-05-12)
 Phase: 5 of 10 (Demo mode + diagnostics) — **code-complete**. All 3 plans shipped via PRs #19, #20, #21; 260/260 tests pass; typecheck + build clean. **v1.0 MVP feature surface is DONE** — Phases 1-5 cover the entire v1.0 requirements set (INST-01..05 + READ-01..06 + PAIR-01..05 + PREP-01..10 + DEMO-01..07 + DIAG-01..04). The cryptographic-binding chain holds under both real-mode and demo-mode rehearsal (Fixture A `0x7e1867b2...` + Fixture C `0xb28e4824...` byte-identical across both, proving PREP-03's preimage is `from`-independent). Combined Phase 3+4+5 verify-phase (real Ledger pair + small mainnet broadcast + demo-mode persona rehearsal) is the only thing between v1.0 trust pipeline and "shipped".
 Plan: 3 of 3 done in current phase
 Status: Phase 5 code-complete. v1.0 MVP done in code. Verify-phase pending (manual, requires real Ledger + WALLETCONNECT_PROJECT_ID + small mainnet ETH balance).
-Last activity: 2026-05-12 — Phase 5 planned + executed. Planning bundle (RESEARCH + VALIDATION + PATTERNS + 3 PLAN files) shipped as PR #18 (PASS after 2 inline plan-checker fixes + 1 accepted residual; Q-CONTRADICTION-PREP Option B + Q-NPM resolved via AskUserQuestion before planning). Then 05-01 (demo state + persona registry + ErrorCode 13→14 with WRONG_MODE + get/set_demo_wallet) shipped as PR #19 (+29 tests, 3 ESM-mechanics deviations). Then 05-02 (Q-CONTRADICTION-PREP Option B — REMOVES demo refusal from prepare_native_send + preview_send; persona address as `from`; integration test re-anchors Fixture A + C under demo `from`) shipped as PR #20 (+9 net tests, zero substantive deviations). Finally 05-03 (DIAG tools + update check + auto-demo NOTICE dispatcher-wrap + INSTRUCTIONS rewrite) shipped as PR #21 (+26 tests, 2 minor deviations; secret-safety audit via 3-sentinel substring scan; dispatcher-wrap at src/server.ts one-change architectural-scope-correct per Phase 4 precedent).
+Last activity: 2026-05-13 — Quick task 260513-c8e (issue #25 WC session persistence) shipped on `fix/wc-session-persist`. 3 atomic commits: `feat(wc)` persist + clear-on-force-re-pair, `test(wc)` global hermeticity pin via `VAULTPILOT_WC_STORAGE=memory` in `test/setup.ts`, `feat(diag)`+`docs(security)` `walletConnectStoragePersistent` boolean in `get_vaultpilot_config_status` + new `SECURITY.md` at repo root (resolves dangling `src/server.ts:39` INSTRUCTIONS reference). 304→329 tests pass; zero diff in `src/signing/` + `src/security/`; hermeticity verified (`~/.vaultpilot-mcp/wc-storage` absent post-`npm test`). Closes #25.
+
+Prior activity: 2026-05-12 — Phase 5 planned + executed. Planning bundle (RESEARCH + VALIDATION + PATTERNS + 3 PLAN files) shipped as PR #18 (PASS after 2 inline plan-checker fixes + 1 accepted residual; Q-CONTRADICTION-PREP Option B + Q-NPM resolved via AskUserQuestion before planning). Then 05-01 (demo state + persona registry + ErrorCode 13→14 with WRONG_MODE + get/set_demo_wallet) shipped as PR #19 (+29 tests, 3 ESM-mechanics deviations). Then 05-02 (Q-CONTRADICTION-PREP Option B — REMOVES demo refusal from prepare_native_send + preview_send; persona address as `from`; integration test re-anchors Fixture A + C under demo `from`) shipped as PR #20 (+9 net tests, zero substantive deviations). Finally 05-03 (DIAG tools + update check + auto-demo NOTICE dispatcher-wrap + INSTRUCTIONS rewrite) shipped as PR #21 (+26 tests, 2 minor deviations; secret-safety audit via 3-sentinel substring scan; dispatcher-wrap at src/server.ts one-change architectural-scope-correct per Phase 4 precedent).
 
 Progress: [██████████] 17/30 plans (57%) — phases 1-5 of 10 code-complete; **v1.0 MVP feature set complete; v1.1-v3.5 remain**
 
 ## Performance Metrics
 
 **Velocity:**
+
 - Total plans completed: 0
 - Average duration: —
 - Total execution time: —
@@ -30,12 +49,17 @@ Progress: [██████████] 17/30 plans (57%) — phases 1-5 of 1
 | - | - | - | - |
 
 **Recent Trend:**
+
 - Last 5 plans: —
 - Trend: —
 
 *Updated after each plan completion*
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 8 edited: Added plan 08-05 (WalletConnect proposal namespace expansion) and success criterion #8 — surfaced during physical-device testing: WC pairing only offered Ethereum accounts even though src/wallet/session-manager.ts:57-59 has a Phase 8 fan-out comment. Plan count 4→5; Progress row 0/4→0/5.
 
 ### Decisions
 
@@ -113,6 +137,7 @@ None yet.
 | Date | Slug | Branch | Summary |
 |------|------|--------|---------|
 | 2026-05-12 | [wc-multi-account-session](./quick/20260512-wc-multi-account-session/SUMMARY.md) | `fix/wc-multi-account-session` | Plumb all CAIP-10 accounts in WC v2 session; add `set_active_account` tool; signing pipeline reads `activeAccount`. 6 atomic commits, 304/304 tests pass. |
+| 2026-05-13 | [persist-walletconnect-session-across-mcp](./quick/260513-c8e-persist-walletconnect-session-across-mcp/260513-c8e-SUMMARY.md) | `fix/wc-session-persist` | Persist WC v2 session under `~/.vaultpilot-mcp/wc-storage/` (0o700, dir-not-file); opt out via `VAULTPILOT_WC_STORAGE=memory`; force-re-pair clears on-disk store before `client.disconnect`. New `SECURITY.md` + `walletConnectStoragePersistent` boolean in `get_vaultpilot_config_status`. 3 atomic commits + 25 new tests (304→329); zero diff in `src/signing/` + `src/security/`. Closes #25. |
 
 ## Deferred Items
 

@@ -20,15 +20,16 @@
 
 import { isAutoDemo, isDemoMode } from "../config/env.js";
 import { getConfigPath, readConfigFile } from "../config/config-file.js";
+import { getWalletConnectStorageMode } from "../config/wc-storage.js";
 import { getActivePersona } from "../demo/state.js";
 import { getStatus } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
 
 const DESCRIPTION = [
-  "Returns a summary of vaultpilot-mcp's current configuration state — demo mode flag, env-var presence (as booleans), paired-account count, WC session-topic suffix (last 8 chars only), config-file path + presence/malformed flags, Node version, package version, active persona slug, update-check suppression flag.",
-  "Use this when debugging install configuration — 'why is demo mode active?', 'is my RPC URL set?', 'what version am I on?', 'which persona is active?'.",
+  "Returns a summary of vaultpilot-mcp's current configuration state — demo mode flag, env-var presence (as booleans), paired-account count, WC session-topic suffix (last 8 chars only), WC session persistence flag (boolean), config-file path + presence/malformed flags, Node version, package version, active persona slug, update-check suppression flag.",
+  "Use this when debugging install configuration — 'why is demo mode active?', 'is my RPC URL set?', 'what version am I on?', 'which persona is active?', 'is my Ledger session persisted across restarts?'.",
   "Do NOT use this to retrieve the actual config values (RPC URL, WC project ID, full session topic) — those are NEVER returned by this tool. For RPC URL: read the `ETHEREUM_RPC_URL` env var directly via your shell. For WC project ID: same — `WALLETCONNECT_PROJECT_ID`.",
-  "Returns `{ demoMode, isAutoDemo, activePersonaSlug, walletConnectProjectIdPresent, ethereumRpcUrlPresent, pairedAccountCount, wcSessionTopicSuffix, configFilePath, configFileExists, configFileMalformed, nodeVersion, packageVersion, updateCheckSuppressed }`.",
+  "Returns `{ demoMode, isAutoDemo, activePersonaSlug, walletConnectProjectIdPresent, ethereumRpcUrlPresent, pairedAccountCount, wcSessionTopicSuffix, walletConnectStoragePersistent, configFilePath, configFileExists, configFileMalformed, nodeVersion, packageVersion, updateCheckSuppressed }`.",
   "Secret-safety: response contains only booleans, counts, suffixes, paths, and PUBLIC values (Node version, package version, persona slug, config file path). No secret values are returned — verifiable by the agent via JSON inspection.",
 ].join(" ");
 
@@ -80,6 +81,8 @@ registerTool(
     const status = await getStatus();
     const pairedAccountCount = status === null ? 0 : 1;
     const wcSessionTopicSuffix = status === null ? null : status.sessionTopicLast8;
+    const walletConnectStoragePersistent =
+      getWalletConnectStorageMode() === "persist";
 
     // Q-CONFIG-LEAK lock: surface presence + malformed flags ONLY; the file
     // CONTENT (and the parse-error `cause` string, which may quote raw file
@@ -105,6 +108,7 @@ registerTool(
       ethereumRpcUrlPresent,
       pairedAccountCount,
       wcSessionTopicSuffix,
+      walletConnectStoragePersistent,
       configFilePath,
       configFileExists,
       configFileMalformed,
@@ -124,6 +128,7 @@ registerTool(
     lines.push(`  ethereumRpcUrlPresent:           ${ethereumRpcUrlPresent}`);
     lines.push(`  pairedAccountCount:              ${pairedAccountCount}`);
     lines.push(`  wcSessionTopicSuffix:            ${wcSessionTopicSuffix ?? "(none)"}`);
+    lines.push(`  walletConnectStoragePersistent:  ${walletConnectStoragePersistent}`);
     lines.push(`  configFilePath:                  ${configFilePath}`);
     lines.push(`  configFileExists:                ${configFileExists}`);
     lines.push(`  configFileMalformed:             ${configFileMalformed}`);

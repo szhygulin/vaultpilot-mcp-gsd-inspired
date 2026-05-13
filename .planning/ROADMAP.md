@@ -191,13 +191,15 @@ Plans:
   5. `RPC_PROVIDER + RPC_API_KEY` config wires custom RPC for all 5 chains in one shot
   6. `resolve_token({ symbol: "USDC", chain: "polygon" })` returns canonical USDC vs USDC.e disambiguation with origin-chain hints
   7. `get_token_allowances({ wallet, chain })` enumerates outstanding allowances with per-row `isUnlimited` / `spenderLabel` / `lastSeenBlock`; response carries verbatim `[SET-LEVEL ENUMERATION]` block
-**Plans**: 4 plans
+  8. WalletConnect pairing proposal includes every configured chain; Ledger Live's account picker surfaces Base / Polygon / Arbitrum / Optimism accounts when their networks are enabled in LL
+**Plans**: 5 plans
 
 Plans:
 - [ ] 08-01: Multi-chain RPC client + per-chain config + provider-shorthand (`infura` / `alchemy`) wiring
 - [ ] 08-02: `chain` param threading through every read + prepare tool + chain-id assertion at preview/send
 - [ ] 08-03: `get_portfolio_summary` cross-chain aggregation + per-chain Aave Pool address fan-out
 - [ ] 08-04: `resolve_token` + bridged-variant table + `get_token_allowances` + `[SET-LEVEL ENUMERATION]` block emission
+- [ ] 08-05: WalletConnect proposal namespace expansion — `REQUIRED_NAMESPACES.eip155.chains` driven by configured chains (replaces hardcoded `["eip155:1"]` in `src/wallet/session-manager.ts:57-59`); pairing UI surfaces accounts on every enabled chain; multi-chain `accounts` list flows through `get_ledger_status` + `set_active_account`. Surfaced during physical-device testing — LL only offered Ethereum accounts even when Base/Polygon were enabled in Ledger Live
 
 ---
 
@@ -285,6 +287,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 5. Demo mode + diagnostics | v1.0 | 0/3 | Not started | - |
 | 6. ERC-20 lifecycle (transfer + approve + revoke + WETH unwrap) | v1.1 | 0/4 | Not started | - |
 | 7. Aave V3 (Ethereum) | v1.1 | 0/4 | Not started | - |
-| 8. Multi-EVM fan-out + token tooling | v1.2 | 0/4 | Not started | - |
+| 8. Multi-EVM fan-out + token tooling | v1.2 | 0/5 | Not started | - |
 | 9. Hardening (skill + three verification tools + dispatch allowlist) | v1.3 | 0/5 | Not started | - |
 | 10. Distribution + ergonomics | v1.4 | 0/4 | Not started | - |

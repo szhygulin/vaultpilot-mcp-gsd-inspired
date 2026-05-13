@@ -33,6 +33,7 @@ import type { SessionTypes } from "@walletconnect/types";
 import { getSdkError } from "@walletconnect/utils";
 import { type Address, getAddress } from "viem";
 
+import { clearPersistedStorage } from "../config/wc-storage.js";
 import { log } from "../diagnostics/logger.js";
 import { parseEvmAccountId } from "./caip.js";
 import { isUserRejectedError } from "./wc-errors.js";
@@ -41,6 +42,14 @@ import {
   getWalletConnectClient,
   getWalletConnectClientOrNull,
 } from "./walletconnect-client.js";
+
+/**
+ * Spy-affordance indirection for the wc-storage helpers used by force-re-pair.
+ * Production code calls `_storage.clearPersistedStorage()` so
+ * `vi.spyOn(_storage, "clearPersistedStorage")` works across the ESM module
+ * boundary (same pattern as `_wcStorage` in `walletconnect-client.ts`).
+ */
+export const _storage = { clearPersistedStorage };
 
 // Required namespaces declared on every pairing. Phase 4 inherits these
 // methods without re-pairing. Phase 8 fans `eip155.chains` to a per-config
@@ -257,6 +266,15 @@ export async function pair(
   await ensureSessionDeleteListener(client);
 
   if (force) {
+    // Clear the on-disk persisted store FIRST — before disconnect —
+    // so a crash mid-disconnect cannot leave a live session on-disk
+    // that a fresh process would resurrect. The aggressive read of
+    // acceptance #5: `force: true` is the unconditional-clear path;
+    // we call clearPersistedStorage() even when no `existing` live
+    // session is present (covers the orphan-store-from-prior-crash
+    // case). The `rm({ force: true })` inside makes the no-store path
+    // a cheap no-op.
+    await _storage.clearPersistedStorage();
     const existing = findLiveSession(client);
     if (existing) {
       await client.disconnect({
@@ -359,6 +377,10 @@ export async function pairStart(
   await ensureSessionDeleteListener(client);
 
   if (force) {
+    // Clear the on-disk persisted store FIRST — see the matching block
+    // in `pair()` for the rationale (clear before disconnect; aggressive
+    // read of acceptance #5 — unconditional even without existing).
+    await _storage.clearPersistedStorage();
     const existing = findLiveSession(client);
     if (existing) {
       await client.disconnect({

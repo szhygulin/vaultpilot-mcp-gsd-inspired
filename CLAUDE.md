@@ -38,6 +38,7 @@ See `.planning/PROJECT.md` for full context, `.planning/REQUIREMENTS.md` for v1.
 - **`src/config/contracts.ts`** is the single source of truth for canonical contract addresses (Aave Pool, Lido, etc.). Regression-tested. Never inline an address in a tool implementation.
 - **Stderr for diagnostics, stdout for MCP protocol.** Crossing the wires breaks the client.
 - **Decimal-aware arithmetic.** All token amounts cross the agent boundary as decimal strings (e.g. `"100.5"`); the server resolves decimals via `get_token_metadata`. Off-by-decimal is the most common user-facing bug class.
+- **ESM spy-affordance indirection for cross-export internal calls.** When a module's exports call each other internally, wrap the internal-call surface in an `_<scope>` indirection object so `vi.spyOn` can intercept (ESM named-export bindings are immutable; direct spies are no-ops for internal calls). Canonical examples: `_paths` in `src/config/config-file.ts`, `_storage` in `src/wallet/session-manager.ts`, `_wcStorage` in `src/wallet/walletconnect-client.ts`. Add the indirection at write time, not retroactively — the cost is one wrapping object; the cost of skipping it is a silently-passing test that doesn't actually spy on anything.
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->
