@@ -28,10 +28,33 @@ export type HandleStatus = "prepared" | "previewed" | "sent" | "cancelled";
  * storage boundary. PREP-02 surfaces these verbatim in the PREPARE RECEIPT
  * block; a future contributor cannot accidentally checksum-case the address
  * or trim the value because the type wouldn't allow it.
+ *
+ * Phase 6 — Plan 06-02 additive widening. The ERC-20 prepare tools populate
+ * a subset of the optional fields alongside the existing `to` / `valueWei`:
+ *
+ *   - `prepare_token_send`     → `tokenAddress` + `amount` (plus the existing `to`;
+ *                                 `valueWei` set to `"0"`)
+ *   - `prepare_token_approve`  → `tokenAddress` + `spender` + `amount` (Plan 06-03;
+ *                                 `to` set to empty string, `valueWei` to `"0"`)
+ *   - `prepare_revoke_approval`→ `tokenAddress` + `spender` (Plan 06-03;
+ *                                 `amount` set to `"0"`)
+ *   - `prepare_weth_unwrap`    → `tokenAddress` + `amount` (Plan 06-04;
+ *                                 no `to`, no `spender`)
+ *
+ * Format-fanout-sentinel: every new field is `string` (NOT Address / NOT
+ * bigint) so the same normalization-at-storage guard applies. Phase 4
+ * native-send callers are unchanged at runtime — all new fields are
+ * optional.
  */
 export interface PrepareArgs {
   to: string;
   valueWei: string;
+  /** Phase 6 — ERC-20 token contract address (raw agent string). */
+  tokenAddress?: string;
+  /** Phase 6 — decimal-string amount in human units (e.g. `"100.5"`). */
+  amount?: string;
+  /** Phase 6 — approve/revoke spender address (raw agent string). */
+  spender?: string;
 }
 
 /**
