@@ -1156,7 +1156,7 @@ For the planner's mental model — confirm with pattern-mapper.
 - `src/tools/send_transaction.ts` THREE-GATE logic — additive chain-mismatch check is BEFORE the three gates; the gates themselves are byte-identical
 - `src/signing/simulation.ts` — wide `eth_call` simulation already takes the configured client (Phase 6 DF-1); plan should verify it switches client per chain via the new `getChainClient(chainId)`
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 All resolved at planning gate (researcher reasonable-call locks per Phase 5/6/7 pattern). Items deferred to verify-phase listed in Assumptions Log (A4–A6 specifically: PublicNode log-range ceiling, Ledger Live UI behavior, WC multi-chain pairing behavior).
 
