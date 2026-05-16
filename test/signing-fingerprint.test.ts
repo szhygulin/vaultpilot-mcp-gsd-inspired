@@ -110,6 +110,56 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     expect(fp).toBe("0x81a70e4a703de01b67ad1aaff7d97be8dde3ae6703a652a462f7de9e30e36596");
   });
 
+  it("Fixture G — Aave V3 supply(USDC, 100e6, anvilWallet, 0) fingerprint (hardcoded literal anchor, Phase 7 / Plan 07-03)", () => {
+    // 132-byte supply(asset, 100e6, anvil#1, referralCode=0) calldata against
+    // the canonical Aave V3 Pool. 0x + 8-hex selector + 4 × 64-hex args = 266
+    // chars total. Cross-linked from test/prepare-aave-supply.test.ts Test 7
+    // and test/aave-v3-lifecycle.integration.test.ts persona-cycle.
+    const aavePool = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2" as Address;
+    const supplyData =
+      "0x617ba037" +
+      "000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" + // USDC
+      "0000000000000000000000000000000000000000000000000000000005f5e100" + // 100e6
+      "00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c8" + // onBehalfOf
+      "0000000000000000000000000000000000000000000000000000000000000000"; // referralCode=0
+    expect(supplyData.length).toBe(266);
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: aavePool,
+      valueWei: 0n,
+      data: supplyData as Hex,
+    });
+
+    // Hardcoded literal anchor (Plan 07-03 hardening — execute-time
+    // computation pinned forever). Drift in the preimage assembly for
+    // Aave-supply-shape data breaks THIS exact assertion at PR-review time.
+    expect(fp).toBe("0x67314a7f021fa9ba6d901ba555800a51d9f0e006f4e59489f69b486d009fce59");
+  });
+
+  it("Fixture H — Aave V3 withdraw(USDC, 100e6, anvilWallet) fingerprint (hardcoded literal anchor, Phase 7 / Plan 07-03)", () => {
+    // 100-byte withdraw(asset, 100e6, anvil#1) calldata against the canonical
+    // Aave V3 Pool. 0x + 8-hex selector + 3 × 64-hex args = 202 chars total.
+    // Cross-linked from test/prepare-aave-withdraw.test.ts Test 7 and
+    // test/aave-v3-lifecycle.integration.test.ts persona-cycle.
+    const aavePool = "0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2" as Address;
+    const withdrawData =
+      "0x69328dec" +
+      "000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" + // USDC
+      "0000000000000000000000000000000000000000000000000000000005f5e100" + // 100e6
+      "00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c8"; // to
+    expect(withdrawData.length).toBe(202);
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: aavePool,
+      valueWei: 0n,
+      data: withdrawData as Hex,
+    });
+
+    expect(fp).toBe("0x782dd9aa096d47a4036b2023c01c1306d3b325fbbbbd4da8a1a5cd3ce42be40d");
+  });
+
   it("invalid `to` (not a 0x-prefixed 20-byte hex) → throws via viem.hexToBytes", () => {
     expect(() =>
       computePayloadFingerprint({

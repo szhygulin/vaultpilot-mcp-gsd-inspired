@@ -22,6 +22,7 @@ import { formatUnits, type Address, type Hex } from "viem";
 
 import type { FourbyteResult } from "../clients/fourbyte.js";
 import { _contracts } from "../config/contracts.js";
+import type { AaveV3Decoded } from "../protocols/aave-v3.js";
 import type { Erc20Decoded } from "../protocols/erc20.js";
 import { WETH9_DECIMALS } from "../protocols/weth9.js";
 import type { SimulationResult } from "./simulation.js";
@@ -441,4 +442,147 @@ export function buildSimulationBlock(result: SimulationResult): string {
     "          the LEDGER BLIND-SIGN HASH match above, not this simulation.",
   );
   return lines.join("\n");
+}
+
+// -----------------------------------------------------------------------------
+// Phase 7 — Plan 07-03 additive extensions (APPEND-ONLY). The Phase 4 + Phase 6
+// templates above stay byte-identical (FROZEN). Existing `buildDecodedArgsBlock`
+// helper for ERC-20 is byte-unchanged.
+//
+// NO LEDGER NOTICE template here. Research § Topic 6 verified clear-sign
+// coverage in `LedgerHQ/clear-signing-erc7730-registry/registry/aave/
+// calldata-lpv3.json` for supply + withdraw on chainId=1 Aave V3 Pool — devices
+// display human-readable args, no blind-sign fallback expected. The Phase 6
+// `LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE` is the only NOTICE template; preview_send
+// does NOT extend its emission condition to Aave selectors.
+//
+// T-AAVE-LEDGER-NOTICE-PREEMPTIVE-1 negative-anchor: any future addition of
+// an Aave LEDGER NOTICE template would surface as an unused export here AND
+// would fail `test/preview-send.aave.test.ts` Test 5 (asserts response text
+// does NOT contain `LEDGER NOTICE` for Aave selectors).
+// -----------------------------------------------------------------------------
+
+/**
+ * Aave V3 supply PREPARE RECEIPT (PREP-02 — verbatim agent args).
+ *
+ * Two slots: asset + amount. `onBehalfOf` is server-derived (hardcoded to
+ * sender per research § Topic 5 reasonable-call lock), not surfaced in the
+ * receipt — the user reads the on-device clear-sign display for `onBehalfOf`.
+ *
+ * Substituted by `prepare_aave_supply.ts`. Format-fanout-sentinel: one block,
+ * one home.
+ */
+export const AAVE_SUPPLY_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Aave V3 supply",
+  "  asset:        {ASSET}",
+  "  amount:       {AMOUNT}",
+].join("\n");
+
+/**
+ * Aave V3 withdraw PREPARE RECEIPT (PREP-02 — verbatim agent args).
+ *
+ * Two slots: asset + amount. `to` is server-derived (hardcoded to sender —
+ * explicit-self-recipient lock per research § Topic 5), not surfaced in the
+ * receipt.
+ *
+ * Substituted by `prepare_aave_withdraw.ts`.
+ */
+export const AAVE_WITHDRAW_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Aave V3 withdraw",
+  "  asset:        {ASSET}",
+  "  amount:       {AMOUNT}",
+].join("\n");
+
+/**
+ * DECODED ARGS block — Aave V3 `supply(asset, amount, onBehalfOf, referralCode)`
+ * shape. Surfaces the four decoded fields plus the pool address (canonical SOT
+ * from `getAaveV3PoolAddress(1)`) so the user can cross-check against
+ * `src/config/contracts.ts`.
+ *
+ * `{ASSET}` is the underlying asset contract from `decodedArgs.asset` (NOT
+ * `record.tx.to` — `record.tx.to` is the Pool address). The
+ * T-AAVE-TX-TO-CONFUSION-1 mitigation lives at the preview_send call site:
+ * `tokenContext` resolution looks up `decodedArgs.asset` against the registry.
+ */
+export const DECODED_ARGS_TEMPLATE_AAVE_SUPPLY: string = [
+  "DECODED ARGS",
+  "  function:     supply",
+  "  pool:         {POOL_ADDRESS} (Aave V3 Pool — canonical)",
+  "  asset:        {ASSET} {ASSET_LABEL}",
+  "  amount:       {AMOUNT_HUMAN}",
+  "  amountWei:    {AMOUNT_WEI}",
+  "  onBehalfOf:   {ON_BEHALF_OF}",
+  "  referralCode: {REFERRAL_CODE}",
+].join("\n");
+
+/**
+ * DECODED ARGS block — Aave V3 `withdraw(asset, amount, to)` shape. Same
+ * asset-from-decodedArgs discipline as the supply template.
+ *
+ * `{AMOUNT_HUMAN}` surfaces "ENTIRE BALANCE (uint256.max)" when the decoded
+ * amount equals MAX_UINT256 — defense for any third-party calldata routed
+ * through preview_send. v1.1's `prepare_aave_withdraw` does NOT accept the
+ * "max" sentinel from the agent (concrete decimal required); the decoder still
+ * detects the case for forward-compat.
+ */
+export const DECODED_ARGS_TEMPLATE_AAVE_WITHDRAW: string = [
+  "DECODED ARGS",
+  "  function:  withdraw",
+  "  pool:      {POOL_ADDRESS} (Aave V3 Pool — canonical)",
+  "  asset:     {ASSET} {ASSET_LABEL}",
+  "  amount:    {AMOUNT_HUMAN}",
+  "  amountWei: {AMOUNT_WEI}",
+  "  to:        {TO}",
+].join("\n");
+
+/**
+ * Render the DECODED ARGS block for an Aave V3 decoded call. Parallel helper
+ * to `buildDecodedArgsBlock` — separate function so the existing ERC-20 helper
+ * stays byte-frozen. preview_send selects which helper to call based on which
+ * decoder returned a non-"unknown" kind.
+ *
+ *   - `kind: "aave-supply"`: substitute the supply template; render
+ *     `amountHuman` via `formatUnits(amount, tokenContext.decimals)` when
+ *     `tokenContext` is non-null, else fall back to the raw bigint with an
+ *     "(unknown asset — no registry match)" label.
+ *   - `kind: "aave-withdraw"`: same shape; `isMax` swaps the human amount for
+ *     "ENTIRE BALANCE (uint256.max)".
+ *
+ * `tokenContext` is supplied by preview_send from a lookup against
+ * `decodedArgs.asset` (T-AAVE-TX-TO-CONFUSION-1: NOT `record.tx.to` — that's
+ * the Pool address). Off-list assets surface `null` and the block emits a
+ * fallback label.
+ */
+export function buildAaveDecodedArgsBlock(
+  decoded: Exclude<AaveV3Decoded, { kind: "unknown" }>,
+  tokenContext: { symbol: string; decimals: number } | null,
+  poolAddress: Address,
+): string {
+  const assetLabel = tokenContext
+    ? `(${tokenContext.symbol})`
+    : "(unknown asset — no registry match)";
+  const decimals = tokenContext?.decimals ?? 18;
+  if (decoded.kind === "aave-supply") {
+    return DECODED_ARGS_TEMPLATE_AAVE_SUPPLY
+      .replace("{POOL_ADDRESS}", poolAddress)
+      .replace("{ASSET}", decoded.asset)
+      .replace("{ASSET_LABEL}", assetLabel)
+      .replace("{AMOUNT_HUMAN}", formatUnits(decoded.amount, decimals))
+      .replace("{AMOUNT_WEI}", decoded.amount.toString())
+      .replace("{ON_BEHALF_OF}", decoded.onBehalfOf)
+      .replace("{REFERRAL_CODE}", String(decoded.referralCode));
+  }
+  // aave-withdraw
+  const amountHuman = decoded.isMax
+    ? "ENTIRE BALANCE (uint256.max)"
+    : formatUnits(decoded.amount, decimals);
+  return DECODED_ARGS_TEMPLATE_AAVE_WITHDRAW
+    .replace("{POOL_ADDRESS}", poolAddress)
+    .replace("{ASSET}", decoded.asset)
+    .replace("{ASSET_LABEL}", assetLabel)
+    .replace("{AMOUNT_HUMAN}", amountHuman)
+    .replace("{AMOUNT_WEI}", decoded.amount.toString())
+    .replace("{TO}", decoded.to);
 }

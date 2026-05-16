@@ -48,14 +48,15 @@
 // `src/signing/blocks.ts` (Plan 04-05) — NOT inlined here. Format-fanout-
 // sentinel: one helper, one home.
 
-import { type Address, type Hex } from "viem";
+import { erc20Abi, type Address, type Hex } from "viem";
 import { estimateFeesPerGas, estimateGas, getTransactionCount } from "viem/actions";
 
 import { getEthereumClient } from "../chains/ethereum.js";
 import { lookupSelector } from "../clients/fourbyte.js";
-import { getWethAddress } from "../config/contracts.js";
+import { getAaveV3PoolAddress, getWethAddress } from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
 import { getActivePersona } from "../demo/state.js";
+import { _aaveProtocols, type AaveV3Decoded } from "../protocols/aave-v3.js";
 import { _protocols, type Erc20Decoded } from "../protocols/erc20.js";
 import { WETH9_SELECTORS } from "../protocols/weth9.js";
 import {
@@ -64,6 +65,7 @@ import {
   LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
   build4byteBlock,
+  buildAaveDecodedArgsBlock,
   buildDecodedArgsBlock,
   buildSimulationBlock,
   chunkHex,
@@ -323,24 +325,67 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // the agent). _protocols indirection for ESM spy-affordance.
     const decodedArgs: Erc20Decoded = _protocols.decodeErc20Call(record.tx.data);
 
-    // Resolve token-decimals context for the DECODED ARGS block.
-    // For transfer/approve, `record.tx.to` is the TOKEN CONTRACT (NOT the
-    // recipient) — the registry lookup is against that. Off-list tokens
-    // surface tokenContext === null and the block emits the raw bigint
-    // amount + a "decimals unknown" note.
+    // Phase 7 — Plan 07-03: two-tier selector dispatch. If the ERC-20 decoder
+    // returned `kind: "unknown"`, try the Aave V3 decoder. ERC-20 selectors
+    // (transfer / approve / WETH9.withdraw) take precedence — the ABI dispatch
+    // tables are disjoint, so a clean fall-through is sufficient.
+    let aaveDecoded: AaveV3Decoded | null = null;
+    if (decodedArgs.kind === "unknown") {
+      const aave = _aaveProtocols.decodeAaveV3Call(record.tx.data);
+      if (aave.kind !== "unknown") aaveDecoded = aave;
+    }
+
+    // Resolve token-decimals context for the DECODED ARGS block. Two paths:
+    //
+    //   - ERC-20 (transfer / approve): `record.tx.to` is the TOKEN CONTRACT
+    //     (NOT the recipient) — the registry lookup is against that.
+    //   - Aave (supply / withdraw): the asset address lives on
+    //     `aaveDecoded.asset` (record.tx.to is the Pool address — looking it
+    //     up in the token registry would mask the actual asset and produce
+    //     "off-list token" for every Aave call). T-AAVE-TX-TO-CONFUSION-1
+    //     mitigation: explicit `decoded.asset` lookup. Long-tail Aave reserves
+    //     (not in the top-50 registry) fall back to live RPC for
+    //     `decimals()` + `symbol()` — failure leaves tokenContext null and the
+    //     block surfaces an "(unknown asset)" label verbatim.
     let tokenContext: { symbol: string; decimals: number } | null = null;
-    if (decodedArgs.kind === "transfer" || decodedArgs.kind === "approve") {
+    if (aaveDecoded !== null) {
+      const registry = loadEthereumTokenRegistry();
+      const entry = registry.find((e) => e.address === aaveDecoded!.asset);
+      tokenContext = entry ? { symbol: entry.symbol, decimals: entry.decimals } : null;
+      if (tokenContext === null) {
+        try {
+          const [d, sym] = await Promise.all([
+            client.readContract({
+              address: aaveDecoded.asset,
+              abi: erc20Abi,
+              functionName: "decimals",
+            }),
+            client.readContract({
+              address: aaveDecoded.asset,
+              abi: erc20Abi,
+              functionName: "symbol",
+            }),
+          ]);
+          tokenContext = { decimals: Number(d), symbol: String(sym) };
+        } catch {
+          // Best-effort. tokenContext stays null.
+        }
+      }
+    } else if (decodedArgs.kind === "transfer" || decodedArgs.kind === "approve") {
       const registry = loadEthereumTokenRegistry();
       const entry = registry.find((e) => e.address === record.tx.to);
       tokenContext = entry
         ? { symbol: entry.symbol, decimals: entry.decimals }
         : null;
     }
-    // Plan 06-04 fills the withdraw branch — WETH context from
-    // src/config/contracts.ts. Stub here keeps the structure for the
-    // next plan without affecting 06-02 tests.
 
-    const decodedArgsBlock = buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
+    // Decoded-args block selection — the Aave path uses the parallel helper
+    // (separate from the ERC-20 helper to keep both byte-frozen against
+    // template drift).
+    const decodedArgsBlock =
+      aaveDecoded !== null
+        ? buildAaveDecodedArgsBlock(aaveDecoded, tokenContext, getAaveV3PoolAddress(1))
+        : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
 
     // Phase 6 — Plan 06-02: wide eth_call simulation. DF-1 LOCKED. Runs for
     // ALL tx shapes including native sends (defense-in-depth uniform per
@@ -416,19 +461,38 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
 
     // Serialize decodedArgs for structuredContent — bigints → strings for
     // JSON safety. Mirror the `gas: gasEstimate.toString()` convention.
+    // Phase 7 — Plan 07-03: the union widens to include `aave-supply` and
+    // `aave-withdraw` shapes when the Aave decoder returned a non-`unknown`
+    // result.
     const decodedArgsForJson =
-      decodedArgs.kind === "transfer"
-        ? { kind: "transfer" as const, to: decodedArgs.to, amount: decodedArgs.amount.toString() }
-        : decodedArgs.kind === "approve"
+      aaveDecoded !== null
+        ? aaveDecoded.kind === "aave-supply"
           ? {
-              kind: "approve" as const,
-              spender: decodedArgs.spender,
-              amount: decodedArgs.amount.toString(),
-              isUnlimited: decodedArgs.isUnlimited,
+              kind: "aave-supply" as const,
+              asset: aaveDecoded.asset,
+              amount: aaveDecoded.amount.toString(),
+              onBehalfOf: aaveDecoded.onBehalfOf,
+              referralCode: aaveDecoded.referralCode,
             }
-          : decodedArgs.kind === "withdraw"
-            ? { kind: "withdraw" as const, amount: decodedArgs.amount.toString() }
-            : { kind: "unknown" as const, selector: decodedArgs.selector };
+          : {
+              kind: "aave-withdraw" as const,
+              asset: aaveDecoded.asset,
+              amount: aaveDecoded.amount.toString(),
+              to: aaveDecoded.to,
+              isMax: aaveDecoded.isMax,
+            }
+        : decodedArgs.kind === "transfer"
+          ? { kind: "transfer" as const, to: decodedArgs.to, amount: decodedArgs.amount.toString() }
+          : decodedArgs.kind === "approve"
+            ? {
+                kind: "approve" as const,
+                spender: decodedArgs.spender,
+                amount: decodedArgs.amount.toString(),
+                isUnlimited: decodedArgs.isUnlimited,
+              }
+            : decodedArgs.kind === "withdraw"
+              ? { kind: "withdraw" as const, amount: decodedArgs.amount.toString() }
+              : { kind: "unknown" as const, selector: decodedArgs.selector };
 
     return {
       content: [{ type: "text", text }],
