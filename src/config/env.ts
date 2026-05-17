@@ -38,6 +38,29 @@ export function getEthereumRpcUrl(): string | undefined {
   return read("ETHEREUM_RPC_URL");
 }
 
+// Phase 8 Plan 08-01 — chain-specific RPC URL readers. Each mirrors
+// `getEthereumRpcUrl` verbatim via the in-tree `read(name)` helper
+// (trims whitespace, returns undefined for empty/missing). The resolution
+// priority lives in `src/chains/registry.ts::getChainClient(chainId)`:
+//   (1) chain-specific override (these helpers) wins unconditionally
+//   (2) `RPC_PROVIDER` + `RPC_API_KEY` shorthand expanded per chain
+//   (3) PublicNode public RPC per chain — final fallback, once-per-chain warn
+export function getArbitrumRpcUrl(): string | undefined {
+  return read("ARBITRUM_RPC_URL");
+}
+
+export function getPolygonRpcUrl(): string | undefined {
+  return read("POLYGON_RPC_URL");
+}
+
+export function getBaseRpcUrl(): string | undefined {
+  return read("BASE_RPC_URL");
+}
+
+export function getOptimismRpcUrl(): string | undefined {
+  return read("OPTIMISM_RPC_URL");
+}
+
 export function getRpcProvider(): string | undefined {
   return read("RPC_PROVIDER");
 }

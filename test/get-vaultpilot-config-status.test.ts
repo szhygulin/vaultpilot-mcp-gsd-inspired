@@ -11,6 +11,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { _resetChainRegistryForTesting } from "../src/chains/registry.js";
 import { _resetDemoModeForTesting } from "../src/config/env.js";
 import {
   _resetActivePersonaForTesting,
@@ -37,6 +38,13 @@ const SUPPRESS_KEY = "VAULTPILOT_DISABLE_UPDATE_CHECK";
 const WC_STORAGE_KEY = "VAULTPILOT_WC_STORAGE";
 // Plan 07-04 — new env var surfaced as etherscanApiKeyPresent boolean.
 const ETHERSCAN_KEY = "ETHERSCAN_API_KEY";
+// Plan 08-01 — multi-chain RPC env vars surfaced as configuredChains booleans.
+const RPC_PROVIDER_KEY = "RPC_PROVIDER";
+const RPC_API_KEY_KEY = "RPC_API_KEY";
+const ARBITRUM_KEY = "ARBITRUM_RPC_URL";
+const POLYGON_KEY = "POLYGON_RPC_URL";
+const BASE_KEY = "BASE_RPC_URL";
+const OPTIMISM_KEY = "OPTIMISM_RPC_URL";
 
 let savedDemo: string | undefined;
 let savedRpc: string | undefined;
@@ -44,6 +52,12 @@ let savedWc: string | undefined;
 let savedSuppress: string | undefined;
 let savedWcStorage: string | undefined;
 let savedEtherscan: string | undefined;
+let savedRpcProvider: string | undefined;
+let savedRpcApiKey: string | undefined;
+let savedArbitrum: string | undefined;
+let savedPolygon: string | undefined;
+let savedBase: string | undefined;
+let savedOptimism: string | undefined;
 let mock: MockConfigFile | undefined;
 
 async function callTool(): Promise<ToolHandlerResult> {
@@ -59,17 +73,30 @@ beforeEach(() => {
   savedSuppress = process.env[SUPPRESS_KEY];
   savedWcStorage = process.env[WC_STORAGE_KEY];
   savedEtherscan = process.env[ETHERSCAN_KEY];
+  savedRpcProvider = process.env[RPC_PROVIDER_KEY];
+  savedRpcApiKey = process.env[RPC_API_KEY_KEY];
+  savedArbitrum = process.env[ARBITRUM_KEY];
+  savedPolygon = process.env[POLYGON_KEY];
+  savedBase = process.env[BASE_KEY];
+  savedOptimism = process.env[OPTIMISM_KEY];
 
   process.env[DEMO_KEY] = "false";
   delete process.env[RPC_KEY];
   delete process.env[WC_KEY];
   delete process.env[SUPPRESS_KEY];
   delete process.env[ETHERSCAN_KEY];
+  delete process.env[RPC_PROVIDER_KEY];
+  delete process.env[RPC_API_KEY_KEY];
+  delete process.env[ARBITRUM_KEY];
+  delete process.env[POLYGON_KEY];
+  delete process.env[BASE_KEY];
+  delete process.env[OPTIMISM_KEY];
   // VAULTPILOT_WC_STORAGE inherits the global pin ("memory" from
   // test/setup.ts). Individual tests override below.
 
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
+  _resetChainRegistryForTesting();
 });
 
 afterEach(() => {
@@ -85,9 +112,22 @@ afterEach(() => {
   else process.env[WC_STORAGE_KEY] = savedWcStorage;
   if (savedEtherscan === undefined) delete process.env[ETHERSCAN_KEY];
   else process.env[ETHERSCAN_KEY] = savedEtherscan;
+  if (savedRpcProvider === undefined) delete process.env[RPC_PROVIDER_KEY];
+  else process.env[RPC_PROVIDER_KEY] = savedRpcProvider;
+  if (savedRpcApiKey === undefined) delete process.env[RPC_API_KEY_KEY];
+  else process.env[RPC_API_KEY_KEY] = savedRpcApiKey;
+  if (savedArbitrum === undefined) delete process.env[ARBITRUM_KEY];
+  else process.env[ARBITRUM_KEY] = savedArbitrum;
+  if (savedPolygon === undefined) delete process.env[POLYGON_KEY];
+  else process.env[POLYGON_KEY] = savedPolygon;
+  if (savedBase === undefined) delete process.env[BASE_KEY];
+  else process.env[BASE_KEY] = savedBase;
+  if (savedOptimism === undefined) delete process.env[OPTIMISM_KEY];
+  else process.env[OPTIMISM_KEY] = savedOptimism;
 
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
+  _resetChainRegistryForTesting();
   mock?.restore();
   mock = undefined;
   vi.restoreAllMocks();
@@ -318,5 +358,115 @@ describe("get_vaultpilot_config_status — etherscanApiKeyPresent (Plan 07-04)",
     // The boolean is set correctly without leaking the value.
     const sc = result.structuredContent as { etherscanApiKeyPresent: boolean };
     expect(sc.etherscanApiKeyPresent).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 08-01 — rpcProvider + configuredChains additive diagnostic surface.
+// `rpcProvider`: verbatim shorthand name (`infura` / `alchemy`) or null.
+// `configuredChains`: per-chain boolean map reflecting RPC resolution.
+// Q-CONFIG-LEAK extends: the API KEY VALUE is NEVER surfaced (T-RPC-API-KEY-LEAK-1).
+// ---------------------------------------------------------------------------
+describe("get_vaultpilot_config_status — rpcProvider + configuredChains (Plan 08-01)", () => {
+  it("Test 35 — RPC_PROVIDER=infura → rpcProvider surfaces verbatim", async () => {
+    process.env[RPC_PROVIDER_KEY] = "infura";
+    process.env[RPC_API_KEY_KEY] = "irrelevant-for-this-test";
+    const result = await callTool();
+    const sc = result.structuredContent as { rpcProvider: string | null };
+    expect(sc.rpcProvider).toBe("infura");
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/rpcProvider:\s+infura/);
+  });
+
+  it("Test 36 — RPC_PROVIDER unset → rpcProvider is null; text-block shows (none)", async () => {
+    delete process.env[RPC_PROVIDER_KEY];
+    const result = await callTool();
+    const sc = result.structuredContent as { rpcProvider: string | null };
+    expect(sc.rpcProvider).toBeNull();
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/rpcProvider:\s+\(none\)/);
+  });
+
+  it("Test 37 — configuredChains has 5 booleans; RPC_PROVIDER=infura + RPC_API_KEY=k → all 5 true; bare env → all 5 false", async () => {
+    // Subtest A — shorthand fans to all 5 chains.
+    process.env[RPC_PROVIDER_KEY] = "infura";
+    process.env[RPC_API_KEY_KEY] = "k";
+    let result = await callTool();
+    let sc = result.structuredContent as {
+      configuredChains: Record<string, boolean>;
+    };
+    expect(Object.keys(sc.configuredChains).sort()).toEqual(
+      ["arbitrum", "base", "ethereum", "optimism", "polygon"].sort(),
+    );
+    expect(sc.configuredChains.ethereum).toBe(true);
+    expect(sc.configuredChains.arbitrum).toBe(true);
+    expect(sc.configuredChains.polygon).toBe(true);
+    expect(sc.configuredChains.base).toBe(true);
+    expect(sc.configuredChains.optimism).toBe(true);
+    const textA = result.content[0]?.text ?? "";
+    expect(textA).toMatch(/configuredChains:\s+ethereum=true arbitrum=true polygon=true base=true optimism=true/);
+
+    // Subtest B — bare env (no override, no shorthand) → all 5 false.
+    delete process.env[RPC_PROVIDER_KEY];
+    delete process.env[RPC_API_KEY_KEY];
+    result = await callTool();
+    sc = result.structuredContent as {
+      configuredChains: Record<string, boolean>;
+    };
+    expect(sc.configuredChains.ethereum).toBe(false);
+    expect(sc.configuredChains.arbitrum).toBe(false);
+    expect(sc.configuredChains.polygon).toBe(false);
+    expect(sc.configuredChains.base).toBe(false);
+    expect(sc.configuredChains.optimism).toBe(false);
+
+    // Subtest C — chain-specific overrides flip the right booleans only.
+    process.env[ARBITRUM_KEY] = "https://my-arb.example";
+    process.env[BASE_KEY] = "https://my-base.example";
+    result = await callTool();
+    sc = result.structuredContent as {
+      configuredChains: Record<string, boolean>;
+    };
+    expect(sc.configuredChains.ethereum).toBe(false);
+    expect(sc.configuredChains.arbitrum).toBe(true);
+    expect(sc.configuredChains.polygon).toBe(false);
+    expect(sc.configuredChains.base).toBe(true);
+    expect(sc.configuredChains.optimism).toBe(false);
+  });
+
+  it("Test 38 (LOAD-BEARING) — RPC_API_KEY value NEVER appears in response (T-RPC-API-KEY-LEAK-1 3-sentinel scan)", async () => {
+    // Three unique sentinels — guaranteed not to appear unless leaked.
+    const RPC_SECRET = "test-sentinel-12345-do-not-leak";
+    const ARB_SECRET = "https://my-arb.example/path?key=arb-sentinel-67890";
+    const POL_SECRET = "https://my-polygon.example/path?key=pol-sentinel-abcde";
+
+    process.env[RPC_PROVIDER_KEY] = "infura";
+    process.env[RPC_API_KEY_KEY] = RPC_SECRET;
+    // Chain-specific overrides too — those URLs can also contain key material.
+    process.env[ARBITRUM_KEY] = ARB_SECRET;
+    process.env[POLYGON_KEY] = POL_SECRET;
+
+    const result = await callTool();
+    const serialized = JSON.stringify(result);
+    const text = result.content[0]?.text ?? "";
+
+    // The KEY value never appears in structuredContent or text — neither
+    // the shorthand key nor the chain-specific URL contents.
+    expect(serialized).not.toContain(RPC_SECRET);
+    expect(serialized).not.toContain(ARB_SECRET);
+    expect(serialized).not.toContain(POL_SECRET);
+    expect(serialized).not.toContain("arb-sentinel-67890");
+    expect(serialized).not.toContain("pol-sentinel-abcde");
+    expect(text).not.toContain(RPC_SECRET);
+    expect(text).not.toContain(ARB_SECRET);
+    expect(text).not.toContain(POL_SECRET);
+
+    // The non-sensitive surface IS present.
+    const sc = result.structuredContent as {
+      rpcProvider: string | null;
+      configuredChains: Record<string, boolean>;
+    };
+    expect(sc.rpcProvider).toBe("infura"); // provider NAME is fine; key VALUE is not
+    expect(sc.configuredChains.arbitrum).toBe(true);
+    expect(sc.configuredChains.polygon).toBe(true);
   });
 });
