@@ -199,11 +199,11 @@ Plans:
 **Plans**: 5 plans
 
 Plans:
-- [ ] 08-01: Multi-chain RPC client + per-chain config + provider-shorthand (`infura` / `alchemy`) wiring
-- [ ] 08-02: `chain` param threading through every read + prepare tool + chain-id assertion at preview/send
-- [ ] 08-03: `get_portfolio_summary` cross-chain aggregation + per-chain Aave Pool address fan-out
-- [ ] 08-04: `resolve_token` + bridged-variant table + `get_token_allowances` + `[SET-LEVEL ENUMERATION]` block emission
-- [ ] 08-05: WalletConnect proposal namespace expansion — `REQUIRED_NAMESPACES.eip155.chains` driven by configured chains (replaces hardcoded `["eip155:1"]` in `src/wallet/session-manager.ts:57-59`); pairing UI surfaces accounts on every enabled chain; multi-chain `accounts` list flows through `get_ledger_status` + `set_active_account`. Surfaced during physical-device testing — LL only offered Ethereum accounts even when Base/Polygon were enabled in Ledger Live
+- [ ] 08-01-PLAN.md — `src/chains/registry.ts` multi-chain RPC factory + `ChainId` literal-union widening (`1 | 42161 | 137 | 8453 | 10`) + `Record<ChainId, ContractsForChain>` cross-chain SOT extension (5 chains × 5 typed Aave V3 slots) + per-chain RPC env readers + provider-shorthand resolution (`infura` / `alchemy` / custom) + `configuredChains` diagnostic boolean in `get_vaultpilot_config_status`. Delete `src/chains/ethereum.ts` compat shim in Wave 2.
+- [ ] 08-02-PLAN.md — `chain` Zod-enum threading through 13 tools (REQUIRED on `prepare_*`, OPTIONAL with `"ethereum"` default on read tools per DF-1) + chain-id assertion at `preview_send` (T-CHAIN-MISMATCH-1) + 6 PREPARE RECEIPT `{CHAIN}` slot widening + `CHAIN_ID_MISMATCH` errorCode + Fixture J chain-distinctness property test (`new Set(fps).size === 5`, NOT a literal pin per RESEARCH § Topic 9) + delete `src/chains/ethereum.ts` compat shim. TypeScript compiler error at every `chainId: 1` literal IS the executor's carve-anchor.
+- [ ] 08-03-PLAN.md — `get_portfolio_summary` cross-chain aggregation via `Promise.allSettled` with per-chain 10s timeout + per-chain Aave Pool address fan-out (Aave V3 Pool identical on Arbitrum/Polygon/Optimism `0x794a61358D…`; Ethereum + Base distinct) + 4 new per-chain top-50 token JSON registries (`src/config/tokens/{arbitrum,polygon,base,optimism}-top-50.json`) + `loadTokenRegistry(chain)` finalization. Parallel-eligible with 08-04.
+- [ ] 08-04-PLAN.md — `resolve_token` (curated bridged-variant table — USDC vs USDC.e, WETH vs WETH variants, ~15 symbols × 5 chains; addresses cross-verified against Circle / Optimism / Arbitrum / MakerDAO docs) + `get_token_allowances` (event-log scan via `publicClient.getLogs` + multicall cross-check; 1M-block lookback default per DF-2, configurable; `[SET-LEVEL ENUMERATION]` block schema — load-bearing for v1.3 Inv #14 in `vaultpilot-preflight`) + `SET_LEVEL_ENUMERATION_TEMPLATE` in `src/signing/blocks.ts` + T-LOGS-CEILING-1 (surface `lookbackBlocks` + warn at ceiling). Etherscan V2 negative finding (no token-approvals endpoint per RESEARCH § Topic 7) — event-log scan is the only path. Parallel-eligible with 08-03.
+- [ ] 08-05-PLAN.md — WalletConnect proposal namespace expansion — `REQUIRED_NAMESPACES.eip155.chains` driven by `configuredChains` from 08-01 (replaces hardcoded `["eip155:1"]` in `src/wallet/session-manager.ts:57-59`) + `sessionToStatus` multi-chain accounting (removes the multi-chain-refusal at lines 626-632) + `accountsByChain` + `activeChainId` + `partiallyPaired` fields on `LedgerStatus` (T-WC-PARTIAL-1) + `set_active_account` per-chain scope widening. Surfaced during physical-device testing — LL only offered Ethereum accounts even when Base/Polygon were enabled in Ledger Live.
 
 ---
 
@@ -291,6 +291,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 5. Demo mode + diagnostics | v1.0 | 0/3 | Not started | - |
 | 6. ERC-20 lifecycle (transfer + approve + revoke + WETH unwrap) | v1.1 | 4/4 | Complete (verify-phase open) | 2026-05-13 |
 | 7. Aave V3 (Ethereum) | v1.1 | 0/4 | Planned (bundle on `plan/phase-07`) | - |
-| 8. Multi-EVM fan-out + token tooling | v1.2 | 0/5 | Not started | - |
+| 8. Multi-EVM fan-out + token tooling | v1.2 | 0/5 | Planned (bundle on `plan/phase-08`) | - |
 | 9. Hardening (skill + three verification tools + dispatch allowlist) | v1.3 | 0/5 | Not started | - |
 | 10. Distribution + ergonomics | v1.4 | 0/4 | Not started | - |
