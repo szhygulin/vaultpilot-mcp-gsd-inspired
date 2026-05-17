@@ -7,7 +7,7 @@ The journey: a working trust pipeline first (one chain, one signing flow, end-to
 ## Milestones
 
 - 🟡 **v1.0 MVP** — Phases 1-5 **code-complete**; combined Phase 3+4+5 verify-phase is the ship gate (real Ledger + small mainnet broadcast + auto-demo + persona rehearsal + diagnostics)
-- 🟡 **v1.1 Aave + ERC-20 lifecycle** — Phase 6 code-complete (ERC-20 lifecycle); Phase 7 (Aave V3) pending; v1.1 verify-phase open
+- 🟡 **v1.1 Aave + ERC-20 lifecycle** — Phases 6 + 7 **code-complete** (ERC-20 lifecycle + Aave V3 Ethereum); v1.1 verify-phase open
 - 📋 **v1.2 Multi-EVM + token tooling** — Phase 8 (5 EVM chains + `resolve_token` + `get_token_allowances`)
 - 📋 **v1.3 Hardening + skill** — Phase 9 (companion skill, three verification tools, dispatch allowlist)
 - 📋 **v1.4 Distribution** — Phase 10 (binary, installer scripts, setup wizard)
@@ -170,10 +170,12 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 07-01-PLAN.md — `src/config/contracts.ts` SOT extension: 5 Aave V3 typed slots (Pool + PoolAddressesProvider + UiPoolDataProviderV3 + AaveOracle + IncentivesController) + 5 getters + regression test. `KNOWN_SPENDERS_ETHEREUM` unchanged (Aave V3 Pool already at row 0 per 06-03)
-- [ ] 07-02-PLAN.md — `get_lending_positions` reader (UiPoolDataProviderV3) + sibling-shelf helper `src/chains/aave-v3.ts` (parseAbi struct refs) + pure-bigint health-factor math `src/signing/aave-health.ts`
-- [ ] 07-03-PLAN.md — `prepare_aave_supply` + `prepare_aave_withdraw` (mechanical clones of `prepare_weth_unwrap`) + `simulate_position_change` (4-action enum supply/withdraw/borrow/repay) + `src/protocols/aave-v3.ts` + `preview_send` selector-dispatch extension + Fixtures G/H + lifecycle integration test. **NO LEDGER NOTICE for Aave** (research § Topic 6 verified clear-sign coverage)
-- [ ] 07-04-PLAN.md — `check_contract_security` (Etherscan V2 unified-API; verified-source + age + proxy + privileged-role enumeration) + `src/clients/etherscan.ts` (5-arm discriminated union + per-session rate-limit) + `ETHERSCAN_API_KEY` lazy env helper + `etherscanApiKeyPresent` boolean in `get_vaultpilot_config_status`. Parallel-eligible with 07-03
+- [x] 07-01-PLAN.md — `src/config/contracts.ts` SOT extension: 5 Aave V3 typed slots (Pool + PoolAddressesProvider + UiPoolDataProviderV3 + AaveOracle + IncentivesController) + 5 getters + regression test. `KNOWN_SPENDERS_ETHEREUM` unchanged (Aave V3 Pool already at row 0 per 06-03) — PR #34
+- [x] 07-02-PLAN.md — `get_lending_positions` reader (UiPoolDataProviderV3) + sibling-shelf helper `src/chains/aave-v3.ts` (parseAbi struct refs) + pure-bigint health-factor math `src/signing/aave-health.ts` — PR #35
+- [x] 07-03-PLAN.md — `prepare_aave_supply` + `prepare_aave_withdraw` (mechanical clones of `prepare_weth_unwrap`) + `simulate_position_change` (4-action enum supply/withdraw/borrow/repay) + `src/protocols/aave-v3.ts` + `preview_send` selector-dispatch extension + Fixtures G/H + lifecycle integration test. **NO LEDGER NOTICE for Aave** (research § Topic 6 verified clear-sign coverage) — PR #37
+- [x] 07-04-PLAN.md — `check_contract_security` (Etherscan V2 unified-API; verified-source + age + proxy + privileged-role enumeration) + `src/clients/etherscan.ts` (5-arm discriminated union + per-session rate-limit) + `ETHERSCAN_API_KEY` lazy env helper + `etherscanApiKeyPresent` boolean in `get_vaultpilot_config_status`. Parallel-eligible with 07-03 — PR #36
+
+**Status**: code-complete; v1.1 verify-phase pending (real-Ledger Aave supply + withdraw against mainnet; resolves A2 health-factor math vs Aave UI within 1 bps + reconfirms Aave Ledger CAL clear-sign coverage at sign-time).
 
 ---
 
