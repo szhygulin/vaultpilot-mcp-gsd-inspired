@@ -36,8 +36,10 @@
 // 15-min TTL is enforced inside `lookup` (Plan 04-01's lazy eviction);
 // past TTL → `HANDLE_EXPIRED` envelope, user re-runs `prepare_native_send`.
 
+import { type ChainId } from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
 import { lookupSelector } from "../clients/fourbyte.js";
+import { _canonicalDispatch } from "../security/canonical-dispatch.js";
 import { lookup } from "../signing/handle-store.js";
 import {
   AGENT_TASK_TEMPLATE,
@@ -47,6 +49,7 @@ import {
   build4byteBlock,
   chunkHex,
 } from "../signing/blocks.js";
+import { getStatus } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
 
 const DESCRIPTION = [
@@ -56,6 +59,7 @@ const DESCRIPTION = [
   "Single arg `handle` — the UUID returned by prepare_native_send.",
   "15-min TTL from the ORIGINAL prepare time (NOT from this call). Past 15min → HANDLE_EXPIRED — the user re-runs prepare_native_send. Process restarts wipe handles by design (no-persistence security model).",
   "Returns re-emitted text blocks + structuredContent mirroring whatever the handle's most-advanced state was (prepared / previewed / sent / cancelled).",
+  "v1.3 additions (Plan 09-05): structuredContent now carries `txJson` (full unsigned tx JSON with bigints as decimal strings — chainId/to/valueWei/data/nonce/gas/maxFeePerGas/maxPriorityFeePerGas), `sessionTopicLast8` (WC session topic for cross-check against Ledger Live → Settings → Connected Apps; null in demo mode or when unpaired), and `dispatchCheckResult` (re-runs Plan 09-04 Layer 0.5 canonical-dispatch allowlist check on the stored handle so a re-emit shows the same verdict preview_send returned). Native sends report `dispatchCheckResult: { kind: \"not-applicable\" }`.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -109,12 +113,47 @@ registerTool("get_tx_verification", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     .replace("{TO}", record.args.to)
     .replace("{VALUE_WEI}", record.args.valueWei);
 
+  // v1.3 additions (Plan 09-05 — SEC-36 + SEC-38). Computed ONCE here and
+  // surfaced on every successful re-emit path (prepared / previewed / sent
+  // / cancelled). Demo-mode is impossible at this point (the demo-mode
+  // refusal fires first at the top of the handler).
+  //   - sessionTopicLast8: WC session topic for user cross-check against
+  //     Ledger Live → Settings → Connected Apps. `null` when no live WC
+  //     session exists (handle outlived the pairing; informational).
+  //   - dispatchCheckResult: re-runs Plan 09-04 Layer 0.5 canonical-dispatch
+  //     allowlist check on the stored handle. Native sends (data === "0x")
+  //     short-circuit with `{ kind: "not-applicable" }` — consistent with
+  //     preview_send's Layer 0.5 bypass for native sends.
+  const ledgerStatus = await getStatus();
+  const sessionTopicLast8 = ledgerStatus?.sessionTopicLast8 ?? null;
+  const dispatchCheckResult =
+    record.tx.data === "0x"
+      ? ({ kind: "not-applicable" as const })
+      : _canonicalDispatch.checkDispatchTarget(
+          record.tx.chainId as ChainId,
+          record.tx.to,
+        );
+
   if (record.status === "prepared") {
     const text = [
       prepareReceiptBlock,
       "",
       "(preview has not run yet; call preview_send to get the LEDGER BLIND-SIGN HASH)",
     ].join("\n");
+    // `txJson` on `prepared` carries the partially-pinned tx (no nonce /
+    // gas / fees yet — those land at preview time). Bigints serialize via
+    // `.toString()` decimal-string discipline (consistent with the
+    // already-existing `gas: pinned.gas.toString()` pattern below).
+    const txJsonPrepared = {
+      chainId: record.tx.chainId,
+      to: record.tx.to,
+      valueWei: record.tx.valueWei.toString(),
+      data: record.tx.data,
+      nonce: record.tx.nonce ?? null,
+      gas: record.tx.gas?.toString() ?? null,
+      maxFeePerGas: record.tx.maxFeePerGas?.toString() ?? null,
+      maxPriorityFeePerGas: record.tx.maxPriorityFeePerGas?.toString() ?? null,
+    };
     return {
       content: [{ type: "text", text }],
       structuredContent: {
@@ -124,6 +163,10 @@ registerTool("get_tx_verification", DESCRIPTION, INPUT_SCHEMA, async (args) => {
         to: record.args.to,
         valueWei: record.args.valueWei,
         payloadFingerprint: record.payloadFingerprint,
+        // Plan 09-05 v1.3 additions
+        txJson: txJsonPrepared,
+        sessionTopicLast8,
+        dispatchCheckResult,
       },
     };
   }
@@ -198,6 +241,21 @@ registerTool("get_tx_verification", DESCRIPTION, INPUT_SCHEMA, async (args) => {
 
   const text = sections.join("\n");
 
+  // Plan 09-05 v1.3 — full unsigned tx as JSON, byte-equivalent to what
+  // preview_send would compute. Bigints serialize via `.toString()` decimal
+  // — consistent with the existing `gas: pinned.gas.toString()` discipline
+  // above. JSON-safe; round-trips through `JSON.parse(JSON.stringify(...))`.
+  const txJson = {
+    chainId: record.tx.chainId,
+    to: record.tx.to,
+    valueWei: record.tx.valueWei.toString(),
+    data: record.tx.data,
+    nonce: pinned.nonce,
+    gas: pinned.gas.toString(),
+    maxFeePerGas: pinned.maxFeePerGas.toString(),
+    maxPriorityFeePerGas: pinned.maxPriorityFeePerGas.toString(),
+  };
+
   return {
     content: [{ type: "text", text }],
     structuredContent: {
@@ -215,6 +273,10 @@ registerTool("get_tx_verification", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       maxFeePerGas: pinned.maxFeePerGas.toString(),
       maxPriorityFeePerGas: pinned.maxPriorityFeePerGas.toString(),
       fourbyte: fourbyteResult,
+      // Plan 09-05 v1.3 additions
+      txJson,
+      sessionTopicLast8,
+      dispatchCheckResult,
       ...(record.status === "sent" && record.txHash !== undefined
         ? { txHash: record.txHash, broadcastedAt: broadcastedAtIso }
         : {}),

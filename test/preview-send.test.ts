@@ -758,3 +758,44 @@ describe("preview_send — WALLET_NOT_PAIRED if session dropped between prepare 
     expect(after.record.pinned).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan 09-05 v1.3 additive — sessionTopicLast8 on success structuredContent
+// (T-SESSION-TOPIC-DRIFT-1). SEC-36.
+// ---------------------------------------------------------------------------
+describe("preview_send — Plan 09-05 sessionTopicLast8 on success (SEC-36, T-SESSION-TOPIC-DRIFT-1)", () => {
+  it("real-mode success carries sessionTopicLast8 from getStatus()", async () => {
+    const handle = seedHandle();
+    scriptFixtureCMocks();
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { sessionTopicLast8: string | null };
+    expect("sessionTopicLast8" in sc).toBe(true);
+    expect(sc.sessionTopicLast8).toBe(PAIRED_STATUS.sessionTopicLast8);
+  });
+
+  it("demo-mode success carries sessionTopicLast8: null (no WC session in demo)", async () => {
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    setActivePersona("whale");
+
+    const handle = seedHandle();
+    // Demo path uses persona address (whale persona's address); viem mocks
+    // still need to script the RPC fan-out for the demo branch.
+    getTransactionCountSpy.mockResolvedValue(FIXTURE_C_NONCE);
+    estimateFeesPerGasSpy.mockResolvedValue({
+      maxFeePerGas: FIXTURE_C_MAX_FEE,
+      maxPriorityFeePerGas: FIXTURE_C_MAX_PRIO,
+    });
+    estimateGasSpy.mockResolvedValue(FIXTURE_C_GAS);
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { sessionTopicLast8: string | null };
+    expect("sessionTopicLast8" in sc).toBe(true);
+    expect(sc.sessionTopicLast8).toBeNull();
+  });
+});

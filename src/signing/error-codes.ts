@@ -59,6 +59,14 @@
 //                              mismatch (a refusal that triggers BOTH
 //                              surfaces DISPATCH_TARGET_REFUSED first — the
 //                              more fundamental issue).
+//   DECODE_DIVERGENCE        — Phase 9 Plan 09-05 — `verify_tx_decode`
+//                              divergence arm. NOT auto-emitted as a refusal
+//                              envelope per se; the tool returns the
+//                              divergence list in structuredContent and the
+//                              agent's decision-policy + skill enforcement
+//                              determine halt-or-proceed. The code exists for
+//                              uniform envelope discipline (downstream
+//                              telemetry / diagnostics surfaces).
 
 export type ErrorCode =
   | "WALLET_NOT_PAIRED"
@@ -78,7 +86,8 @@ export type ErrorCode =
   | "INVALID_ACCOUNT"
   | "CHAIN_ID_MISMATCH"
   | "SKILL_INTEGRITY_FAILURE"
-  | "DISPATCH_TARGET_REFUSED";
+  | "DISPATCH_TARGET_REFUSED"
+  | "DECODE_DIVERGENCE";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

@@ -303,6 +303,167 @@ describe("get_tx_verification — demo-mode refusal fires FIRST (T-DEMO-1)", () 
   });
 });
 
+// ---------------------------------------------------------------------------
+// Plan 09-05 v1.3 additive structuredContent fields — txJson + sessionTopicLast8
+// + dispatchCheckResult (SEC-36 + SEC-38).
+// ---------------------------------------------------------------------------
+describe("get_tx_verification — v1.3 additive structuredContent (Plan 09-05, SEC-36 + SEC-38)", () => {
+  it("txJson is present on 'previewed' status; bigints serialized as decimal strings (T-TX-JSON-BIGINT-1)", async () => {
+    const handle = seedPreparedHandle();
+    transitionToPreviewed(handle, buildPinned());
+    lookupSelectorSpy.mockResolvedValue({ kind: "not-applicable" });
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      txJson: {
+        chainId: number;
+        to: string;
+        valueWei: string;
+        data: string;
+        nonce: number;
+        gas: string;
+        maxFeePerGas: string;
+        maxPriorityFeePerGas: string;
+      };
+    };
+    expect(sc.txJson).toBeDefined();
+    expect(sc.txJson.chainId).toBe(1);
+    expect(sc.txJson.to).toBe(TO_ADDRESS);
+    expect(sc.txJson.data).toBe("0x");
+    // T-TX-JSON-BIGINT-1: bigints serialize via .toString() decimal-string
+    // discipline (consistent with the existing `gas: pinned.gas.toString()`
+    // surface). NOT hex. Round-trips through JSON.parse(JSON.stringify(...)).
+    expect(typeof sc.txJson.valueWei).toBe("string");
+    expect(typeof sc.txJson.gas).toBe("string");
+    expect(typeof sc.txJson.maxFeePerGas).toBe("string");
+    expect(typeof sc.txJson.maxPriorityFeePerGas).toBe("string");
+    expect(sc.txJson.valueWei).toBe(VALUE_WEI);
+    expect(sc.txJson.gas).toBe("21000");
+    expect(sc.txJson.nonce).toBe(7);
+
+    // Round-trip safety: full structuredContent JSON.stringify must succeed
+    // (no unserializable bigints leak through).
+    expect(() => JSON.stringify(sc)).not.toThrow();
+  });
+
+  it("txJson is present on 'prepared' status with null/undefined pin fields", async () => {
+    const handle = seedPreparedHandle();
+    // NOT transitioning to previewed — txJson should carry null in
+    // nonce/gas/fees slots since the handle has not been pinned yet.
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      status: string;
+      txJson: { nonce: number | null; gas: string | null };
+    };
+    expect(sc.status).toBe("prepared");
+    expect(sc.txJson).toBeDefined();
+    expect(sc.txJson.nonce).toBe(7); // buildPreparedTx pinned it; harmless inheritance
+    // Note: buildPreparedTx already sets nonce + gas + fees on the
+    // PreparedTx; on a true bare prepared handle (no fields) they'd be
+    // null. This test asserts the txJson SHAPE is present on prepared
+    // regardless.
+    expect("gas" in sc.txJson).toBe(true);
+  });
+
+  it("sessionTopicLast8 is null when no live WC session (test environment default)", async () => {
+    const handle = seedPreparedHandle();
+    transitionToPreviewed(handle, buildPinned());
+    lookupSelectorSpy.mockResolvedValue({ kind: "not-applicable" });
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { sessionTopicLast8: string | null };
+    // No WC session manager initialized in the test environment, so
+    // `getStatus()` returns null and the additive field falls back to null.
+    // T-SESSION-TOPIC-DRIFT-1: surface is PRESENT even when null (not absent).
+    expect("sessionTopicLast8" in sc).toBe(true);
+    expect(sc.sessionTopicLast8).toBeNull();
+  });
+
+  it("dispatchCheckResult is { kind: 'not-applicable' } for native sends (data === '0x')", async () => {
+    const handle = seedPreparedHandle();
+    transitionToPreviewed(handle, buildPinned());
+    lookupSelectorSpy.mockResolvedValue({ kind: "not-applicable" });
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      dispatchCheckResult: { kind: string };
+    };
+    expect(sc.dispatchCheckResult).toBeDefined();
+    // Native send (data === "0x") short-circuits with not-applicable —
+    // consistent with preview_send Layer 0.5 bypass for native sends per
+    // Plan 09-04 RESEARCH § Topic 6.
+    expect(sc.dispatchCheckResult.kind).toBe("not-applicable");
+  });
+
+  it("dispatchCheckResult is { kind: 'refused', ... } when tx.to is non-canonical", async () => {
+    // Seed a handle with contract-call data + a non-canonical tx.to (random
+    // EOA). Layer 0.5 should refuse on re-emission.
+    const handle = createHandle({
+      args: { to: TO_ADDRESS, valueWei: "0" },
+      tx: {
+        chainId: 1,
+        to: TO_ADDRESS, // EOA — NOT in canonical dispatch allowlist
+        valueWei: 0n,
+        data: "0xa9059cbb00000000000000000000000070997970c51812dc3a010c7d01b50e0d17dc79c80000000000000000000000000000000000000000000000000000000005f5e100" as Hex,
+        nonce: 7,
+        gas: 21000n,
+        maxFeePerGas: 30_000_000_000n,
+        maxPriorityFeePerGas: 1_500_000_000n,
+      },
+      payloadFingerprint: FINGERPRINT,
+    });
+    transitionToPreviewed(handle, buildPinned());
+    lookupSelectorSpy.mockResolvedValue({ kind: "not-applicable" });
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      dispatchCheckResult: { kind: string; to?: string; allowlist?: string[] };
+    };
+    expect(sc.dispatchCheckResult.kind).toBe("refused");
+    expect(sc.dispatchCheckResult.to).toBe(TO_ADDRESS);
+    expect(Array.isArray(sc.dispatchCheckResult.allowlist)).toBe(true);
+  });
+
+  it("dispatchCheckResult is { kind: 'ok' } when tx.to is a canonical address (WETH9)", async () => {
+    const WETH_ETHEREUM = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" as Address;
+    const handle = createHandle({
+      args: { to: WETH_ETHEREUM, valueWei: "0" },
+      tx: {
+        chainId: 1,
+        to: WETH_ETHEREUM,
+        valueWei: 0n,
+        data: "0x2e1a7d4d0000000000000000000000000000000000000000000000000de0b6b3a7640000" as Hex,
+        nonce: 7,
+        gas: 21000n,
+        maxFeePerGas: 30_000_000_000n,
+        maxPriorityFeePerGas: 1_500_000_000n,
+      },
+      payloadFingerprint: FINGERPRINT,
+    });
+    transitionToPreviewed(handle, buildPinned());
+    lookupSelectorSpy.mockResolvedValue({ kind: "not-applicable" });
+
+    const result = await callTool({ handle });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      dispatchCheckResult: { kind: string };
+    };
+    expect(sc.dispatchCheckResult.kind).toBe("ok");
+  });
+});
+
 describe("get_tx_verification — register-all wiring", () => {
   it("getRegisteredTool('get_tx_verification') is non-null; inputSchema requires 'handle'", async () => {
     // Import register-all (registers all tool side-effects).

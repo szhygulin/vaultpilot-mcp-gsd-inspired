@@ -23,6 +23,8 @@ import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";
 import "./get_tx_verification.js";
+import "./verify_tx_decode.js";
+import "./get_verification_artifact.js";
 import "./get_demo_wallet.js";
 import "./set_demo_wallet.js";
 import "./set_active_account.js";
