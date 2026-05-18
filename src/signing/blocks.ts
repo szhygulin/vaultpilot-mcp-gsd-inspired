@@ -787,3 +787,46 @@ export const PASTEABLE_BLOCK_TEMPLATE: string = [
   "",
   "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<",
 ].join("\n");
+
+// -----------------------------------------------------------------------------
+// Phase 9 Plan 09-04 — DISPATCH_TARGET_REFUSAL_TEMPLATE (SEC-35).
+//
+// Layer 0.5 of `preview_send`: refuses when `record.tx.to` is NOT in the
+// per-chain canonical dispatch allowlist (`CANONICAL_DISPATCH_TARGETS` in
+// `src/security/canonical-dispatch.ts`). Fires AFTER handle lookup and
+// BEFORE the Phase 8 Layer 2 chain-name mismatch refusal.
+//
+// Three slots:
+//   - `{CHAIN}`     — human-readable chain identifier
+//                     (e.g. `polygon (chainId 137)`).
+//   - `{TO}`        — the rejected `tx.to` in EIP-55 checksum form.
+//   - `{ALLOWLIST}` — newline-joined verbatim entries from the per-chain
+//                     allowlist with `    ` (4-space) indent so the indent
+//                     matches the existing block-template convention
+//                     (e.g. `CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE`).
+//
+// Existing 21 templates (Phase 4 + Phase 6 + Phase 7 + Phase 8 + Plan 08-04
+// + Plan 09-02 + Plan 09-03) BYTE-FROZEN — Plan 09-04 appends at end-of-file
+// per APPEND-ONLY discipline; no source-line collision with Plan 09-02 (the
+// `VAULTPILOT_NOTICE_*` templates live in a distinct region above).
+// -----------------------------------------------------------------------------
+
+export const DISPATCH_TARGET_REFUSAL_TEMPLATE: string = [
+  "DISPATCH TARGET REFUSED",
+  "  chain:     {CHAIN}",
+  "  tx.to:     {TO}",
+  "  reason:    tx.to is NOT in the v1.3 canonical dispatch allowlist.",
+  "",
+  "  Canonical allowlist for this chain:",
+  "    {ALLOWLIST}",
+  "",
+  "  Remediation:",
+  "    1. Re-prepare the transaction targeting one of the canonical addresses above.",
+  "    2. If you intend to call a non-canonical contract (e.g. a verified-source",
+  "       custom contract not in the v1.3-covered protocols), the v2.4+",
+  "       prepare_custom_call({ acknowledgeNonProtocolTarget: true }) escape hatch",
+  "       will be the path — currently out of scope for v1.3.",
+  "",
+  "  Native sends (data === \"0x\") bypass this allowlist — any `to` is valid for",
+  "  a value transfer.",
+].join("\n");

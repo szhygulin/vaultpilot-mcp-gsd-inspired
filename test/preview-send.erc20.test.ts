@@ -68,6 +68,7 @@ vi.mock("../src/clients/fourbyte.js", async () => {
   };
 });
 
+import { _canonicalDispatch } from "../src/security/canonical-dispatch.js";
 import {
   _resetHandleStoreForTesting,
   createHandle,
@@ -194,6 +195,16 @@ beforeEach(() => {
   process.env[DEMO_KEY] = "false";
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
+  // Phase 9 — Plan 09-04: stub Layer 0.5 dispatch-target allowlist to OK so
+  // the Phase 6 off-list-token-registry test (`seedOffListTransferHandle`
+  // uses `0xdeadbeef00…` as tx.to, deliberately off both the allowlist AND
+  // the token registry to exercise the decimals-unknown decode path) isn't
+  // contaminated by the new allowlist gate. Dedicated coverage for Layer
+  // 0.5 behavior lives in `test/preview-send.dispatch-allowlist.test.ts`.
+  // Mirror of the `_skillIntegrity` stub pattern from Plan 09-02.
+  vi.spyOn(_canonicalDispatch, "checkDispatchTarget").mockReturnValue({
+    kind: "ok",
+  });
 });
 
 afterEach(() => {
@@ -201,6 +212,7 @@ afterEach(() => {
   else process.env[DEMO_KEY] = savedDemo;
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
+  vi.restoreAllMocks();
 });
 
 describe("preview_send — DECODED ARGS block for transfer (PREP-21)", () => {

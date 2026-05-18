@@ -87,6 +87,7 @@ vi.mock("../src/clients/fourbyte.js", async () => {
   };
 });
 
+import { _canonicalDispatch } from "../src/security/canonical-dispatch.js";
 import {
   AGENT_TASK_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
@@ -195,6 +196,17 @@ beforeEach(() => {
   process.env[DEMO_KEY] = "false";
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
+  // Phase 9 — Plan 09-04: stub Layer 0.5 dispatch-target allowlist to OK so
+  // the legacy Phase 4-7 tests in this file (which use Fixture C's EOA
+  // address as tx.to for contract-call shapes — predating Plan 09-04 by
+  // multiple phases) aren't contaminated by the new allowlist gate.
+  // Dedicated coverage for Layer 0.5 behavior lives in
+  // `test/preview-send.dispatch-allowlist.test.ts`. Mirror of the
+  // `_skillIntegrity` stub pattern from Plan 09-02 (Rule 1 — test crosstalk
+  // caused by new production behavior).
+  vi.spyOn(_canonicalDispatch, "checkDispatchTarget").mockReturnValue({
+    kind: "ok",
+  });
 });
 
 afterEach(() => {
@@ -203,6 +215,7 @@ afterEach(() => {
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 // ---------------------------------------------------------------------------
