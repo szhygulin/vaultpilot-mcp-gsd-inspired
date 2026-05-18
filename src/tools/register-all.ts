@@ -30,6 +30,7 @@ import "./set_demo_wallet.js";
 import "./set_active_account.js";
 import "./get_vaultpilot_config_status.js";
 import "./get_ledger_device_info.js";
+import "./request_capability.js"; // Phase 10 Plan 10-04 (DIST-43) — side-effect register
 
 export function registerAllTools(): void {
   // Tool modules register on import. Phase 2+ adds imports above this comment.

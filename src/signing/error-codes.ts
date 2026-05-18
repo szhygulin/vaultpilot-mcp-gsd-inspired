@@ -67,6 +67,16 @@
 //                              determine halt-or-proceed. The code exists for
 //                              uniform envelope discipline (downstream
 //                              telemetry / diagnostics surfaces).
+//   RATE_LIMIT_EXCEEDED      — Phase 10 Plan 10-04 (DIST-43) — fires when
+//                              the 3-per-hour sliding-window rate-limit is
+//                              exhausted for `request_capability`. The
+//                              `cause` field carries `retryAfterMs` as a
+//                              decimal string (agent consumers parse it
+//                              back to number). Per-process restart resets
+//                              the counter — Assumption A5 documented
+//                              residual (friction-not-fortress; bypass
+//                              cost is restarting the MCP server and
+//                              losing the paired Ledger session-topic).
 
 export type ErrorCode =
   | "WALLET_NOT_PAIRED"
@@ -87,7 +97,8 @@ export type ErrorCode =
   | "CHAIN_ID_MISMATCH"
   | "SKILL_INTEGRITY_FAILURE"
   | "DISPATCH_TARGET_REFUSED"
-  | "DECODE_DIVERGENCE";
+  | "DECODE_DIVERGENCE"
+  | "RATE_LIMIT_EXCEEDED";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers
