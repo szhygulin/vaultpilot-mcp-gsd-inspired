@@ -1,7 +1,25 @@
 import { getAddress, type Address } from "viem";
 
 import type { ChainId } from "../config/contracts.js";
-import topFifty from "./ethereum-top-50.json" with { type: "json" };
+
+// Per-chain top-50 ERC-20 registries (Phase 8 Plan 08-03 finalization).
+//
+// Each file's address list is curated from CoinGecko's per-chain top-volume
+// ranking + cross-verified against the chain's official tokenlist:
+//   - ethereum:  ethereum-top-50.json (Phase 2 — original)
+//   - arbitrum:  arbitrum-top-50.json (curated 2026-05-18; CoinGecko + Arbitrum bridge tokenlist)
+//   - polygon:   polygon-top-50.json  (curated 2026-05-18; CoinGecko + Polygon official tokenlist)
+//   - base:      base-top-50.json     (curated 2026-05-18; CoinGecko + Base predeploys + Base ecosystem)
+//   - optimism:  optimism-top-50.json (curated 2026-05-18; CoinGecko + Optimism predeploys + OP Stack)
+//
+// Every address is `getAddress`-checksummed at load time via `validateToken`;
+// a single hex-digit flip in any snapshot throws EIP-55 at module load —
+// the corrupted-snapshot guard fires before any caller sees a bad address.
+import arbitrumTopFifty from "./arbitrum-top-50.json" with { type: "json" };
+import baseTopFifty from "./base-top-50.json" with { type: "json" };
+import ethereumTopFifty from "./ethereum-top-50.json" with { type: "json" };
+import optimismTopFifty from "./optimism-top-50.json" with { type: "json" };
+import polygonTopFifty from "./polygon-top-50.json" with { type: "json" };
 
 export interface Token {
   /** Checksummed ERC-20 contract address. */
@@ -14,48 +32,56 @@ export interface Token {
   name: string;
 }
 
-let cached: Token[] | undefined;
-
 /**
- * Loads the static top-50 Ethereum mainnet ERC-20 token registry.
- *
- * Result is memoised; the JSON is parsed and re-checksummed once per process.
- * Re-checksumming on load defends against a corrupted snapshot file (an attacker
- * who flips a single hex digit in the file is caught by the checksum re-check).
- *
- * Phase 8 — Plan 08-02: still the canonical Ethereum-only loader; existing
- * Phase 4-7 callers continue to use it byte-frozen. New Phase 8 per-chain
- * consumers prefer `loadTokenRegistry(chainId)` below.
+ * Per-chain raw registry table. The JSON files are typed as `unknown` here
+ * (the `with { type: "json" }` import gives Node's `any`/`unknown` value);
+ * `validateRegistry` re-validates + checksums every entry at load time.
  */
-export function loadEthereumTokenRegistry(): Token[] {
-  if (cached) return cached;
-  cached = validateRegistry(topFifty);
-  return cached;
-}
+const RAW_REGISTRIES: Record<ChainId, unknown> = {
+  1: ethereumTopFifty,
+  42161: arbitrumTopFifty,
+  137: polygonTopFifty,
+  8453: baseTopFifty,
+  10: optimismTopFifty,
+};
 
 /**
- * Phase 8 — Plan 08-02. Per-chain token registry dispatcher. v1.2-Plan-08-02
- * ship state: only `chainId=1` returns a populated registry; the 4 L2 chains
- * return an empty array. Plan 08-03 lands `src/tokens/{arbitrum,polygon,base,
- * optimism}-top-50.json` and wires them through here; until then, per-chain
- * consumers fall through to the live-RPC `decimals()`/`symbol()` reads (Phase 6
- * registry-cache-first then live-RPC fallback pattern). The fall-through is a
- * small RPC-cost increase but no functional gap.
+ * Per-chain memoised parsed registry. `loadTokenRegistry(chainId)` populates
+ * the slot on first call; subsequent calls return the cached array. Parsing
+ * + re-checksumming is intentionally lazy — chains the operator never queries
+ * never pay the validation cost.
+ */
+const memoized: Partial<Record<ChainId, Token[]>> = {};
+
+/**
+ * Phase 8 — Plan 08-03 finalization. Per-chain token registry loader.
+ * Returns the curated top-50 ERC-20 registry for the given chain, parsed +
+ * re-checksummed via {@link validateRegistry}. The result is memoised per
+ * chain; subsequent calls return the cached array.
+ *
+ * Plan 08-02 shipped the dispatcher with `[]` stubs for the 4 L2 chains;
+ * this plan replaces the stubs with real loaders for `arbitrum-top-50.json`,
+ * `polygon-top-50.json`, `base-top-50.json`, `optimism-top-50.json`. The
+ * Plan 08-02 ethereum-only loader shim is DELETED — all callers migrated to
+ * `loadTokenRegistry(chainId)`.
  *
  * Total + chainId-typed: TypeScript narrowing forces the caller to pass a
- * `ChainId`-typed value; the switch is exhaustive against the 5-chain union.
+ * `ChainId`-typed value; the `default` arm narrows to `never` for exhaustive-
+ * ness against the 5-chain union.
  */
 export function loadTokenRegistry(chainId: ChainId): Token[] {
+  const cached = memoized[chainId];
+  if (cached) return cached;
   switch (chainId) {
     case 1:
-      return loadEthereumTokenRegistry();
     case 42161:
     case 137:
     case 8453:
-    case 10:
-      // v1.2-Plan-08-02 ship state: empty per-chain registries; Plan 08-03
-      // lands the JSON. Per-chain consumers fall through to live-RPC reads.
-      return [];
+    case 10: {
+      const loaded = validateRegistry(RAW_REGISTRIES[chainId]);
+      memoized[chainId] = loaded;
+      return loaded;
+    }
     default: {
       const _exhaustive: never = chainId;
       throw new Error(`loadTokenRegistry: unsupported chainId ${String(_exhaustive)}`);
@@ -114,7 +140,9 @@ function validateToken(entry: unknown, idx: number): Token {
   return { address: checksummed, symbol, decimals, name };
 }
 
-/** Test-only: clears the memoised registry so the next call reparses. */
+/** Test-only: clears every per-chain memoised registry so the next call reparses. */
 export function _resetRegistryCacheForTesting(): void {
-  cached = undefined;
+  for (const k of Object.keys(memoized)) {
+    delete memoized[Number(k) as ChainId];
+  }
 }

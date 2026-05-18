@@ -9,7 +9,7 @@
 //       `onBehalfOf` are NOT agent inputs (server hardcodes onBehalfOf to
 //       sender per research § Topic 5 reasonable-call lock; relayer pattern
 //       is v2.x scope).
-//   (b) Decimal resolution: registry-cache-first via loadEthereumTokenRegistry
+//   (b) Decimal resolution: registry-cache-first via loadTokenRegistry(chainId)
 //       (mirror of prepare_token_send.ts:99-114::resolveDecimals); live RPC
 //       fallback for long-tail Aave reserves.
 //   (c) Encoder = encodeAaveSupply(asset, amountWei, fromAddress, 0).

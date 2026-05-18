@@ -13,7 +13,7 @@
 //   (d) tx.valueWei = 0n (no native value transfer).
 //   (e) PREPARE RECEIPT uses ERC20_PREPARE_RECEIPT_TEMPLATE (parallel template
 //       per 06-PATTERNS.md line 97).
-//   (f) Decimal resolution: registry-cache-first via loadEthereumTokenRegistry
+//   (f) Decimal resolution: registry-cache-first via loadTokenRegistry(chainId)
 //       (top-50 hits cache), live RPC `decimals()` + `symbol()` on miss.
 //   (g) Amount parsing: parseAmountStrict from Plan 06-01 — INVALID_INPUT on
 //       any rejected shape (empty / format / fractional-overflow).
