@@ -665,3 +665,70 @@ export function buildAaveDecodedArgsBlock(
     .replace("{AMOUNT_WEI}", decoded.amount.toString())
     .replace("{TO}", decoded.to);
 }
+
+// -----------------------------------------------------------------------------
+// Phase 9 — Plan 09-02 additive extensions (APPEND-ONLY). All Phase 4 / 6 / 7 /
+// 8 templates above stay byte-identical (FROZEN). These two new templates back
+// the `VAULTPILOT NOTICE` dispatcher-wrap blocks emitted by
+// `src/security/skill-integrity.ts::consumeSkillIntegrityNotice` on the first
+// tool response of a session when the companion `vaultpilot-preflight` skill is
+// either missing (no SKILL.md at any probe path) OR tampered (SKILL.md found
+// but SHA-256 differs from `EXPECTED_SKILL_SHA256`).
+//
+// Format-fanout-sentinel: one block, one home. `consumeSkillIntegrityNotice`
+// imports both templates from this file; no inline duplicate exists. Drift in
+// either template breaks the `test/security-skill-integrity.test.ts` tests
+// that compare the post-substitution output to the imported constant.
+// -----------------------------------------------------------------------------
+
+/**
+ * `VAULTPILOT NOTICE — vaultpilot-preflight skill not installed` template.
+ * Substituted with the newline-indented list of probed paths in the `{PATHS}`
+ * slot. Prepended to the first tool response of a session when the probe
+ * returns `{ kind: "missing", pathsProbed }`; subsequent responses in the
+ * same session do NOT re-prepend (dedup via `noticeEmitted` flag in
+ * `src/security/skill-integrity.ts`).
+ *
+ * Surfaces the canonical install one-liner so the user can recover without
+ * leaving the rehearsal. The trust anchor remains the Ledger device screen;
+ * the skill is defense-in-depth against a compromised-MCP scenario (without
+ * it, MCP-side checks are the only defense layer).
+ */
+export const VAULTPILOT_NOTICE_TEMPLATE_MISSING: string = [
+  "VAULTPILOT NOTICE — vaultpilot-preflight skill not installed",
+  "  The companion preflight skill is not installed at any of:",
+  "    {PATHS}",
+  "  Without the skill, defense-in-depth against a compromised-MCP scenario is",
+  "  reduced to MCP-side checks only (the trust anchor remains the Ledger device",
+  "  screen). To install:",
+  "    git clone https://github.com/szhygulin/vaultpilot-preflight-skill ~/.claude/skills/vaultpilot-preflight",
+  "    cd ~/.claude/skills/vaultpilot-preflight && git checkout v1.3.0",
+  "  See ./SECURITY.md for the full residual-risk model.",
+].join("\n");
+
+/**
+ * `VAULTPILOT NOTICE — vaultpilot-preflight skill integrity mismatch` template.
+ * Three slots: `{PATH}` (discovered SKILL.md path), `{COMPUTED}` (runtime
+ * SHA-256 hex), `{EXPECTED}` (`EXPECTED_SKILL_SHA256` constant value).
+ * Prepended to the first tool response of a session when the probe returns
+ * `{ kind: "tampered", path, computed, expected }`.
+ *
+ * Names the three likely causes (local tamper / newer skill / older skill) so
+ * the user can self-diagnose. The trust anchor remains the Ledger device
+ * screen — a tampered skill MAY not enforce the invariants correctly, but
+ * the MCP-side FROZEN three-gate + Layer 0.5 dispatch allowlist + Layer 2
+ * chain-mismatch refusal still fire on the server side.
+ */
+export const VAULTPILOT_NOTICE_TEMPLATE_TAMPERED: string = [
+  "VAULTPILOT NOTICE — vaultpilot-preflight skill integrity mismatch",
+  "  Skill at: {PATH}",
+  "  Computed SHA-256: {COMPUTED}",
+  "  Expected SHA-256: {EXPECTED}",
+  "  The skill content differs from the version this MCP build pins. Either:",
+  "    (a) the skill was tampered with locally — re-clone or reset to the pinned tag",
+  "    (b) you have a newer skill version than this MCP — upgrade vaultpilot-mcp",
+  "    (c) you have an older skill version than this MCP — git checkout v1.3.0 in",
+  "        ~/.claude/skills/vaultpilot-preflight",
+  "  Until resolved, treat skill output as untrusted (the Ledger device screen",
+  "  remains the trust anchor; the skill is defense-in-depth).",
+].join("\n");
