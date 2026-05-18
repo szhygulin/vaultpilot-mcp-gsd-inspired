@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { runCheck } from "./diagnostics/check.js";
+import { runSetup } from "./cli/setup.js";
 import { startServer } from "./server.js";
 
 async function main(): Promise<void> {
@@ -16,6 +17,11 @@ async function main(): Promise<void> {
     const pkg = await import("../package.json", { with: { type: "json" } });
     process.stdout.write(`${pkg.default.version}\n`);
     process.exit(0);
+  }
+
+  if (args[0] === "setup") {
+    const exitCode = await runSetup(args.slice(1));
+    process.exit(exitCode);
   }
 
   await startServer();

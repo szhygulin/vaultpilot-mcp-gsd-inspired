@@ -12,8 +12,9 @@
 // `--check` doctor pass in check.ts).
 
 import { readFileSync } from "node:fs";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 /**
  * v1.0 `~/.vaultpilot-mcp/config.json` shape. Forward-compatible — fields
@@ -92,4 +93,51 @@ export function readConfigFile(): ConfigFileResult {
     const cause = err instanceof Error ? err.message : String(err);
     return { ok: false, reason: "malformed", cause };
   }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phase 10 / Plan 10-03 (DIST-42) — ADDITIVE writeConfigFile()
+//
+// Companion to FROZEN `readConfigFile()` (lines 1-95). Persists the merged
+// config shape produced by `vaultpilot-mcp setup`. Lines 1-95 are BYTE-
+// FROZEN; this is the only addition in Plan 10-03.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Atomic-write a config shape to `~/.vaultpilot-mcp/config.json` (or the
+ * path returned by the `_paths.getConfigPath()` spy in tests).
+ *
+ * Discipline:
+ *
+ *   1. **Atomic replacement.** Write to a tmp file in the SAME directory
+ *      (`dirname(path)`), then `rename()` over the destination. POSIX
+ *      `rename` is atomic within a single filesystem — readers see EITHER
+ *      the old config OR the new config, never partial bytes. Using
+ *      `os.tmpdir()` instead of `dirname(path)` would EXDEV-fail when
+ *      `/tmp` and `~/.vaultpilot-mcp/` live on different filesystems
+ *      (`/tmp` is tmpfs on many distros).
+ *
+ *   2. **Mode 0o600 at write time.** Owner-only read/write per the
+ *      `~/.netrc` / `~/.aws/credentials` / ssh-private-key convention.
+ *      The mode is passed to `writeFile` directly — NO post-write `chmod`
+ *      that would leave a narrow race window where the file is world-
+ *      readable. Pre-existing files with a broader mode keep that mode
+ *      until the next wizard write; the rename replaces the inode, so
+ *      the new file's mode wins.
+ *
+ *   3. **Spy-affordance via `_paths.getConfigPath()`.** Test helpers
+ *      (`test/helpers/mock-config-file.ts`) redirect BOTH reads and writes
+ *      via a single `vi.spyOn(_paths, "getConfigPath")` invocation.
+ *
+ *   4. **Parent-directory creation.** `mkdir(..., { recursive: true })` is
+ *      idempotent — safe to call when `~/.vaultpilot-mcp/` already exists.
+ */
+export async function writeConfigFile(merged: ConfigFile): Promise<void> {
+  const path = _paths.getConfigPath();
+  await mkdir(dirname(path), { recursive: true });
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(tmpPath, JSON.stringify(merged, null, 2) + "\n", {
+    mode: 0o600,
+  });
+  await rename(tmpPath, path);
 }

@@ -7,7 +7,13 @@ export type CheckId =
   | "binary-spawn"
   | "wallet-connect-key"
   | "ethereum-rpc"
-  | "config-file";
+  | "config-file"
+  // ── Phase 10 / Plan 10-03 (setup wizard + MCP client register) ──
+  | "config-file-write"
+  | "mcp-client-register-claude-code"
+  | "mcp-client-register-claude-desktop"
+  | "mcp-client-register-cursor"
+  | "ledger-pairing";
 
 export interface CheckResult {
   id: CheckId;
