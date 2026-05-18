@@ -18,6 +18,12 @@ import {
   setActivePersona,
 } from "../src/demo/state.js";
 import {
+  EXPECTED_SKILL_SHA256,
+  _skillIntegrity,
+  _resetSkillIntegrityForTesting,
+  type SkillIntegrityState,
+} from "../src/security/skill-integrity.js";
+import {
   getRegisteredTool,
   type ToolHandlerResult,
 } from "../src/tools/index.js";
@@ -97,6 +103,7 @@ beforeEach(() => {
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
   _resetChainRegistryForTesting();
+  _resetSkillIntegrityForTesting();
 });
 
 afterEach(() => {
@@ -128,6 +135,7 @@ afterEach(() => {
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
   _resetChainRegistryForTesting();
+  _resetSkillIntegrityForTesting();
   mock?.restore();
   mock = undefined;
   vi.restoreAllMocks();
@@ -468,5 +476,103 @@ describe("get_vaultpilot_config_status — rpcProvider + configuredChains (Plan 
     expect(sc.rpcProvider).toBe("infura"); // provider NAME is fine; key VALUE is not
     expect(sc.configuredChains.arbitrum).toBe(true);
     expect(sc.configuredChains.polygon).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 09-02 — skillIntegrity additive diagnostic surface (SEC-31).
+// Discriminated-union surface — 3 arms:
+//   - `ok`        — `{ kind, path, sha256 }`  (sha256 is public-by-design per
+//                                              T-INSTRUCTIONS-FIELD-LEAK-1)
+//   - `missing`   — `{ kind }`                (pathsProbed NOT surfaced —
+//                                              user lists ~/.claude/skills/
+//                                              to diagnose paths)
+//   - `tampered`  — `{ kind, path }`          (computed + expected NOT
+//                                              surfaced — internal-only;
+//                                              user sees them via the
+//                                              VAULTPILOT NOTICE block at
+//                                              dispatch time, NOT here)
+// ---------------------------------------------------------------------------
+describe("get_vaultpilot_config_status — skillIntegrity (Plan 09-02 / SEC-31)", () => {
+  it("Test 39 — ok arm: { kind: 'ok', path, sha256 } — sha256 equals EXPECTED_SKILL_SHA256", async () => {
+    vi.spyOn(_skillIntegrity, "checkSkillIntegrity").mockResolvedValue({
+      kind: "ok",
+      path: "/home/u/.claude/skills/vaultpilot-preflight/SKILL.md",
+      sha256: EXPECTED_SKILL_SHA256,
+    } satisfies SkillIntegrityState);
+
+    const result = await callTool();
+    const sc = result.structuredContent as {
+      skillIntegrity: { kind: string; path?: string; sha256?: string };
+    };
+
+    expect(sc.skillIntegrity.kind).toBe("ok");
+    expect(sc.skillIntegrity.path).toBe(
+      "/home/u/.claude/skills/vaultpilot-preflight/SKILL.md",
+    );
+    expect(sc.skillIntegrity.sha256).toBe(EXPECTED_SKILL_SHA256);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/skillIntegrity:\s+ok/);
+  });
+
+  it("Test 40 — missing arm: { kind: 'missing' } — pathsProbed NOT surfaced (secret-safe / compact)", async () => {
+    vi.spyOn(_skillIntegrity, "checkSkillIntegrity").mockResolvedValue({
+      kind: "missing",
+      pathsProbed: [
+        "/home/u/.claude/skills/vaultpilot-preflight/SKILL.md",
+        "/proj/.claude/skills/vaultpilot-preflight/SKILL.md",
+      ],
+    } satisfies SkillIntegrityState);
+
+    const result = await callTool();
+    const sc = result.structuredContent as {
+      skillIntegrity: Record<string, unknown>;
+    };
+
+    expect(sc.skillIntegrity.kind).toBe("missing");
+    // Compactness invariant: no pathsProbed leakage in the diagnostic surface.
+    expect(sc.skillIntegrity).not.toHaveProperty("pathsProbed");
+    expect(sc.skillIntegrity).not.toHaveProperty("path");
+    expect(sc.skillIntegrity).not.toHaveProperty("sha256");
+
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/skillIntegrity:\s+missing/);
+  });
+
+  it("Test 41 — tampered arm: { kind, path } — computed + expected NOT surfaced (secret-safe)", async () => {
+    // Use a unique sentinel for the computed value so we can substring-scan
+    // the response to confirm it never leaks.
+    const COMPUTED_SENTINEL = "abad1deaabad1deaabad1deaabad1deaabad1deaabad1deaabad1deaabad1dea";
+    vi.spyOn(_skillIntegrity, "checkSkillIntegrity").mockResolvedValue({
+      kind: "tampered",
+      path: "/home/u/.claude/skills/vaultpilot-preflight/SKILL.md",
+      computed: COMPUTED_SENTINEL,
+      expected: EXPECTED_SKILL_SHA256,
+    } satisfies SkillIntegrityState);
+
+    const result = await callTool();
+    const sc = result.structuredContent as {
+      skillIntegrity: Record<string, unknown>;
+    };
+
+    expect(sc.skillIntegrity.kind).toBe("tampered");
+    expect(sc.skillIntegrity.path).toBe(
+      "/home/u/.claude/skills/vaultpilot-preflight/SKILL.md",
+    );
+    // LOAD-BEARING: computed + expected must NEVER appear in the diagnostic
+    // surface — those bytes are internal-only and surface via the VAULTPILOT
+    // NOTICE dispatcher block at first tool dispatch, not via this tool.
+    expect(sc.skillIntegrity).not.toHaveProperty("computed");
+    expect(sc.skillIntegrity).not.toHaveProperty("expected");
+
+    // Substring-scan against the entire serialized response — catches
+    // accidental inclusion via field-name reuse, error-message interpolation,
+    // or text-block leakage.
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain(COMPUTED_SENTINEL);
+
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/skillIntegrity:\s+tampered/);
+    expect(text).not.toContain(COMPUTED_SENTINEL);
   });
 });

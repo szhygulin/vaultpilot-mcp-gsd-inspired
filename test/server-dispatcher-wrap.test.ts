@@ -20,6 +20,11 @@ import { _resetDemoModeForTesting } from "../src/config/env.js";
 import { _resetActivePersonaForTesting } from "../src/demo/state.js";
 import { _resetAutoDemoNoticeForTesting } from "../src/diagnostics/notice.js";
 import { _resetUpdateCheckForTesting } from "../src/diagnostics/update-check.js";
+import {
+  EXPECTED_SKILL_SHA256,
+  _skillIntegrity,
+  _resetSkillIntegrityForTesting,
+} from "../src/security/skill-integrity.js";
 
 import {
   mockConfigFile,
@@ -50,6 +55,21 @@ beforeEach(() => {
   _resetActivePersonaForTesting();
   _resetAutoDemoNoticeForTesting();
   _resetUpdateCheckForTesting();
+  _resetSkillIntegrityForTesting();
+
+  // Plan 09-02 / SEC-31: these tests predate the skill-integrity dispatcher
+  // wrap. They assert auto-demo NOTICE behavior in isolation; without
+  // stubbing the skill probe, the second dispatch would pick up a missing-
+  // skill NOTICE (no SKILL.md in the test environment's HOME), breaking the
+  // legacy "no NOTICE on second response" assertions. Force the probe to
+  // return ok so the skill-NOTICE wrap is a no-op for these tests. The
+  // dedicated coverage for the skill wrap lives in
+  // test/server.skill-notice.test.ts.
+  vi.spyOn(_skillIntegrity, "checkSkillIntegrity").mockResolvedValue({
+    kind: "ok",
+    path: "/stub/SKILL.md",
+    sha256: EXPECTED_SKILL_SHA256,
+  });
 });
 
 afterEach(async () => {
@@ -62,6 +82,7 @@ afterEach(async () => {
   _resetActivePersonaForTesting();
   _resetAutoDemoNoticeForTesting();
   _resetUpdateCheckForTesting();
+  _resetSkillIntegrityForTesting();
 
   mock?.restore();
   mock = undefined;

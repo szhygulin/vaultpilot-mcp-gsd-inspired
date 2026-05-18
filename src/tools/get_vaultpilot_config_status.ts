@@ -23,15 +23,44 @@ import { getConfigPath, readConfigFile } from "../config/config-file.js";
 import { getWalletConnectStorageMode } from "../config/wc-storage.js";
 import { _registry } from "../chains/registry.js";
 import { getActivePersona } from "../demo/state.js";
+import {
+  _skillIntegrity,
+  type SkillIntegrityState,
+} from "../security/skill-integrity.js";
 import { getStatus } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
 
+// Phase 9 / Plan 09-02 (SEC-31): diagnostic surface for the companion-skill
+// SHA-256 integrity state. Secret-safe — surfaces `kind` + `path` (on found
+// arms) + `sha256` (on the ok arm) only. Never surfaces `computed` /
+// `expected` on the tampered arm (those bytes are internal-only diagnostic;
+// the user sees them via the `VAULTPILOT NOTICE` dispatcher-wrap block at
+// dispatch time, not via this tool). Never surfaces `pathsProbed` on the
+// missing arm (keeps the diagnostic compact; user runs `ls ~/.claude/skills/`
+// to diagnose paths).
+type SkillIntegritySummary =
+  | { kind: "ok"; path: string; sha256: string }
+  | { kind: "missing" }
+  | { kind: "tampered"; path: string };
+
+function summarizeSkillIntegrity(
+  state: SkillIntegrityState,
+): SkillIntegritySummary {
+  if (state.kind === "ok") {
+    return { kind: "ok", path: state.path, sha256: state.sha256 };
+  }
+  if (state.kind === "missing") {
+    return { kind: "missing" };
+  }
+  return { kind: "tampered", path: state.path };
+}
+
 const DESCRIPTION = [
-  "Returns a summary of vaultpilot-mcp's current configuration state — demo mode flag, env-var presence (as booleans), paired-account count, WC session-topic suffix (last 8 chars only), WC session persistence flag (boolean), config-file path + presence/malformed flags, Node version, package version, active persona slug, update-check suppression flag.",
-  "Use this when debugging install configuration — 'why is demo mode active?', 'is my RPC URL set?', 'what version am I on?', 'which persona is active?', 'is my Ledger session persisted across restarts?'.",
+  "Returns a summary of vaultpilot-mcp's current configuration state — demo mode flag, env-var presence (as booleans), paired-account count, WC session-topic suffix (last 8 chars only), WC session persistence flag (boolean), config-file path + presence/malformed flags, Node version, package version, active persona slug, update-check suppression flag, companion-skill integrity state.",
+  "Use this when debugging install configuration — 'why is demo mode active?', 'is my RPC URL set?', 'what version am I on?', 'which persona is active?', 'is my Ledger session persisted across restarts?', 'is the vaultpilot-preflight companion skill installed and intact?'.",
   "Do NOT use this to retrieve the actual config values (RPC URL, WC project ID, full session topic) — those are NEVER returned by this tool. For RPC URL: read the `ETHEREUM_RPC_URL` env var directly via your shell. For WC project ID: same — `WALLETCONNECT_PROJECT_ID`.",
-  "Returns `{ demoMode, isAutoDemo, activePersonaSlug, walletConnectProjectIdPresent, ethereumRpcUrlPresent, etherscanApiKeyPresent, rpcProvider, configuredChains, pairedAccountCount, wcSessionTopicSuffix, walletConnectStoragePersistent, configFilePath, configFileExists, configFileMalformed, nodeVersion, packageVersion, updateCheckSuppressed }`. `rpcProvider` is the verbatim shorthand name (`infura` / `alchemy`) or null when `RPC_PROVIDER` is unset — the API key VALUE is NEVER surfaced. `configuredChains` is a per-chain map (`ethereum / arbitrum / polygon / base / optimism`) of booleans reflecting whether a chain-specific override OR the shorthand resolves a URL (false ⇒ PublicNode fallback for that chain).",
-  "Secret-safety: response contains only booleans, counts, suffixes, paths, and PUBLIC values (Node version, package version, persona slug, config file path). No secret values are returned — verifiable by the agent via JSON inspection.",
+  "Returns `{ demoMode, isAutoDemo, activePersonaSlug, walletConnectProjectIdPresent, ethereumRpcUrlPresent, etherscanApiKeyPresent, rpcProvider, configuredChains, pairedAccountCount, wcSessionTopicSuffix, walletConnectStoragePersistent, configFilePath, configFileExists, configFileMalformed, nodeVersion, packageVersion, updateCheckSuppressed, skillIntegrity }`. `rpcProvider` is the verbatim shorthand name (`infura` / `alchemy`) or null when `RPC_PROVIDER` is unset — the API key VALUE is NEVER surfaced. `configuredChains` is a per-chain map (`ethereum / arbitrum / polygon / base / optimism`) of booleans reflecting whether a chain-specific override OR the shorthand resolves a URL (false ⇒ PublicNode fallback for that chain). `skillIntegrity` is a discriminated union: `{ kind: 'ok', path, sha256 }` when the companion `vaultpilot-preflight` skill SHA-256 matches the MCP-pinned value; `{ kind: 'missing' }` when the skill is not installed at any probe path; `{ kind: 'tampered', path }` when the SHA differs (the actual computed vs expected hex is surfaced via the `VAULTPILOT NOTICE` dispatcher block, never via this tool — secret-safe).",
+  "Secret-safety: response contains only booleans, counts, suffixes, paths, and PUBLIC values (Node version, package version, persona slug, config file path, skill-integrity kind/path). No secret values are returned — verifiable by the agent via JSON inspection.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -121,6 +150,14 @@ registerTool(
     const updateCheckSuppressed =
       process.env.VAULTPILOT_DISABLE_UPDATE_CHECK === "1";
 
+    // Phase 9 / Plan 09-02 (SEC-31). Lazy-memoized SHA-256 probe — the FIRST
+    // call (across the whole process) does the IO; subsequent calls return
+    // the cached state at near-zero cost. The dispatcher-wrap in
+    // `src/server.ts` is the typical first caller; this tool calling the
+    // probe is harmless (memoization absorbs the duplicate call).
+    const skillIntegrityState = await _skillIntegrity.checkSkillIntegrity();
+    const skillIntegrity = summarizeSkillIntegrity(skillIntegrityState);
+
     const structured = {
       demoMode,
       isAutoDemo: isAutoDemoArm,
@@ -139,6 +176,7 @@ registerTool(
       nodeVersion,
       packageVersion,
       updateCheckSuppressed,
+      skillIntegrity,
     };
 
     // Pretty-printed text block for human inspection. The structuredContent
@@ -164,6 +202,10 @@ registerTool(
     lines.push(`  nodeVersion:                     ${nodeVersion}`);
     lines.push(`  packageVersion:                  ${packageVersion}`);
     lines.push(`  updateCheckSuppressed:           ${updateCheckSuppressed}`);
+    // Phase 9 / Plan 09-02 (SEC-31). Text-block line surfaces `kind` only —
+    // the `path` + `sha256` (on the ok arm) are in `structuredContent` for
+    // programmatic inspection; the text block stays compact.
+    lines.push(`  skillIntegrity:                  ${skillIntegrity.kind}`);
 
     return {
       content: [{ type: "text", text: lines.join("\n") }],

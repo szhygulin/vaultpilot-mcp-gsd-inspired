@@ -39,6 +39,16 @@
 //                              chainId bound into the prepared transaction.
 //                              ONE code for any chain-discrepancy refusal
 //                              regardless of layer (research § line 926 lock).
+//   SKILL_INTEGRITY_FAILURE  — Phase 9 Plan 09-02 — companion `vaultpilot-
+//                              preflight` skill probe fails: SKILL.md missing
+//                              at every probe path OR SHA-256 does not match
+//                              `EXPECTED_SKILL_SHA256`. NOT emitted as a
+//                              refusal envelope — surfaces via the
+//                              `VAULTPILOT NOTICE` dispatcher-wrap prepend on
+//                              the first tool response of the session. The
+//                              code exists for the diagnostics surface
+//                              (`get_vaultpilot_config_status.skillIntegrity`)
+//                              and for skill-side test scaffolding.
 
 export type ErrorCode =
   | "WALLET_NOT_PAIRED"
@@ -56,7 +66,8 @@ export type ErrorCode =
   | "INTERNAL_ERROR"
   | "WRONG_MODE"
   | "INVALID_ACCOUNT"
-  | "CHAIN_ID_MISMATCH";
+  | "CHAIN_ID_MISMATCH"
+  | "SKILL_INTEGRITY_FAILURE";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

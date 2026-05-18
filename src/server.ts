@@ -19,6 +19,11 @@ import { log } from "./diagnostics/logger.js";
 import { consumeAutoDemoNotice } from "./diagnostics/notice.js";
 import { runUpdateCheckOnce } from "./diagnostics/update-check.js";
 import {
+  EXPECTED_SKILL_SHA256,
+  _skillIntegrity,
+  consumeSkillIntegrityNotice,
+} from "./security/skill-integrity.js";
+import {
   getRegisteredTool,
   listRegisteredTools,
   type ToolInputSchema,
@@ -37,6 +42,12 @@ const INSTRUCTIONS = [
   "The trust anchor is the Ledger screen — every byte the device signs is cryptographically bound across the agent → MCP → transport → device chain via `payloadFingerprint` (PREP-03), `LEDGER BLIND-SIGN HASH` (PREP-04), `PREPARE RECEIPT` (PREP-02), `previewToken` + `userDecision` gates (PREP-07/08).",
   "Demo mode: a brand-new install (no config + no env) boots into demo with curated personas; read tools work against real RPC, signing tools simulate via eth_call. Use `set_demo_wallet` to switch personas; `get_vaultpilot_config_status` to inspect state.",
   "See ./SECURITY.md for the full threat model, the prepare → preview → send pipeline invariants, and the documented residual risks (compromised-MCP threat closed in v1.3 via companion `vaultpilot-preflight` skill).",
+  // Phase 9 / Plan 09-02 (SEC-31). The companion `vaultpilot-preflight` skill's
+  // Step 0 self-check looks up `EXPECTED_SKILL_SHA256` from THIS line at
+  // `initialize` time (external source of truth — a SHA cannot self-reference,
+  // so the value lives OUTSIDE the hashed SKILL.md). Install one-liner is
+  // documented at https://github.com/szhygulin/vaultpilot-preflight-skill.
+  `vaultpilot-preflight skill v1.3.0 expected SHA-256: ${EXPECTED_SKILL_SHA256} (install: git clone https://github.com/szhygulin/vaultpilot-preflight-skill ~/.claude/skills/vaultpilot-preflight && cd ~/.claude/skills/vaultpilot-preflight && git checkout v1.3.0).`,
 ].join(" ");
 
 // Plan 05-03 / DIAG-04: read package.json once at module load. Top-level
@@ -158,6 +169,26 @@ export function buildServer(): Server {
           content: [{ type: "text" as const, text: notice }, ...result.content],
         };
       }
+    }
+
+    // Phase 9 / Plan 09-02 (SEC-31): companion `vaultpilot-preflight` skill
+    // SHA-256 integrity probe. Lazy on first dispatch — boot-time IO blocks
+    // the MCP `initialize` handshake (Phase 5 retro). Probes the two install
+    // paths (personal scope + project scope); emits a `VAULTPILOT NOTICE`
+    // block prepended to the FIRST tool response that detects missing or
+    // tampered skill state. Dedup-per-session via `noticeEmitted` in
+    // `src/security/skill-integrity.ts`. Ordering with auto-demo NOTICE
+    // (PATTERNS.md § 2): auto-demo fires FIRST (above) — a session triggering
+    // both (auto-demo + skill missing) emits auto-demo on dispatch #1 and the
+    // skill block on dispatch #2 (the auto-demo wrap returns above, so the
+    // skill wrap doesn't tick on dispatch #1).
+    const integrityState = await _skillIntegrity.checkSkillIntegrity();
+    const skillNotice = consumeSkillIntegrityNotice(integrityState);
+    if (skillNotice !== null) {
+      return {
+        ...result,
+        content: [{ type: "text" as const, text: skillNotice }, ...result.content],
+      };
     }
     return result;
   });

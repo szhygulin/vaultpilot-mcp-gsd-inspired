@@ -22,13 +22,25 @@ The trust anchor is the Ledger device screen. This skill helps the user reach th
 
 Before performing any invariant check, verify this SKILL.md has not been tampered with.
 
-1. Run: `sha256sum ~/.claude/skills/vaultpilot-preflight/SKILL.md` (Linux)
-   OR: `shasum -a 256 ~/.claude/skills/vaultpilot-preflight/SKILL.md` (macOS)
-2. Compare the output against the EXPECTED_SKILL_SHA256 below:
+1. Compute the SHA-256 of this file:
+   - Linux: `sha256sum ~/.claude/skills/vaultpilot-preflight/SKILL.md`
+   - macOS: `shasum -a 256 ~/.claude/skills/vaultpilot-preflight/SKILL.md`
 
-   EXPECTED_SKILL_SHA256 = `EXPECTED_SKILL_SHA256_PLACEHOLDER`
+2. Look up the EXPECTED_SKILL_SHA256 from EITHER of these external sources of truth
+   (do NOT trust any value embedded inside this file — a SHA cannot self-reference
+   by construction; the SHA lives OUTSIDE the hashed content):
 
-3. If the computed SHA-256 ≠ EXPECTED_SKILL_SHA256:
+   - **vaultpilot-mcp's MCP `initialize` response `instructions` field** — the
+     server pins the expected SHA at build time and surfaces it verbatim. Look
+     for the line `vaultpilot-preflight skill v1.3.x expected SHA-256: <hex>`.
+   - **The sister repo's README.md "Expected SHA-256" section** —
+     `https://github.com/szhygulin/vaultpilot-preflight-skill#integrity-check` —
+     the README is updated as a coordinated bump with each tagged release and
+     kept in sync with the MCP pin.
+
+3. Compare the computed SHA-256 against the EXPECTED_SKILL_SHA256 from step 2.
+
+4. If the computed SHA-256 ≠ EXPECTED_SKILL_SHA256:
    - Emit verbatim: `DO NOT SIGN.`
    - Explain: "vaultpilot-preflight skill integrity check FAILED. The skill
      content at ~/.claude/skills/vaultpilot-preflight/SKILL.md differs from
@@ -36,13 +48,20 @@ Before performing any invariant check, verify this SKILL.md has not been tampere
      (re-clone or reset to the pinned tag) OR you have an older skill version
      than this MCP server (git checkout v1.3.0)."
    - HALT — do NOT proceed to Steps 1-6. Do NOT relay any signing-flow output.
-4. If the computed SHA-256 == EXPECTED_SKILL_SHA256:
+
+5. If the computed SHA-256 == EXPECTED_SKILL_SHA256:
    - Proceed silently to Step 1 — do not narrate the check success (avoids noise).
 
-This Step 0 is SELF-REFERENTIAL — a tampered skill that modifies Step 0 to skip
-this check will ALSO change the SHA-256, so the MCP server's parallel SHA pin
-(at first tool dispatch) will surface a `VAULTPILOT NOTICE — skill integrity`
-block independently. Defense-in-depth across two layers.
+This Step 0 enforces an **external-source-of-truth** discipline: SHA-256 cannot
+self-reference (any value embedded inside the hashed file would alter the file's
+own SHA, breaking the check by construction). The expected SHA lives in two
+independent sources — the MCP `instructions` field (server-side pin) AND the
+sister-repo README (release-side pin). Defense-in-depth: a tampered SKILL.md is
+caught by Step 0; a tampered MCP that lies about the constant is caught by
+cross-checking against the README; a tampered README is caught by the MCP-side
+`VAULTPILOT NOTICE — skill integrity` block at first tool dispatch (independent
+SHA computation against the locally-installed SKILL.md, compared to the same
+pinned constant).
 
 ## Step 1 — Inv #2.5: chain must be explicit
 
