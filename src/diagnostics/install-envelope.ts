@@ -13,7 +13,12 @@ export type CheckId =
   | "mcp-client-register-claude-code"
   | "mcp-client-register-claude-desktop"
   | "mcp-client-register-cursor"
-  | "ledger-pairing";
+  | "ledger-pairing"
+  // ── Phase 10 / Plan 10-02 (install.sh + install.ps1) ──
+  | "binary-download"
+  | "binary-install"
+  | "path-presence"
+  | "quarantine-attr";
 
 export interface CheckResult {
   id: CheckId;
