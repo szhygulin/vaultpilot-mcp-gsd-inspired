@@ -33,6 +33,8 @@ import type { SessionTypes } from "@walletconnect/types";
 import { getSdkError } from "@walletconnect/utils";
 import { type Address, getAddress } from "viem";
 
+import type { ChainId } from "../config/contracts.js";
+import { getConfiguredChainIds } from "../config/env.js";
 import { clearPersistedStorage } from "../config/wc-storage.js";
 import { log } from "../diagnostics/logger.js";
 import { parseEvmAccountId } from "./caip.js";
@@ -52,19 +54,29 @@ import {
 export const _storage = { clearPersistedStorage };
 
 // Required namespaces declared on every pairing. Phase 4 inherits these
-// methods without re-pairing. Phase 8 fans `eip155.chains` to a per-config
-// list; until then mainnet-only is correct (the security model is
-// "vertical-slice MVP: one chain, one signing flow, full security
-// skeleton end-to-end").
+// methods without re-pairing.
+//
+// Plan 08-05 fans `eip155.chains` from the configured chain set
+// (`getConfiguredChainIds()` — 5 chains in v1.2). The WC v2 spec accepts a
+// multi-chain `requiredNamespaces.eip155.chains` array; Ledger Live's
+// account picker surfaces accounts for every chain the wallet has enabled
+// in Manage Accounts. When the wallet enables fewer chains than the
+// request, `sessionToStatus` surfaces `partiallyPaired: true` (research §
+// Topic 8 + T-WC-PARTIAL-1 anchor).
+//
 // Note: NOT `as const` — the SDK's `ProposalTypes.RequiredNamespaces` index
 // signature wants mutable `string[]` arrays. The constant is module-scoped
 // and never mutated; the lack of `as const` here is a TS-strict
 // concession, not an invitation to edit at runtime.
+const eip155Chains: string[] = getConfiguredChainIds().map(
+  (id) => `eip155:${id}`,
+);
+
 const REQUIRED_NAMESPACES: {
   eip155: { chains: string[]; methods: string[]; events: string[] };
 } = {
   eip155: {
-    chains: ["eip155:1"],
+    chains: eip155Chains,
     methods: ["eth_sendTransaction", "personal_sign"],
     events: ["accountsChanged", "chainChanged"],
   },
@@ -75,9 +87,11 @@ const APPROVAL_TIMEOUT_MS = 60_000;
 export interface LedgerStatus {
   paired: true;
   /**
-   * Every approved account in the WC session, in the order the wallet
-   * returned them. Default `activeAccount = accounts[0]` until
-   * `setActiveAccount` swaps it.
+   * Every UNIQUE approved address across all chains in the WC session, in
+   * the order the wallet first surfaced them (de-duplicated per Plan 08-05
+   * — Ledger Live typically derives the same address per chain, but
+   * different derivation paths are possible). Default `activeAccount =
+   * accounts[0]` until `setActiveAccount` swaps it.
    */
   accounts: Address[];
   /**
@@ -92,8 +106,53 @@ export interface LedgerStatus {
    * in Task 5.
    */
   address: Address;
+  /**
+   * Back-compat alias for `activeChainId`. Existing v1.0/v1.1 consumers
+   * (Phase 3-7 tools + tests) read `status.chainId` directly; Plan 08-05
+   * preserves the field at the JSON serialization level so the wire
+   * contract is unchanged. New consumers may read `activeChainId` directly.
+   */
   chainId: number;
   sessionTopicLast8: string;
+
+  // ---------------------------------------------------------------------
+  // Plan 08-05 — multi-chain widening (research § Topic 8 lines 807-827).
+  // These three fields are NEW; the existing 5 above are byte-frozen at
+  // the JSON serialization level for back-compat.
+  // ---------------------------------------------------------------------
+
+  /**
+   * Accounts grouped by chain ID. Keys are numeric chain IDs from the
+   * CAIP-10 strings the wallet approved (`eip155:<chainId>:<address>`);
+   * values are the addresses approved on that chain. Plan 08-05 — drives
+   * `set_active_account`'s per-chain scope when the agent passes
+   * `{ chain }`. When Ledger Live derives the same address per chain (the
+   * common case), every entry's value array contains the same single
+   * address; for split-derivation wallets the arrays may differ.
+   */
+  accountsByChain: Record<number, Address[]>;
+
+  /**
+   * The currently-active chain. Defaults to the FIRST chain in
+   * `getConfiguredChainIds()` that the session covers (Ethereum in v1.2 —
+   * research § Topic 8 line 717). Future v1.3+ `set_active_chain` tool may
+   * mutate this independently; for v1.2 it follows the active account
+   * (when `setActiveAccount` selects an address only present on a
+   * non-default chain, the chain context follows).
+   */
+  activeChainId: number;
+
+  /**
+   * True when `getConfiguredChainIds()` is NOT a subset of the chains the
+   * session approved — Ledger Live didn't surface accounts for every chain
+   * the MCP requested (typically because the user hasn't enabled the
+   * missing L2 networks in Ledger Live → Manage Accounts). Surfaces as a
+   * stderr warning once per pair event (T-WC-PARTIAL-1 mitigation).
+   * Informational, not a refusal — the agent may still proceed for chains
+   * the session DOES cover; cross-chain reads/prepares on missing chains
+   * will fail at the RPC/signing layer with their own error envelopes.
+   */
+  partiallyPaired: boolean;
 }
 
 export interface PairResult {
@@ -213,6 +272,29 @@ let sessionDeleteListenerRegistered = false;
 const activeAccountByTopic = new Map<string, Address>();
 
 /**
+ * Active-chain selector, keyed by WC session topic. Plan 08-05 — mirrors
+ * `activeAccountByTopic` for the multi-chain widening. `sessionToStatus`
+ * consults this map and falls back to "first configured chain in the
+ * session" when unset. Entries cleared by `_resetSessionManagerForTesting`
+ * and the `session_delete` listener. v1.2 has no public mutator (a
+ * `set_active_chain` tool is v1.3+ scope); the map exists for forward-
+ * compat with that tool AND to let `setActiveAccount` follow the chain
+ * context when selecting an account only present on a non-default chain.
+ */
+const activeChainIdByTopic = new Map<string, ChainId>();
+
+/**
+ * One-shot stderr-warning latch for partial-pairing (T-WC-PARTIAL-1).
+ * Plan 08-05 — when `partiallyPaired === true`, `sessionToStatus` fires a
+ * single warning naming the missing chains and records the topic here so
+ * subsequent `getStatus()` calls on the same session don't re-warn.
+ * Cleared by `_resetSessionManagerForTesting` (each test scenario starts
+ * fresh) and the `session_delete` listener (a re-pair on a fresh topic
+ * gets a fresh warning if still partial).
+ */
+const warnedPartiallyPairedByTopic = new Set<string>();
+
+/**
  * In-flight store for two-phase pairing. Maps pairingHandle → approval
  * settlement promise. A handle is added by `pairStart()` and removed once
  * `pairWait()` consumes it (success or error) or when `force: true` clears
@@ -283,6 +365,9 @@ export async function pair(
       });
       if (cachedSessionTopic === existing.topic) cachedSessionTopic = undefined;
       activeAccountByTopic.delete(existing.topic);
+      // Plan 08-05 — multi-chain per-topic state.
+      activeChainIdByTopic.delete(existing.topic);
+      warnedPartiallyPairedByTopic.delete(existing.topic);
     }
     // Clear any parked two-phase handle so a subsequent pairWait with a
     // stale handle gets InvalidPairingHandleError rather than resolving
@@ -600,6 +685,9 @@ export async function disconnect(topic: string): Promise<void> {
   await client.disconnect({ topic, reason: getSdkError("USER_DISCONNECTED") });
   if (cachedSessionTopic === topic) cachedSessionTopic = undefined;
   activeAccountByTopic.delete(topic);
+  // Plan 08-05 — multi-chain per-topic state.
+  activeChainIdByTopic.delete(topic);
+  warnedPartiallyPairedByTopic.delete(topic);
 }
 
 function findLiveSession(client: WalletConnectClient): SessionTypes.Struct | undefined {
@@ -617,31 +705,113 @@ function sessionToStatus(session: SessionTypes.Struct): LedgerStatus {
       "paired session has no eip155 accounts; Ledger Live did not approve a wallet",
     );
   }
-  // Parse every CAIP-10 entry and enforce a single chainId across them.
-  // A multi-chain session would require Phase 8's chain-registry; v1.x is
-  // mainnet-only and a mixed-chain session here is a sign that the
-  // namespace negotiation is wrong.
+  // Plan 08-05 — multi-chain accounting. Each CAIP-10 entry parses to
+  // `{ chainId, address }`; group by chainId so per-chain consumers
+  // (`set_active_account({ chain })`, `prepare_*` chain-arg threading) can
+  // resolve the right account set without re-parsing. The previous
+  // single-chain refusal (Phase 3 deliberate guard for the
+  // vertical-slice MVP) is superseded now that the chain-registry (Plan
+  // 08-01) + chain-arg threading (Plan 08-02) make multi-chain safe.
   const parsed = caipAccounts.map((c) => parseEvmAccountId(c));
-  const chainId = parsed[0]!.chainId;
+
+  // Group by chainId. Keys are the numeric chain IDs WC reports — any
+  // chainId may appear; the configured-set check below decides which to
+  // surface as `activeChainId` and which trigger `partiallyPaired`.
+  const accountsByChainMap = new Map<number, Address[]>();
   for (const entry of parsed) {
-    if (entry.chainId !== chainId) {
-      throw new Error(
-        `paired session has accounts on multiple eip155 chains (${chainId} and ${entry.chainId}); v1.x is mainnet-only`,
-      );
+    const existing = accountsByChainMap.get(entry.chainId) ?? [];
+    // De-dup per chain — same address on the same chain twice (defensive;
+    // the wallet shouldn't surface duplicates but we own the contract).
+    if (!existing.some((a) => getAddress(a) === getAddress(entry.address))) {
+      existing.push(entry.address);
+    }
+    accountsByChainMap.set(entry.chainId, existing);
+  }
+
+  // Resolve activeChainId: first configured chain that's covered by the
+  // session (research § Topic 8 line 717 — Ledger Live offers Ethereum
+  // first by default). `activeChainIdByTopic` lets a future
+  // `set_active_chain` tool override.
+  const configuredChainIds = getConfiguredChainIds();
+  const candidateChainId = configuredChainIds.find((id) =>
+    accountsByChainMap.has(id),
+  );
+  if (candidateChainId === undefined) {
+    throw new Error(
+      `paired session has no accounts on any configured chain (${configuredChainIds.join(",")}); ` +
+        `session.namespaces.eip155.accounts = ${JSON.stringify(caipAccounts)}`,
+    );
+  }
+  const activeChainId =
+    activeChainIdByTopic.get(session.topic) ?? candidateChainId;
+
+  // Resolve activeAccount: explicit selector first, else accounts[0] on
+  // the active chain, else accounts[0] across all chains (defensive
+  // fallback — should never fire since the candidate-chain lookup above
+  // guarantees the active chain has ≥1 account).
+  const accountsOnActiveChain = accountsByChainMap.get(activeChainId) ?? [];
+  const firstAccountOnActiveChain =
+    accountsOnActiveChain[0] ?? parsed[0]!.address;
+  const activeAccount =
+    activeAccountByTopic.get(session.topic) ?? firstAccountOnActiveChain;
+
+  // T-WC-PARTIAL-1 mitigation: `partiallyPaired` flags when configured ⊄
+  // session.chains. Warning fires once per pair-event (warnedPartiallyPaired
+  // ByTopic latch); the user is responsible for enabling missing networks
+  // in Ledger Live → Manage Accounts.
+  const partiallyPaired = configuredChainIds.some(
+    (id) => !accountsByChainMap.has(id),
+  );
+  if (partiallyPaired && !warnedPartiallyPairedByTopic.has(session.topic)) {
+    const approved = configuredChainIds.filter((id) =>
+      accountsByChainMap.has(id),
+    );
+    const missing = configuredChainIds.filter(
+      (id) => !accountsByChainMap.has(id),
+    );
+    log(
+      "warn",
+      `⚠ Paired session covers chains [${approved.join(",")}] but configured chains include [${missing.join(",")}]; ` +
+        "enable the missing networks in Ledger Live → Manage Accounts before requesting cross-chain reads/prepares",
+    );
+    warnedPartiallyPairedByTopic.add(session.topic);
+  }
+
+  // UNIQUE addresses across all chains, in first-seen order. Ledger Live
+  // typically derives the same address per chain, so this is usually a
+  // 1-element array even when accountsByChain has 5 keys. The
+  // de-dup uses checksum comparison via getAddress.
+  const seen = new Set<string>();
+  const uniqueAccounts: Address[] = [];
+  for (const p of parsed) {
+    const checksummed = getAddress(p.address);
+    if (!seen.has(checksummed)) {
+      seen.add(checksummed);
+      uniqueAccounts.push(p.address);
     }
   }
-  const accounts = parsed.map((p) => p.address);
-  const activeAccount =
-    activeAccountByTopic.get(session.topic) ?? accounts[0]!;
+
+  // Materialize Map → Record for the JSON surface. Keys must be numeric
+  // strings on the wire (JSON object keys are always strings); JS handles
+  // the conversion implicitly when callers read `record[42161]`.
+  const accountsByChain: Record<number, Address[]> = {};
+  for (const [chainId, addrs] of accountsByChainMap.entries()) {
+    accountsByChain[chainId] = addrs;
+  }
+
   return {
     paired: true,
-    accounts,
+    accounts: uniqueAccounts,
     activeAccount,
     // `address` is an alias for `activeAccount` retained for back-compat
     // through Task 5; remove once all callers migrate.
     address: activeAccount,
-    chainId,
+    chainId: activeChainId,
     sessionTopicLast8: session.topic.slice(-8),
+    // Plan 08-05 — multi-chain fields.
+    accountsByChain,
+    activeChainId,
+    partiallyPaired,
   };
 }
 
@@ -651,6 +821,11 @@ async function ensureSessionDeleteListener(client: WalletConnectClient): Promise
     log("info", `walletconnect session_delete event for topic=${topic.slice(-8)}`);
     if (cachedSessionTopic === topic) cachedSessionTopic = undefined;
     activeAccountByTopic.delete(topic);
+    // Plan 08-05 — clear per-topic multi-chain state on Ledger-side
+    // disconnect. A re-pair on the same topic gets a fresh
+    // partial-pairing warning + falls back to the default activeChainId.
+    activeChainIdByTopic.delete(topic);
+    warnedPartiallyPairedByTopic.delete(topic);
   });
   sessionDeleteListenerRegistered = true;
 }
@@ -662,4 +837,7 @@ export function _resetSessionManagerForTesting(): void {
   pendingHandles.clear();
   handleCounter = 0;
   activeAccountByTopic.clear();
+  // Plan 08-05 — multi-chain state.
+  activeChainIdByTopic.clear();
+  warnedPartiallyPairedByTopic.clear();
 }

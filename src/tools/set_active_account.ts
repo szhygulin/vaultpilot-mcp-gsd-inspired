@@ -18,6 +18,7 @@
 // screen; this is a server-side convenience selector, not a security
 // boundary. The success text re-states that explicitly.
 
+import { chainIdFromName, type ChainName } from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
 import {
   type ErrorCode,
@@ -27,9 +28,12 @@ import {
 import {
   AccountNotInSessionError,
   NotPairedError,
+  getStatus,
   setActiveAccount,
 } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
+
+const CHAIN_ENUM = ["ethereum", "arbitrum", "polygon", "base", "optimism"] as const;
 
 function errEnvelope(
   code: ErrorCode,
@@ -45,9 +49,10 @@ const DESCRIPTION = [
   "Do NOT use in demo mode — refuses with WRONG_MODE. Demo personas are switched via `set_demo_wallet`.",
   "Do NOT use for read-only flows (`get_portfolio_summary`, `get_token_balance`, etc.) — those take the address as a parameter directly; the active-account selection only affects signing.",
   "The address MUST be one of the accounts the WC session approved; an unknown address returns INVALID_ACCOUNT with the in-session list surfaced for self-correction.",
+  "Optional `chain` arg (Plan 08-05): when provided, restrict the lookup to that chain's account set (`get_ledger_status.accountsByChain[chainId]`). When omitted, search across all chains (back-compat). Use the chain scope when Ledger Live derived different addresses per chain.",
   "The Ledger device still signs whichever account the user confirms on-screen — this is a server-side convenience selector, not a security boundary.",
   "Returns `{ address, accounts }` plus a confirmation text block.",
-  "Failure modes: WRONG_MODE in demo mode, WALLET_NOT_PAIRED if no live session, INVALID_ACCOUNT if the address is not in the approved set, INVALID_INPUT for malformed input.",
+  "Failure modes: WRONG_MODE in demo mode, WALLET_NOT_PAIRED if no live session, INVALID_ACCOUNT if the address is not in the approved set (or not in the per-chain set when `chain` provided), INVALID_INPUT for malformed input.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -58,6 +63,12 @@ const INPUT_SCHEMA = {
       description:
         "Account address to make active — 0x-prefixed 20-byte hex. Must be one of the accounts listed in `get_ledger_status.accounts`.",
       pattern: "^0x[0-9a-fA-F]{40}$",
+    },
+    chain: {
+      type: "string",
+      enum: CHAIN_ENUM,
+      description:
+        "Optional per-chain scope (Plan 08-05). When provided, the address must be in `get_ledger_status.accountsByChain[<chainId>]`. When omitted, the lookup searches all chains in `accounts` (back-compat).",
     },
   },
   required: ["address"],
@@ -106,6 +117,76 @@ registerTool("set_active_account", DESCRIPTION, INPUT_SCHEMA, async (args) => {
           `invalid 'address': ${address}`,
         ),
       };
+    }
+
+    // Plan 08-05 — per-chain scope (T-SET-ACTIVE-ACCOUNT-CHAIN-SCOPE-BYPASS-1
+    // anchor). When `args.chain` is provided, the address MUST appear in
+    // that chain's account set; cross-chain matches don't satisfy the
+    // per-chain scope. When `args.chain` is OMITTED, the lookup falls
+    // through to the existing `setActiveAccount` cross-chain search
+    // (Phase 5 quick-task `wc-multi-account-session` back-compat preserved).
+    const chainArg =
+      typeof args.chain === "string" ? args.chain : undefined;
+    if (chainArg !== undefined) {
+      if (!(CHAIN_ENUM as readonly string[]).includes(chainArg)) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `error: invalid 'chain': expected one of ${CHAIN_ENUM.join(", ")}, got "${chainArg}"`,
+            },
+          ],
+          structuredContent: errEnvelope(
+            "INVALID_INPUT",
+            `invalid 'chain': ${chainArg}`,
+          ),
+        };
+      }
+      const chainId = chainIdFromName(chainArg as ChainName);
+      const preStatus = await getStatus();
+      if (preStatus === null) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                "error: no live Ledger session. Call `pair_ledger_live` to pair via WalletConnect, then retry.",
+            },
+          ],
+          structuredContent: errEnvelope(
+            "WALLET_NOT_PAIRED",
+            "no live Ledger session",
+          ),
+        };
+      }
+      const chainAccounts = preStatus.accountsByChain[chainId] ?? [];
+      const lowered = address.toLowerCase();
+      const match = chainAccounts.find(
+        (a) => a.toLowerCase() === lowered,
+      );
+      if (!match) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                `error: address ${address} is not in the current Ledger session for chain "${chainArg}" (chainId ${chainId}). ` +
+                `Approved accounts on this chain: ${chainAccounts.length > 0 ? chainAccounts.join(", ") : "(none — chain not covered by current session)"}`,
+            },
+          ],
+          structuredContent: errEnvelope(
+            "INVALID_ACCOUNT",
+            `address not in session for chain ${chainArg} (chainId ${chainId}); chain accounts: ${chainAccounts.join(",")}`,
+          ),
+        };
+      }
+      // Per-chain check passed — fall through to setActiveAccount, which
+      // will checksum-normalize and persist the selection. The
+      // cross-chain check inside setActiveAccount is a superset of ours,
+      // so it will not re-refuse.
     }
 
     let status;
