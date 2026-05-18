@@ -20,7 +20,16 @@
     "check": "node dist/index.js --check",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:binary": "pkg . --fallback-to-source --out-path dist-binaries --compress GZip",
+    "build:binary:linux-x64": "pkg . --fallback-to-source --target node22-linux-x64 --out-path dist-binaries",
+    "build:binary:macos-x64": "pkg . --fallback-to-source --target node22-macos-x64 --out-path dist-binaries",
+    "build:binary:macos-arm64": "pkg . --fallback-to-source --target node22-macos-arm64 --out-path dist-binaries",
+    "build:binary:windows-x64": "pkg . --fallback-to-source --target node22-win-x64 --out-path dist-binaries"
+  },
+  "pkg": {
+    "scripts": ["dist/**/*.js"],
+    "assets": ["package.json"]
   },
   "engines": {
     "node": ">=18.17"
@@ -35,6 +44,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@yao-pkg/pkg": "^6.19.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"

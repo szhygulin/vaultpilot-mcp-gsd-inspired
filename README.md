@@ -75,6 +75,22 @@ GSD-driven. Standard loop:
 
 Phase 1 (`Server skeleton + install`) has its CONTEXT pre-populated at [`.planning/phases/01-server-skeleton/01-CONTEXT.md`](./.planning/phases/01-server-skeleton/01-CONTEXT.md) — `/gsd-plan-phase 1` is the next step.
 
+## Install
+
+> v1.4 ships per-platform binaries via the curl-pipe installers below. Until v1.4 tags, install from source with `npm install -g vaultpilot-mcp`.
+
+POSIX (Linux x64 / macOS x64+arm64):
+
+    curl -fsSL https://github.com/szhygulin/vaultpilot-mcp-gsd-inspired/releases/latest/download/install.sh | bash
+
+Windows (x64):
+
+    iwr -useb https://github.com/szhygulin/vaultpilot-mcp-gsd-inspired/releases/latest/download/install.ps1 | iex
+
+Linux arm64 / Windows arm64 / other:
+
+    npm install -g vaultpilot-mcp
+
 ## License
 
 BUSL-1.1 (planned, mirroring upstream). Personal/internal use free; hosted services require commercial license. Auto-converts to Apache 2.0 in 2030. License file lands in Phase 1.

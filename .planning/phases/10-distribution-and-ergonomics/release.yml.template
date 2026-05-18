@@ -1,0 +1,90 @@
+# .github/workflows/release.yml (NEW Phase 10 Plan 10-01)
+#
+# Verified at execute time 2026-05-18 — @yao-pkg/pkg 6.19.0 (latest stable).
+#
+# Semver-tag-triggered binary build + GitHub Release upload. Cross-compiles
+# 4 targets (linux-x64, macos-x64, macos-arm64, windows-x64) from a single
+# Linux runner via @yao-pkg/pkg@^6.19.0 + pkg-fetch's per-target Node 22 cache.
+#
+# DF-1 LOCKED at planning gate (RESEARCH § DF-1): @yao-pkg/pkg over Bun +
+# Node SEA + nexe. Rationale: Node-runtime fidelity for the FROZEN
+# cryptographic-binding chain — Phases 1-9 ship against Node ≥ 18.17; the
+# trust pipeline's behavior is anchored on Node's exact `crypto.createHash`
+# + `fs/promises.readFile` + `Buffer.from(hex)` semantics. Bun re-implements
+# these; substrate-shift risk for a sign-anything-on-Ledger tool.
+#
+# `permissions: contents: write` MUST be declared — default GITHUB_TOKEN
+# ships read-only since 2026; softprops/action-gh-release@v2 returns 403
+# without it (RESEARCH § Topic 4 line 295 Pitfall).
+#
+# Prerelease auto-detect via `contains(github.ref_name, '-')` — tag
+# `v1.4.0-rc1` is marked prerelease; GitHub's `/releases/latest/download/`
+# redirect skips prereleases.
+#
+# install.sh + install.ps1 ship AS release assets (Plan 10-02 creates the
+# scripts). Plan 10-01 ships the workflow that uploads them; until Plan
+# 10-02 lands, the `cp ../install.sh .` / `cp ../install.ps1 .` step will
+# fail with "No such file or directory" — that gates the first real
+# release tag on Plan 10-02 shipping. Intentional sequencing.
+#
+# FROZEN since v1.4.0 (Plan 10-01 — first occupant of `.github/workflows/`).
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write  # softprops/action-gh-release@v2 upload-asset step needs this
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build         # existing Phase 1-9 tsc → dist/
+      - run: npm test              # block release on red tests
+      # Cross-compile all 4 targets from this single Linux runner.
+      # pkg-fetch's per-target Node 22 cache makes this work without
+      # QEMU/Rosetta/Wine — pkg bundles target Node binaries without
+      # executing them during build.
+      - run: npm run build:binary:linux-x64
+      - run: npm run build:binary:macos-x64
+      - run: npm run build:binary:macos-arm64
+      - run: npm run build:binary:windows-x64
+      # Package archives + per-asset SHA-256 sums + combined SHA256SUMS index.
+      - name: Package + checksum
+        run: |
+          mkdir -p release-assets
+          cd dist-binaries
+          tar czf ../release-assets/vaultpilot-mcp-${{ github.ref_name }}-linux-x64.tar.gz vaultpilot-mcp-linux
+          tar czf ../release-assets/vaultpilot-mcp-${{ github.ref_name }}-macos-x64.tar.gz vaultpilot-mcp-macos-x64
+          tar czf ../release-assets/vaultpilot-mcp-${{ github.ref_name }}-macos-arm64.tar.gz vaultpilot-mcp-macos-arm64
+          zip ../release-assets/vaultpilot-mcp-${{ github.ref_name }}-windows-x64.zip vaultpilot-mcp-win.exe
+          cd ../release-assets
+          # Combined SHA256SUMS index — convenience for human + machine consumers.
+          shasum -a 256 vaultpilot-mcp-${{ github.ref_name }}-*.tar.gz vaultpilot-mcp-${{ github.ref_name }}-*.zip > vaultpilot-mcp-${{ github.ref_name }}-SHA256SUMS.txt
+          # Per-asset .sha256 companion — install.sh/install.ps1 verify BEFORE extraction.
+          for f in vaultpilot-mcp-${{ github.ref_name }}-*.tar.gz vaultpilot-mcp-${{ github.ref_name }}-*.zip; do
+            shasum -a 256 "$f" > "$f.sha256"
+          done
+          # install.sh + install.ps1 ship AS release assets so curl-pipe URLs
+          # point at versioned/immutable /releases/latest/download/install.sh,
+          # not at the mutable `main` branch raw file. (Plan 10-02 creates
+          # these scripts; until then, the first tag push will fail here —
+          # intentional sequencing gate.)
+          cp ../install.sh .
+          cp ../install.ps1 .
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
