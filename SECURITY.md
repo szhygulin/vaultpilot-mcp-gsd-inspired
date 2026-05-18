@@ -95,3 +95,23 @@ screen) is unaffected.
 - Full STRIDE register / ASVS mapping (planned v1.3+ as the
   defense-in-depth model expands; the per-plan threat-register blocks
   in `.planning/phases/**/PLAN.md` are the working surface today).
+
+## v1.4 Residual Risks (Distribution)
+
+Phase 10 (v1.4) introduces the per-platform binary distribution pipeline
+(`@yao-pkg/pkg` build + curl-pipe installers). The signing chain stays
+byte-frozen across this surface. The new residual risks are install-time
+friction + supply-chain visibility — not trust-boundary degradation.
+
+| Risk | Disposition | Mitigation Path |
+|------|-------------|-----------------|
+| **Unsigned macOS binaries** trigger Gatekeeper "cannot be opened because the developer cannot be verified" dialog on first run. The curl-pipe download carries the `com.apple.quarantine` extended attribute. | accept (v1.4) → mitigate (v1.5+) | install.sh OFFERS `xattr -d com.apple.quarantine ~/.local/bin/vaultpilot-mcp` interactively; user can alternatively right-click → Open → confirm (one-time per binary). v1.5+ adopts an Apple Developer cert ($99/year) + `xcrun notarytool submit --wait` (~5-10 min added per release). Documented as residual risk, not as a trust-boundary degradation — the Ledger screen remains the trust anchor regardless of binary signing state. |
+| **Unsigned Windows `.exe`** triggers SmartScreen "Windows protected your PC" dialog on first run. Mark-of-the-Web persists on the downloaded file. | accept (v1.4) → mitigate (v1.5+) | install.ps1 documents `Unblock-File -Path <path>`; user can alternatively right-click → Properties → Unblock. v1.5+ adopts Authenticode signing via EV cert (DigiCert / Sectigo) + `signtool` integration. |
+| **Supply-chain risk** — pkg-bundled npm-installed deps are pinned by hash in `package-lock.json` only; no SLSA provenance or sigstore signatures on release assets in v1.4. A compromised npm dep would land in the binary. | accept (v1.4) → mitigate (v1.5+) | v1.4 baseline: `package-lock.json` SHA-512 hashes (Phase 1-9 baseline) + per-asset SHA-256 sums + combined SHA256SUMS.txt published with each release. v1.5+ adds sigstore SLSA provenance + Cosign signatures on every release asset (RESEARCH § Topic 10 line 1232). |
+
+The trust anchor (Ledger device screen) is unaffected by any of the above.
+A compromised binary cannot force a sign — it can only present
+transactions the user must visually approve on-device. The
+`payloadFingerprint` re-check at send time + the on-screen recipient
+rendering still catch tampering at the binary layer.
+

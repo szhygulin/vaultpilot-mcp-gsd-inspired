@@ -39,3 +39,5 @@ claude-work/
 build/
 out/
 *.tgz
+dist-binaries/
+release-assets/
