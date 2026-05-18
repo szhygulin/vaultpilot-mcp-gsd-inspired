@@ -91,6 +91,25 @@ Linux arm64 / Windows arm64 / other:
 
     npm install -g vaultpilot-mcp
 
+## Setup
+
+After install, run the setup wizard to write `~/.vaultpilot-mcp/config.json` and auto-register `vaultpilot-mcp` with detected MCP clients (Claude Code CLI / Claude Desktop / Cursor). Three modes:
+
+Interactive (six-step `@clack/prompts` wizard):
+
+    vaultpilot-mcp setup
+
+Non-interactive (read JSON payload from stdin):
+
+    cat config-payload.json | vaultpilot-mcp setup --non-interactive --json
+
+Dry-run (preview without writing config or registering clients):
+
+    vaultpilot-mcp setup --dry-run
+    cat config-payload.json | vaultpilot-mcp setup --non-interactive --json --dry-run
+
+The non-interactive payload validates against the same Zod schema as the interactive path (single source of truth — both modes accept identical fields). Output JSON redacts every secret-bearing field (`walletConnectProjectId`, `rpcUrl`, `rpcApiKey`, `etherscanApiKey`) — the wizard never echoes secrets back over stdout.
+
 ## License
 
 BUSL-1.1 (planned, mirroring upstream). Personal/internal use free; hosted services require commercial license. Auto-converts to Apache 2.0 in 2030. License file lands in Phase 1.
