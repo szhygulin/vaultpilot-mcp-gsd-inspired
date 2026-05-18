@@ -3,6 +3,8 @@ import "./reverse_resolve_ens.js";
 import "./get_token_balance.js";
 import "./get_token_metadata.js";
 import "./check_contract_security.js";
+import "./resolve_token.js";
+import "./get_token_allowances.js";
 import "./get_transaction_status.js";
 import "./get_portfolio_summary.js";
 import "./get_lending_positions.js";
