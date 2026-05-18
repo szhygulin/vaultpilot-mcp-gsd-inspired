@@ -526,6 +526,15 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
         broadcastedAt,
         handle: handleArg,
         chainId: record.tx.chainId,
+        // Plan 09-05 (SEC-36) — WC session topic surface (last 8 chars) for
+        // user cross-check against Ledger Live → Settings → Connected Apps.
+        // Additive surface OUTSIDE the FROZEN three-gate region (PREP-07
+        // schema gate + PREP-08 fingerprint re-check + userDecision check
+        // live earlier in the handler at the validation boundary). `status`
+        // is the LedgerStatus resolved upstream from `getStatus()`; the
+        // demo-mode + cancel + LEDGER_REJECTED + BROADCAST_FAILED paths
+        // return earlier and never reach this success-path block.
+        sessionTopicLast8: status.sessionTopicLast8,
       },
     };
   } catch (err) {

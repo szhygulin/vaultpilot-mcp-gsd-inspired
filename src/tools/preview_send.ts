@@ -264,6 +264,12 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // the address passed to `getTransactionCount` matches the resolved
     // sender; Plan 05-02 demo test asserts the same against persona.
     let senderAddress: Address;
+    // Plan 09-05 (SEC-36) — captured here so the success-path structuredContent
+    // can surface `sessionTopicLast8` for user cross-check against Ledger Live
+    // → Settings → Connected Apps. `null` in demo mode (no WC session) and
+    // unreachable on the WALLET_NOT_PAIRED refusal path (which short-circuits
+    // above before this assignment fires).
+    let sessionTopicLast8: string | null = null;
     if (isDemoMode()) {
       const persona = getActivePersona();
       if (persona === null) {
@@ -306,6 +312,7 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
         };
       }
       senderAddress = status.activeAccount;
+      sessionTopicLast8 = status.sessionTopicLast8;
     }
 
     // Resolve nonce / fees / gas concurrently. Pin AT PREVIEW TIME
@@ -622,6 +629,12 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
         // (Plan 04-05 re-emit will need to pick up this branch in Phase 9).
         // `null` when not a WETH unwrap; canonical tag string when emitted.
         ledgerNotice: isWethUnwrap ? ("weth-unwrap-blind-sign" as const) : null,
+        // Plan 09-05 (SEC-36) — WC session topic surface for user cross-check
+        // against Ledger Live → Settings → Connected Apps. `null` in demo
+        // mode (no WC session); real-mode carries the last-8-chars of the WC
+        // session topic. T-SESSION-TOPIC-DRIFT-1: drift across preview /
+        // send / pair surfaces indicates session-rotation between calls.
+        sessionTopicLast8,
       },
     };
   } catch (err) {

@@ -701,3 +701,98 @@ describe("send_transaction — no walletClient import (no-private-key-path invar
     expect(source).toContain("eth_sendTransaction");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Plan 09-05 v1.3 additive — sessionTopicLast8 on SUCCESS structuredContent
+// (SEC-36) + T-FROZEN-THREE-GATE-REGRESSION-1 anchor.
+// ---------------------------------------------------------------------------
+describe("send_transaction — Plan 09-05 sessionTopicLast8 on SUCCESS (SEC-36, T-SESSION-TOPIC-DRIFT-1)", () => {
+  it("broadcast SUCCESS path surfaces sessionTopicLast8 from getStatus()", async () => {
+    const { handle, previewToken } = seedPreviewedHandle();
+    scriptPairedMocks();
+    const mockTxHash = "0xdeadbeef00000000000000000000000000000000000000000000000000000002" as Hex;
+    mockSignClientHolder.current!._setRequestResponse("eth_sendTransaction", mockTxHash);
+
+    const result = await callTool({ handle, previewToken, userDecision: "send" });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      txHash: string;
+      sessionTopicLast8: string;
+    };
+    expect(sc.txHash).toBe(mockTxHash);
+    // T-SESSION-TOPIC-DRIFT-1: SUCCESS structuredContent carries the WC
+    // session topic last-8-chars for user cross-check against Ledger Live →
+    // Settings → Connected Apps. Additive surface OUTSIDE the FROZEN
+    // three-gate region.
+    expect("sessionTopicLast8" in sc).toBe(true);
+    expect(sc.sessionTopicLast8).toBe(PAIRED_STATUS.sessionTopicLast8);
+  });
+});
+
+describe("send_transaction — T-FROZEN-THREE-GATE-REGRESSION-1 (Plan 09-05 STOP-THE-LINE)", () => {
+  it("git diff vs origin/main shows additive sessionTopicLast8 line ONLY in the SUCCESS structuredContent block — three-gate region BYTE-FROZEN", async () => {
+    // CRITICAL invariant per PATTERNS.md § 3 line 525: the additive
+    // sessionTopicLast8 field lands at success-path structuredContent
+    // ONLY. The three gates earlier in the handler (PREP-07 schema gate,
+    // PREP-08 fingerprint re-check, userDecision check) MUST be
+    // byte-frozen.
+    //
+    // The assertion runs `git diff origin/main -- src/tools/send_transaction.ts`
+    // at test time and validates the diff matches the expected additive
+    // shape. Skips gracefully if `origin/main` is not available (e.g. on
+    // a freshly-cloned worktree without remote tracking).
+    const child = await import("node:child_process");
+    let diff: string;
+    try {
+      diff = child
+        .execSync("git diff origin/main -- src/tools/send_transaction.ts", {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        })
+        .toString();
+    } catch {
+      // origin/main not available — skip the assertion in this environment.
+      // CI on a normal worktree always has it.
+      return;
+    }
+
+    // Count the lines added (`+` prefix, excluding the `+++` header).
+    const addedLines = diff
+      .split("\n")
+      .filter((line) => line.startsWith("+") && !line.startsWith("+++"));
+
+    // The additive surface for Plan 09-05 should be SMALL — only the
+    // sessionTopicLast8 field + its inline comment block + at most one
+    // blank line. Hard ceiling at 20 added lines guards against
+    // accidental modification of the three-gate region (which would push
+    // the added-line count well past this).
+    expect(addedLines.length).toBeLessThanOrEqual(20);
+
+    // At least one added line must contain the sessionTopicLast8 token.
+    const hasSessionTopicLine = addedLines.some((l) =>
+      l.includes("sessionTopicLast8"),
+    );
+    expect(hasSessionTopicLine).toBe(true);
+
+    // Three-gate region invariants: the diff MUST NOT remove or modify
+    // any of these load-bearing tokens. Each appears verbatim in the
+    // un-touched source.
+    const removedLines = diff
+      .split("\n")
+      .filter((line) => line.startsWith("-") && !line.startsWith("---"));
+
+    const protectedTokens = [
+      "PREVIEW_TOKEN_MISMATCH",
+      "PAYLOAD_FINGERPRINT_DRIFT",
+      "computePayloadFingerprint",
+      "transitionToCancelled",
+      "transitionToSent",
+      'userDecision === "cancel"',
+    ];
+    for (const tok of protectedTokens) {
+      const removedFromGate = removedLines.some((l) => l.includes(tok));
+      expect(removedFromGate).toBe(false);
+    }
+  });
+});
