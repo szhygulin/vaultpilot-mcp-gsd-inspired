@@ -1,44 +1,34 @@
-import { createPublicClient, http, type PublicClient } from "viem";
-import { mainnet } from "viem/chains";
+// ONE-WAVE COMPAT SHIM (Phase 8 Plan 08-01).
+// Delete in Plan 08-02 after all callers migrate to getChainClient(chain).
+//
+// Phase 2's `getEthereumClient()` singleton kept all Phase 2-7 callers
+// (`get_portfolio_summary`, `get_lending_positions`, `prepare_*`, etc.)
+// pointed at a single PublicClient. Plan 08-01 widens the registry to
+// `getChainClient(chainId)`; rather than touch every caller in one shot
+// (the carve-anchor lives at Plan 08-02 driven by the `chainId: 1` literal
+// errors), this file becomes a thin pass-through delegating to chainId=1.
+//
+// Phase 2-7 callers do NOT change — they keep importing from
+// `../chains/ethereum.js`. Plan 08-02 deletes this file after threading
+// the `chain` arg through every callsite.
 
-import { getEthereumRpcUrl } from "../config/env.js";
-import { log } from "../diagnostics/logger.js";
+import {
+  PUBLICNODE_RPC_URLS,
+  _resetChainRegistryForTesting,
+  getChainClient,
+  isPublicNodeFallback as registryIsPublicNodeFallback,
+} from "./registry.js";
 
-export const PUBLICNODE_ETHEREUM_RPC_URL = "https://ethereum-rpc.publicnode.com";
+export const PUBLICNODE_ETHEREUM_RPC_URL = PUBLICNODE_RPC_URLS[1];
 
-let cachedClient: PublicClient | undefined;
-let cachedUsedFallback = false;
-let warnedFallback = false;
-
-export function getEthereumClient(): PublicClient {
-  if (cachedClient) return cachedClient;
-
-  const override = getEthereumRpcUrl();
-  const url = override ?? PUBLICNODE_ETHEREUM_RPC_URL;
-  cachedUsedFallback = override === undefined;
-
-  if (cachedUsedFallback && !warnedFallback) {
-    log(
-      "warn",
-      `ETHEREUM_RPC_URL not set — using PublicNode public RPC (${PUBLICNODE_ETHEREUM_RPC_URL}); set ETHEREUM_RPC_URL for production traffic`,
-    );
-    warnedFallback = true;
-  }
-
-  cachedClient = createPublicClient({
-    chain: mainnet,
-    transport: http(url),
-  });
-  return cachedClient;
+export function getEthereumClient() {
+  return getChainClient(1);
 }
 
 export function isPublicNodeFallback(): boolean {
-  if (!cachedClient) getEthereumClient();
-  return cachedUsedFallback;
+  return registryIsPublicNodeFallback(1);
 }
 
 export function _resetEthereumClientForTesting(): void {
-  cachedClient = undefined;
-  cachedUsedFallback = false;
-  warnedFallback = false;
+  _resetChainRegistryForTesting();
 }

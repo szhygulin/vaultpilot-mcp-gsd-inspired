@@ -18,9 +18,10 @@
 //     PAIR-02 / get_ledger_status contract)
 //   - The config file CONTENT (only its path + presence/malformed flags)
 
-import { isAutoDemo, isDemoMode } from "../config/env.js";
+import { isAutoDemo, isDemoMode, getRpcProvider } from "../config/env.js";
 import { getConfigPath, readConfigFile } from "../config/config-file.js";
 import { getWalletConnectStorageMode } from "../config/wc-storage.js";
+import { _registry } from "../chains/registry.js";
 import { getActivePersona } from "../demo/state.js";
 import { getStatus } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
@@ -29,7 +30,7 @@ const DESCRIPTION = [
   "Returns a summary of vaultpilot-mcp's current configuration state — demo mode flag, env-var presence (as booleans), paired-account count, WC session-topic suffix (last 8 chars only), WC session persistence flag (boolean), config-file path + presence/malformed flags, Node version, package version, active persona slug, update-check suppression flag.",
   "Use this when debugging install configuration — 'why is demo mode active?', 'is my RPC URL set?', 'what version am I on?', 'which persona is active?', 'is my Ledger session persisted across restarts?'.",
   "Do NOT use this to retrieve the actual config values (RPC URL, WC project ID, full session topic) — those are NEVER returned by this tool. For RPC URL: read the `ETHEREUM_RPC_URL` env var directly via your shell. For WC project ID: same — `WALLETCONNECT_PROJECT_ID`.",
-  "Returns `{ demoMode, isAutoDemo, activePersonaSlug, walletConnectProjectIdPresent, ethereumRpcUrlPresent, pairedAccountCount, wcSessionTopicSuffix, walletConnectStoragePersistent, configFilePath, configFileExists, configFileMalformed, nodeVersion, packageVersion, updateCheckSuppressed }`.",
+  "Returns `{ demoMode, isAutoDemo, activePersonaSlug, walletConnectProjectIdPresent, ethereumRpcUrlPresent, etherscanApiKeyPresent, rpcProvider, configuredChains, pairedAccountCount, wcSessionTopicSuffix, walletConnectStoragePersistent, configFilePath, configFileExists, configFileMalformed, nodeVersion, packageVersion, updateCheckSuppressed }`. `rpcProvider` is the verbatim shorthand name (`infura` / `alchemy`) or null when `RPC_PROVIDER` is unset — the API key VALUE is NEVER surfaced. `configuredChains` is a per-chain map (`ethereum / arbitrum / polygon / base / optimism`) of booleans reflecting whether a chain-specific override OR the shorthand resolves a URL (false ⇒ PublicNode fallback for that chain).",
   "Secret-safety: response contains only booleans, counts, suffixes, paths, and PUBLIC values (Node version, package version, persona slug, config file path). No secret values are returned — verifiable by the agent via JSON inspection.",
 ].join(" ");
 
@@ -82,6 +83,22 @@ registerTool(
     // test/get-vaultpilot-config-status.test.ts).
     const etherscanApiKeyPresent = Boolean(process.env.ETHERSCAN_API_KEY);
 
+    // Plan 08-01 — multi-chain diagnostic surface. The provider NAME is
+    // PUBLIC (it's just `infura` / `alchemy`); the API key VALUE is the
+    // secret material and is NEVER surfaced (Q-CONFIG-LEAK extends —
+    // asserted by the T-RPC-API-KEY-LEAK-1 3-sentinel scan).
+    // `configuredChains` reflects per-chain RPC resolution: true ⇒ EITHER
+    // chain-specific env var OR a recognized RPC_PROVIDER + RPC_API_KEY
+    // pair resolves a URL; false ⇒ PublicNode fallback would fire.
+    const rpcProvider = getRpcProvider() ?? null;
+    const configuredChains = {
+      ethereum: _registry.hasRpcConfiguredForChain(1),
+      arbitrum: _registry.hasRpcConfiguredForChain(42161),
+      polygon: _registry.hasRpcConfiguredForChain(137),
+      base: _registry.hasRpcConfiguredForChain(8453),
+      optimism: _registry.hasRpcConfiguredForChain(10),
+    };
+
     const status = await getStatus();
     const pairedAccountCount = status === null ? 0 : 1;
     const wcSessionTopicSuffix = status === null ? null : status.sessionTopicLast8;
@@ -111,6 +128,8 @@ registerTool(
       walletConnectProjectIdPresent,
       ethereumRpcUrlPresent,
       etherscanApiKeyPresent,
+      rpcProvider,
+      configuredChains,
       pairedAccountCount,
       wcSessionTopicSuffix,
       walletConnectStoragePersistent,
@@ -132,6 +151,10 @@ registerTool(
     lines.push(`  walletConnectProjectIdPresent:   ${walletConnectProjectIdPresent}`);
     lines.push(`  ethereumRpcUrlPresent:           ${ethereumRpcUrlPresent}`);
     lines.push(`  etherscanApiKeyPresent:          ${etherscanApiKeyPresent}`);
+    lines.push(`  rpcProvider:                     ${rpcProvider ?? "(none)"}`);
+    lines.push(
+      `  configuredChains:                ethereum=${configuredChains.ethereum} arbitrum=${configuredChains.arbitrum} polygon=${configuredChains.polygon} base=${configuredChains.base} optimism=${configuredChains.optimism}`,
+    );
     lines.push(`  pairedAccountCount:              ${pairedAccountCount}`);
     lines.push(`  wcSessionTopicSuffix:            ${wcSessionTopicSuffix ?? "(none)"}`);
     lines.push(`  walletConnectStoragePersistent:  ${walletConnectStoragePersistent}`);
