@@ -66,7 +66,13 @@ await import("../src/tools/register-all.js");
 async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("prepare_native_send");
   if (!tool) throw new Error("prepare_native_send not registered");
-  return tool.handler(args);
+  // Phase 8 — Plan 08-02: chain arg is REQUIRED on every prepare_*. Default
+  // to "ethereum" here so the pre-Plan-08-02 Fixture A regressions (which
+  // pin chainId=1) continue to anchor under the new schema; per-chain
+  // assertion is covered in the "chain arg gate" describe block at the
+  // bottom of this file.
+  const merged = "chain" in args ? args : { chain: "ethereum", ...args };
+  return tool.handler(merged);
 }
 
 const DEMO_KEY = "VAULTPILOT_DEMO";
@@ -278,7 +284,12 @@ describe("prepare_native_send — verbatim PREPARE RECEIPT (PREP-02 + T-PREP-RCP
     // Format-fanout sentinel: prod + test reference the SAME const + the
     // SAME substitution shape. A future edit to the template that didn't
     // update both sides would fail this byte-identity check.
+    //
+    // Phase 8 — Plan 08-02: `{CHAIN}` slot added; substituted with
+    // `${chain} (chainId ${chainId})`. callTool's default chain is
+    // "ethereum" → chainId 1.
     const expected = PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", "ethereum (chainId 1)")
       .replace("{TO}", LOWERCASE_TO)
       .replace("{VALUE_WEI}", FIXTURE_A.valueWei);
     expect(text).toBe(expected);
@@ -382,17 +393,27 @@ describe("prepare_native_send — handle stored in `prepared` state with correct
 });
 
 describe("prepare_native_send — `chainId` not exposed in inputSchema (Q3 regression anchor)", () => {
-  it("inputSchema does NOT advertise chainId — Phase 8 PREP-40 adds `chain` across all prepare_* in one pass", () => {
+  it("inputSchema does NOT advertise chainId — Phase 8 Plan 08-02 adds `chain` enum (NOT the literal chainId field)", () => {
     const tool = getRegisteredTool("prepare_native_send");
     expect(tool).toBeDefined();
     if (!tool) return;
 
     const props = tool.inputSchema.properties ?? {};
+    // Phase 8 — Plan 08-02 ship state: the schema exposes `chain` (enum
+    // of 5 ChainNames), NOT `chainId` (numeric). The literal-chainId surface
+    // would force agents to memorize EIP-155 ints; the named enum is the
+    // agent-facing canon. The Q3 invariant ("no literal `chainId` field")
+    // holds — `chainId` is computed server-side via `chainIdFromName(chain)`.
     expect(props.chainId).toBeUndefined();
-    // `required` lists `to` + `valueWei` only.
+    // `required` lists `chain` + `to` + `valueWei` post-Plan-08-02.
     const required = tool.inputSchema.required ?? [];
-    expect(required).toEqual(["to", "valueWei"]);
+    expect(required).toEqual(["chain", "to", "valueWei"]);
     expect(required).not.toContain("chainId");
+    // `chain` enum surface (PREP-41 — DF-1 Option A — REQUIRED on every prepare).
+    expect(props.chain).toMatchObject({
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+    });
   });
 });
 
@@ -435,5 +456,60 @@ describe("prepare_native_send — register-all.ts wiring (smoke)", () => {
   it("prepare_native_send is registered after register-all import", () => {
     const names = listRegisteredTools().map((t) => t.name);
     expect(names).toContain("prepare_native_send");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 8 — Plan 08-02 (PREP-40 + PREP-41) chain arg gate. The 5-chain
+// enum is the dispatch-boundary gate; per-handler re-validation is unreachable
+// on a clean MCP path. These cases exercise the in-handler chain threading
+// after the dispatcher has accepted the enum.
+// ---------------------------------------------------------------------------
+describe("prepare_native_send — chain arg gate (Plan 08-02 / PREP-40 + PREP-41)", () => {
+  it("happy path on a non-Ethereum chain (polygon): structuredContent.chainId === 137; PREPARE RECEIPT carries `chain: polygon (chainId 137)`", async () => {
+    getStatusSpy.mockResolvedValueOnce(PAIRED_STATUS);
+
+    const tool = getRegisteredTool("prepare_native_send");
+    if (!tool) throw new Error("prepare_native_send not registered");
+    const result = await tool.handler({
+      chain: "polygon",
+      to: FIXTURE_A.to,
+      valueWei: FIXTURE_A.valueWei,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      chain: string;
+      chainId: number;
+      payloadFingerprint: string;
+    };
+    expect(sc.chain).toBe("polygon");
+    expect(sc.chainId).toBe(137);
+    // The PREPARE RECEIPT carries the chain-name verbatim so the user can
+    // cross-check on the device's `Network:` display.
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("chain:    polygon (chainId 137)");
+  });
+
+  it("chain-id-distinctness: same (to, valueWei), different chain → different payloadFingerprint", async () => {
+    getStatusSpy.mockResolvedValueOnce(PAIRED_STATUS);
+    const tool = getRegisteredTool("prepare_native_send");
+    if (!tool) throw new Error("prepare_native_send not registered");
+    const ethResult = await tool.handler({
+      chain: "ethereum",
+      to: FIXTURE_A.to,
+      valueWei: FIXTURE_A.valueWei,
+    });
+    getStatusSpy.mockResolvedValueOnce(PAIRED_STATUS);
+    const arbResult = await tool.handler({
+      chain: "arbitrum",
+      to: FIXTURE_A.to,
+      valueWei: FIXTURE_A.valueWei,
+    });
+    const ethFp = (ethResult.structuredContent as { payloadFingerprint: string })
+      .payloadFingerprint;
+    const arbFp = (arbResult.structuredContent as { payloadFingerprint: string })
+      .payloadFingerprint;
+    expect(ethFp).not.toBe(arbFp);
   });
 });

@@ -5,12 +5,14 @@ import {
   isHex,
 } from "viem";
 
-import { getEthereumClient, isPublicNodeFallback } from "../chains/ethereum.js";
+import { getChainClient, isPublicNodeFallback } from "../chains/registry.js";
+import { chainIdFromName, type ChainName } from "../config/contracts.js";
 import { registerTool } from "./index.js";
 
 const DESCRIPTION = [
-  "Poll Ethereum mainnet for the status of a transaction by hash, returning `{ status: \"pending\" | \"success\" | \"reverted\", blockNumber?, gasUsed? }`.",
+  "Poll a supported EVM chain for the status of a transaction by hash, returning `{ status: \"pending\" | \"success\" | \"reverted\", blockNumber?, gasUsed? }`.",
   "Use this after the user asks \"did my tx land?\" or to check whether a previously submitted transaction has confirmed, succeeded, or reverted.",
+  "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism. Tx hashes are not chain-portable; you must know which chain the tx was sent on.",
   "Pending detection uses a two-step lookup: `getTransactionReceipt` first, then `getTransaction` if the receipt isn't yet available — this distinguishes a tx still in the mempool (`pending`) from a hash the network has never seen (returns an error).",
   "`blockNumber` and `gasUsed` are only present once the receipt is available (success or reverted). Block number is a decimal string; gasUsed is a decimal string (wei units, not ETH).",
 ].join(" ");
@@ -18,13 +20,19 @@ const DESCRIPTION = [
 const INPUT_SCHEMA = {
   type: "object" as const,
   properties: {
+    chain: {
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+      description:
+        "Chain identifier (required). Supported: ethereum, arbitrum, polygon, base, optimism.",
+    },
     txHash: {
       type: "string",
-      description: "Ethereum transaction hash (0x-prefixed, 64 hex chars).",
+      description: "Ethereum-style transaction hash (0x-prefixed, 64 hex chars).",
       pattern: "^0x[0-9a-fA-F]{64}$",
     },
   },
-  required: ["txHash"],
+  required: ["chain", "txHash"],
   additionalProperties: false,
 };
 
@@ -49,6 +57,10 @@ function isTxNotFound(err: unknown): boolean {
 }
 
 registerTool("get_transaction_status", DESCRIPTION, INPUT_SCHEMA, async (args) => {
+  // Phase 8 — Plan 08-02: chainId from the agent's `chain` enum.
+  const chainName = args.chain as ChainName;
+  const chainId = chainIdFromName(chainName);
+
   const raw = args.txHash;
   if (typeof raw !== "string" || !isHex(raw) || raw.length !== 66) {
     return {
@@ -60,8 +72,8 @@ registerTool("get_transaction_status", DESCRIPTION, INPUT_SCHEMA, async (args) =
   }
   const txHash = raw as Hash;
 
-  const client = getEthereumClient();
-  const degraded = isPublicNodeFallback();
+  const client = getChainClient(chainId);
+  const degraded = isPublicNodeFallback(chainId);
 
   try {
     const receipt = await client.getTransactionReceipt({ hash: txHash });

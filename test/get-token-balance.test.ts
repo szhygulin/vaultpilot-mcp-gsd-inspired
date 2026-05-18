@@ -1,12 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/chains/ethereum.js", () => {
+// Phase 8 — Plan 08-02: tools migrated from src/chains/ethereum.js (compat
+// shim) to src/chains/registry.js (per-chain factory). The mock seam moves
+// to the registry; `getChainClient(chainId)` returns the per-chain client.
+vi.mock("../src/chains/registry.js", () => {
   const client = {
     readContract: vi.fn(),
   };
   return {
-    getEthereumClient: () => client,
+    getChainClient: () => client,
     isPublicNodeFallback: () => true,
+    _resetChainRegistryForTesting: () => {},
+    // The Plan 08-01 compat shim at src/chains/ethereum.js still imports
+    // PUBLICNODE_RPC_URLS — needed for the FROZEN send_transaction.ts +
+    // ens/resolver.ts + get_portfolio_summary.ts callers that survive
+    // Plan 08-02.
+    PUBLICNODE_RPC_URLS: { 1: "https://test.invalid" },
     __client: client,
   };
 });
@@ -18,7 +27,7 @@ import {
 } from "../src/tools/index.js";
 import "../src/tools/register-all.js";
 
-const mod = (await import("../src/chains/ethereum.js")) as unknown as {
+const mod = (await import("../src/chains/registry.js")) as unknown as {
   __client: { readContract: ReturnType<typeof vi.fn> };
 };
 const stubClient = mod.__client;
@@ -38,7 +47,10 @@ afterEach(() => {
 async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("get_token_balance");
   if (!tool) throw new Error("get_token_balance not registered");
-  return tool.handler(args);
+  // Phase 8 — Plan 08-02: chain arg REQUIRED; default to "ethereum" for the
+  // pre-Plan-08-02 Ethereum-only test invariants.
+  const merged = "chain" in args ? args : { chain: "ethereum", ...args };
+  return tool.handler(merged);
 }
 
 describe("get_token_balance tool", () => {

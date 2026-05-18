@@ -156,7 +156,15 @@ const PERSONAS_UNDER_TEST: ReadonlyArray<"whale" | "stable-saver" | "defi-degen"
 async function callTool(name: string, args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool(name);
   if (!tool) throw new Error(`${name} not registered`);
-  return tool.handler(args);
+  // Phase 8 — Plan 08-02: chain arg REQUIRED on every prepare_* + chain-taking
+  // read tool. Inject "ethereum" default for back-compat with the pre-Plan-08-02
+  // single-chain integration anchors. preview_send / send_transaction accept
+  // an OPTIONAL chain arg (Layer 2 defense-in-depth) — omit it here so the
+  // existing pipeline cases continue to exercise the pre-Plan-08-02 path.
+  const needsChain =
+    /^(prepare_|get_|simulate_|check_)/.test(name) && !("chain" in args);
+  const merged = needsChain ? { chain: "ethereum", ...args } : args;
+  return tool.handler(merged);
 }
 
 function personaAddress(slug: "whale" | "stable-saver" | "defi-degen"): string {

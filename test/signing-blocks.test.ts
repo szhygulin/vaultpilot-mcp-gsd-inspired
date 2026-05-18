@@ -2,31 +2,41 @@ import { describe, expect, it } from "vitest";
 import type { Hex } from "viem";
 
 import {
+  AAVE_SUPPLY_PREPARE_RECEIPT_TEMPLATE,
+  AAVE_WITHDRAW_PREPARE_RECEIPT_TEMPLATE,
   AGENT_TASK_TEMPLATE,
+  APPROVE_PREPARE_RECEIPT_TEMPLATE,
+  CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE,
+  ERC20_PREPARE_RECEIPT_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
   PREPARE_RECEIPT_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
+  WETH_UNWRAP_PREPARE_RECEIPT_TEMPLATE,
   build4byteBlock,
   chunkHex,
 } from "../src/signing/blocks.js";
 import type { FourbyteResult } from "../src/clients/fourbyte.js";
 
 describe("PREPARE_RECEIPT_TEMPLATE — verbatim substitution (PREP-02, T-PREP-RCPT-1)", () => {
-  it("substitutes a LOWERCASE address verbatim — no checksum normalization", () => {
+  it("substitutes a LOWERCASE address verbatim — no checksum normalization (Plan 08-02: {CHAIN} slot added)", () => {
     const to = "0xabcdef0123456789abcdef0123456789abcdef01";
     const valueWei = "1000000000000000000";
 
-    const output = PREPARE_RECEIPT_TEMPLATE.replace("{TO}", to).replace("{VALUE_WEI}", valueWei);
+    const output = PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", "ethereum (chainId 1)")
+      .replace("{TO}", to)
+      .replace("{VALUE_WEI}", valueWei);
 
     expect(output).toContain("PREPARE RECEIPT");
     // Lowercase address preserved character-for-character (no normalization).
     expect(output).toContain("0xabcdef0123456789abcdef0123456789abcdef01");
     // Cross-line regex uses \s+ between tokens per the String-Template Test Pitfall rule.
     expect(output).toMatch(
-      /PREPARE RECEIPT\s+to:\s+0xabcdef0123456789abcdef0123456789abcdef01\s+valueWei:\s+1000000000000000000/,
+      /PREPARE RECEIPT\s+chain:\s+ethereum \(chainId 1\)\s+to:\s+0xabcdef0123456789abcdef0123456789abcdef01\s+valueWei:\s+1000000000000000000/,
     );
-    // Regression anchor: a future contributor inflating the block fails this.
-    expect(output.split("\n").length).toBe(3);
+    // Regression anchor: 4 lines post-Plan-08-02 (was 3; Plan 08-02 adds the
+    // `chain:` slot). A future contributor inflating beyond the {CHAIN} slot fails.
+    expect(output.split("\n").length).toBe(4);
   });
 });
 
@@ -160,5 +170,49 @@ describe("build4byteBlock — renders the four FourbyteResult kinds verbatim", (
     const block = build4byteBlock(selector, result);
 
     expect(block).toContain(adversarial);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 8 — Plan 08-02 additions.
+// ---------------------------------------------------------------------------
+
+describe("Plan 08-02 — PREPARE_RECEIPT templates carry {CHAIN} slot (uniform across 6 prepares)", () => {
+  it("all 6 receipt templates contain a {CHAIN} slot", () => {
+    expect(PREPARE_RECEIPT_TEMPLATE).toContain("{CHAIN}");
+    expect(ERC20_PREPARE_RECEIPT_TEMPLATE).toContain("{CHAIN}");
+    expect(APPROVE_PREPARE_RECEIPT_TEMPLATE).toContain("{CHAIN}");
+    expect(WETH_UNWRAP_PREPARE_RECEIPT_TEMPLATE).toContain("{CHAIN}");
+    expect(AAVE_SUPPLY_PREPARE_RECEIPT_TEMPLATE).toContain("{CHAIN}");
+    expect(AAVE_WITHDRAW_PREPARE_RECEIPT_TEMPLATE).toContain("{CHAIN}");
+  });
+
+  it("native PREPARE_RECEIPT_TEMPLATE substitutes {CHAIN} with chain-name verbatim", () => {
+    const out = PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", "polygon (chainId 137)")
+      .replace("{TO}", "0x0000000000000000000000000000000000000000")
+      .replace("{VALUE_WEI}", "0");
+    expect(out).toMatch(/chain:\s+polygon \(chainId 137\)/);
+  });
+});
+
+describe("Plan 08-02 — CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE shape", () => {
+  it("carries CHAIN ID MISMATCH header + 3 substitution slots + refusal prose", () => {
+    expect(CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE).toContain("CHAIN ID MISMATCH");
+    expect(CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE).toContain("{REQUESTED_CHAIN}");
+    expect(CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE).toContain("{STORED_CHAIN}");
+    expect(CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE).toContain("{STORED_CHAIN_ID}");
+    expect(CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE).toContain("refusal:");
+    expect(CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE).toContain("re-call prepare_*");
+  });
+
+  it("substitutes {REQUESTED_CHAIN} + {STORED_CHAIN} + {STORED_CHAIN_ID} verbatim", () => {
+    const out = CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE
+      .replace("{REQUESTED_CHAIN}", "polygon (chainId 137)")
+      .replace("{STORED_CHAIN}", "ethereum")
+      .replace("{STORED_CHAIN_ID}", "1");
+    expect(out).toContain("agent requested:  polygon (chainId 137)");
+    expect(out).toContain("handle prepared:  ethereum (chainId 1)");
+    expect(out.includes("{")).toBe(false);
   });
 });

@@ -29,7 +29,8 @@
 
 import { type Address, type Hex, erc20Abi, getAddress } from "viem";
 
-import { getEthereumClient } from "../chains/ethereum.js";
+import { getChainClient } from "../chains/registry.js";
+import { chainIdFromName, type ChainId, type ChainName } from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
 import { getActivePersona } from "../demo/state.js";
 import { encodeErc20Transfer } from "../protocols/erc20.js";
@@ -42,7 +43,7 @@ import {
 } from "../signing/error-codes.js";
 import { createHandle } from "../signing/handle-store.js";
 import { computePayloadFingerprint } from "../signing/payload-fingerprint.js";
-import { loadEthereumTokenRegistry } from "../tokens/registry.js";
+import { loadTokenRegistry } from "../tokens/registry.js";
 import { getStatus } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
 
@@ -55,22 +56,28 @@ function errEnvelope(
 }
 
 const DESCRIPTION = [
-  "Prepare an unsigned ERC-20 transfer on Ethereum mainnet.",
+  "Prepare an unsigned ERC-20 transfer on the specified EVM chain.",
   "Returns a handle the agent passes to preview_send before send_transaction.",
-  "Use when the user wants to send any ERC-20 token from their paired Ledger on Ethereum mainnet.",
+  "Use when the user wants to send any ERC-20 token from their paired Ledger.",
   "Do NOT use for native ETH — that's prepare_native_send.",
   "Do NOT use for approve / revoke / WETH-unwrap — each has a dedicated prepare_* tool.",
-  "Do NOT use for other chains — v1.0 is Ethereum mainnet only.",
+  "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism. No default-pick; omitting refuses at the dispatch boundary.",
   "`amount` is a DECIMAL STRING in human units (e.g. \"100.5\" for 100.5 USDC, NOT \"100500000\"). The server resolves the token's decimals via the on-chain decimals() call (or the cached registry for top-50 tokens) and parses amount strictly — off-by-decimal errors refuse at prepare time, never silently round.",
   "`to` is the RECIPIENT address (0x-prefixed 20-byte hex). `tokenAddress` is the ERC-20 contract address — NOT a wallet address.",
   "Requires a paired Ledger (call pair_ledger_live first if get_ledger_status shows paired: false). In demo mode, succeeds against the active persona's address as `from`; send_transaction returns a simulation envelope instead of broadcasting.",
-  "Returns `{ handle, chainId: 1, from, to, tokenAddress, amount, amountWei, payloadFingerprint }` plus a PREPARE RECEIPT text block surfacing the verbatim args.",
-  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set, INVALID_INPUT if to/tokenAddress/amount malformed (including fractional-overflow vs token decimals).",
+  "Returns `{ handle, chain, chainId, from, to, tokenAddress, amount, amountWei, payloadFingerprint }` plus a PREPARE RECEIPT text block surfacing the verbatim args.",
+  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set, INVALID_INPUT if chain/to/tokenAddress/amount malformed (including fractional-overflow vs token decimals).",
 ].join(" ");
 
 const INPUT_SCHEMA = {
   type: "object" as const,
   properties: {
+    chain: {
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+      description:
+        "Chain identifier (required). Supported: ethereum, arbitrum, polygon, base, optimism.",
+    },
     to: {
       type: "string",
       pattern: "^0x[0-9a-fA-F]{40}$",
@@ -86,7 +93,7 @@ const INPUT_SCHEMA = {
       description: "Decimal string in human units (e.g. \"100.5\"). The server resolves decimals via the token contract. Do NOT pass wei.",
     },
   },
-  required: ["to", "tokenAddress", "amount"],
+  required: ["chain", "to", "tokenAddress", "amount"],
   additionalProperties: false,
 };
 
@@ -98,14 +105,15 @@ const INPUT_SCHEMA = {
  */
 async function resolveDecimals(
   tokenAddress: Address,
+  chainId: ChainId,
 ): Promise<{ decimals: number; symbol: string }> {
-  const registry = loadEthereumTokenRegistry();
+  const registry = loadTokenRegistry(chainId);
   const cached = registry.find((entry) => entry.address === tokenAddress);
   if (cached) {
     return { decimals: cached.decimals, symbol: cached.symbol };
   }
   // Cache miss — live RPC reads in parallel.
-  const client = getEthereumClient();
+  const client = getChainClient(chainId);
   const [decimals, symbol] = await Promise.all([
     client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: "decimals" }),
     client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: "symbol" }),
@@ -115,6 +123,11 @@ async function resolveDecimals(
 
 registerTool("prepare_token_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
   try {
+    // Phase 8 — Plan 08-02: chainId from the agent's `chain` arg. JSON-schema
+    // enum is the dispatch-boundary gate; per-handler re-validation unreachable.
+    const chainName = args.chain as ChainName;
+    const chainId = chainIdFromName(chainName);
+
     // Validate `to` shape (agent recipient) — defense BEFORE any state read.
     const rawTo = typeof args.to === "string" ? args.to : "";
     if (!/^0x[0-9a-fA-F]{40}$/.test(rawTo)) {
@@ -210,7 +223,7 @@ registerTool("prepare_token_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // Resolve decimals + symbol. Registry-cache-first; live RPC on miss.
     let decimals: number;
     try {
-      const meta = await resolveDecimals(tokenAddress);
+      const meta = await resolveDecimals(tokenAddress, chainId);
       decimals = meta.decimals;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -262,8 +275,9 @@ registerTool("prepare_token_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
 
     // tx.to is the TOKEN CONTRACT, not the recipient (T-TX-TO-CONFUSION-1).
     // tx.valueWei is 0n — ERC-20 transfer never moves native value.
+    // Phase 8 — Plan 08-02: chainId from `args.chain` enum.
     const tx = {
-      chainId: 1,
+      chainId,
       to: tokenAddress,
       valueWei: 0n,
       data,
@@ -288,7 +302,9 @@ registerTool("prepare_token_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       payloadFingerprint,
     });
 
+    // Phase 8 — Plan 08-02: `{CHAIN}` slot widening in PREPARE RECEIPT body.
     const receipt = ERC20_PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", `${chainName} (chainId ${chainId})`)
       .replace("{TOKEN_ADDRESS}", rawTokenAddress)
       .replace("{TO}", rawTo)
       .replace("{AMOUNT}", rawAmount);
@@ -297,7 +313,8 @@ registerTool("prepare_token_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       content: [{ type: "text", text: receipt }],
       structuredContent: {
         handle,
-        chainId: 1,
+        chain: chainName,
+        chainId,
         from: fromAddress,
         to: rawTo,
         tokenAddress: rawTokenAddress,

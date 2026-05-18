@@ -67,7 +67,9 @@ await import("../src/tools/register-all.js");
 async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("prepare_aave_supply");
   if (!tool) throw new Error("prepare_aave_supply not registered");
-  return tool.handler(args);
+  // Phase 8 — Plan 08-02: chain arg REQUIRED; default to "ethereum".
+  const merged = "chain" in args ? args : { chain: "ethereum", ...args };
+  return tool.handler(merged);
 }
 
 const DEMO_KEY = "VAULTPILOT_DEMO";
@@ -235,6 +237,7 @@ describe("prepare_aave_supply — verbatim PREPARE RECEIPT (PREP-02 / T-PREP-RCP
     const text = result.content[0]?.text ?? "";
 
     const expected = AAVE_SUPPLY_PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", "ethereum (chainId 1)")
       .replace("{ASSET}", USDC_CHECKSUMMED)
       .replace("{AMOUNT}", FIXTURE_G_AMOUNT);
     expect(text).toBe(expected);
@@ -283,11 +286,15 @@ describe("prepare_aave_supply — register-all wiring (smoke)", () => {
     expect(names).toContain("prepare_aave_supply");
   });
 
-  it("inputSchema requires asset + amount only (no `to`, no `onBehalfOf`)", () => {
+  it("inputSchema requires chain + asset + amount (no `to`, no `onBehalfOf`) — Plan 08-02 adds chain", () => {
     const tool = getRegisteredTool("prepare_aave_supply");
     expect(tool).toBeDefined();
     if (!tool) return;
-    expect(tool.inputSchema.required).toEqual(["asset", "amount"]);
+    expect(tool.inputSchema.required).toEqual(["chain", "asset", "amount"]);
+    expect(tool.inputSchema.properties?.chain).toMatchObject({
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+    });
   });
 
   it("register-all.ts contains the side-effect import line for ./prepare_aave_supply.js", async () => {

@@ -26,8 +26,11 @@
 import { formatUnits, getAddress, isAddress, type Address } from "viem";
 
 import { _aaveChains } from "../chains/aave-v3.js";
-import { getEthereumClient, isPublicNodeFallback } from "../chains/ethereum.js";
-import type { ChainId } from "../config/contracts.js";
+import { getChainClient, isPublicNodeFallback } from "../chains/registry.js";
+import {
+  chainIdFromName,
+  type ChainName,
+} from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
 import { getActivePersona } from "../demo/state.js";
 import {
@@ -45,11 +48,9 @@ import {
   type StructuredError,
   makeStructuredError,
 } from "../signing/error-codes.js";
-import { loadEthereumTokenRegistry } from "../tokens/registry.js";
+import { loadTokenRegistry } from "../tokens/registry.js";
 import { getStatus } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
-
-const ETHEREUM_CHAIN_ID: ChainId = 1;
 
 function errEnvelope(
   code: ErrorCode,
@@ -61,23 +62,30 @@ function errEnvelope(
 }
 
 const DESCRIPTION = [
-  "Simulate the health-factor impact of a hypothetical Aave V3 position change on Ethereum mainnet. READ-ONLY — never stages a transaction; never modifies on-chain state.",
+  "Simulate the health-factor impact of a hypothetical Aave V3 position change on the specified EVM chain. READ-ONLY — never stages a transaction; never modifies on-chain state.",
   "Returns the user's current health factor and the projected health factor after the hypothetical action, plus a liquidation-risk classification for both.",
   "Use when the user asks 'what if I supply / withdraw / borrow / repay X?' or to surface a risk warning BEFORE the agent prepares the actual transaction.",
   "Do NOT use this as a signing precondition — the trust anchor is the on-device hash match at send_transaction. The simulation is informational only.",
   "Do NOT use to project non-Aave changes (Compound / Morpho are v2.3+ scope).",
+  "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism. No default-pick; omitting the arg refuses at the dispatch boundary.",
   "`action: \"supply\" | \"withdraw\" | \"borrow\" | \"repay\"`. supply / withdraw ship as prepare_aave_supply / prepare_aave_withdraw in Phase 7; borrow / repay are v2.3 — the simulation surface widens early to support 'what if I borrow?' risk previews even before the prepare tools exist.",
   "`amount` is a DECIMAL STRING in human units (e.g. \"100.5\" USDC). The server resolves the asset's decimals via the registry / live RPC.",
-  "Returns `{ chain: \"ethereum\", asset, action, amount, healthFactorBefore, healthFactorAfter, liquidationRiskBefore, liquidationRiskAfter, warning?, rpcDegraded? }`.",
+  "Returns `{ chain, chainId, asset, action, amount, healthFactorBefore, healthFactorAfter, liquidationRiskBefore, liquidationRiskAfter, warning?, rpcDegraded? }`.",
   "`warning` surfaces `\"would-liquidate\"` when the projected state transitions to `danger` from a non-danger state, or `\"near-liquidation\"` when transitioning from `safe` to `warning`.",
   "`healthFactor*` are formatted as decimal strings (1e18 scale; e.g. \"1.50\") or `null` when there is no debt.",
   "Math: pure off-chain bigint projection (Aave V3 indices RAY-scaled; per-asset liquidation thresholds). Accepts sub-bp index-drift error vs an on-chain `getUserAccountData` cross-check.",
-  "Failure modes: INVALID_INPUT (malformed asset / action / amount), WRONG_MODE if demo mode is on but no persona set, WALLET_NOT_PAIRED if no live session in real mode, INTERNAL_ERROR if RPC fails.",
+  "Failure modes: INVALID_INPUT (malformed chain / asset / action / amount), WRONG_MODE if demo mode is on but no persona set, WALLET_NOT_PAIRED if no live session in real mode, INTERNAL_ERROR if RPC fails.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
   type: "object" as const,
   properties: {
+    chain: {
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+      description:
+        "Chain identifier (required). Supported: ethereum, arbitrum, polygon, base, optimism.",
+    },
     asset: {
       type: "string",
       pattern: "^0x[0-9a-fA-F]{40}$",
@@ -96,14 +104,15 @@ const INPUT_SCHEMA = {
         "Decimal string in human units (e.g. \"100.5\"). The server resolves the asset's decimals via the registry / live RPC.",
     },
   },
-  required: ["asset", "action", "amount"],
+  required: ["chain", "asset", "action", "amount"],
   additionalProperties: false,
 };
 
 type Action = "supply" | "withdraw" | "borrow" | "repay";
 
 interface SimulateResult {
-  chain: "ethereum";
+  chain: ChainName;
+  chainId: number;
   asset: string;
   action: Action;
   amount: string;
@@ -117,6 +126,11 @@ interface SimulateResult {
 
 registerTool("simulate_position_change", DESCRIPTION, INPUT_SCHEMA, async (args) => {
   try {
+    // Phase 8 — Plan 08-02: chainId from the agent's `chain` arg. JSON-schema
+    // enum is the dispatch-boundary gate.
+    const chainName = args.chain as ChainName;
+    const chainId = chainIdFromName(chainName);
+
     const rawAsset = typeof args.asset === "string" ? args.asset : "";
     if (!/^0x[0-9a-fA-F]{40}$/.test(rawAsset) || !isAddress(rawAsset, { strict: false })) {
       return {
@@ -195,17 +209,17 @@ registerTool("simulate_position_change", DESCRIPTION, INPUT_SCHEMA, async (args)
     // Resolve decimals (registry-first; live RPC fallback is folded into the
     // get_lending_positions decimals path — we use the protocol's
     // `reserve.decimals` directly below since we already fetch reserves data).
-    const registry = loadEthereumTokenRegistry();
+    const registry = loadTokenRegistry(chainId);
     const registryHit = registry.find((entry) => entry.address === assetAddr);
 
-    const client = getEthereumClient();
+    const client = getChainClient(chainId);
 
     let reservesData: Awaited<ReturnType<typeof _aaveChains.getReservesData>>;
     let userReservesData: Awaited<ReturnType<typeof _aaveChains.getUserReservesData>>;
     try {
       [reservesData, userReservesData] = await Promise.all([
-        _aaveChains.getReservesData(client, ETHEREUM_CHAIN_ID),
-        _aaveChains.getUserReservesData(client, ETHEREUM_CHAIN_ID, userAddress),
+        _aaveChains.getReservesData(client, chainId),
+        _aaveChains.getUserReservesData(client, chainId, userAddress),
       ]);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -236,12 +250,12 @@ registerTool("simulate_position_change", DESCRIPTION, INPUT_SCHEMA, async (args)
         content: [
           {
             type: "text",
-            text: `error: asset ${assetAddr} is not an Aave V3 mainnet reserve; only listed reserves can be simulated`,
+            text: `error: asset ${assetAddr} is not an Aave V3 reserve on ${chainName} (chainId ${chainId}); only listed reserves can be simulated`,
           },
         ],
         structuredContent: errEnvelope(
           "INVALID_INPUT",
-          `asset ${assetAddr} is not an Aave V3 reserve`,
+          `asset ${assetAddr} is not an Aave V3 reserve on ${chainName}`,
         ),
       };
     }
@@ -398,7 +412,8 @@ registerTool("simulate_position_change", DESCRIPTION, INPUT_SCHEMA, async (args)
       after.healthFactorScaled === null ? null : formatUnits(after.healthFactorScaled, 18);
 
     const result: SimulateResult = {
-      chain: "ethereum",
+      chain: chainName,
+      chainId,
       asset: rawAsset,
       action,
       amount: rawAmount,
@@ -408,7 +423,7 @@ registerTool("simulate_position_change", DESCRIPTION, INPUT_SCHEMA, async (args)
       liquidationRiskAfter: riskAfter,
     };
     if (warning !== undefined) result.warning = warning;
-    if (isPublicNodeFallback()) result.rpcDegraded = true;
+    if (isPublicNodeFallback(chainId)) result.rpcDegraded = true;
 
     const beforeHuman =
       healthFactorBefore === null ? "noDebt" : Number(healthFactorBefore).toFixed(4);

@@ -66,7 +66,9 @@ await import("../src/tools/register-all.js");
 async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("prepare_token_approve");
   if (!tool) throw new Error("prepare_token_approve not registered");
-  return tool.handler(args);
+  // Phase 8 — Plan 08-02: chain arg REQUIRED; default to "ethereum".
+  const merged = "chain" in args ? args : { chain: "ethereum", ...args };
+  return tool.handler(merged);
 }
 
 const DEMO_KEY = "VAULTPILOT_DEMO";
@@ -343,6 +345,7 @@ describe("prepare_token_approve — verbatim PREPARE RECEIPT (PREP-02 / T-PREP-R
     const text = result.content[0]?.text ?? "";
 
     const expected = APPROVE_PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", "ethereum (chainId 1)")
       .replace("{TOKEN_ADDRESS}", USDC_LOWERCASE)
       .replace("{SPENDER}", UNI_V3_LOWERCASE)
       .replace("{AMOUNT}", "100");
@@ -404,11 +407,16 @@ describe("prepare_token_approve — register-all wiring (smoke)", () => {
     expect(names).toContain("prepare_token_approve");
   });
 
-  it("inputSchema requires tokenAddress + spender + amount", () => {
+  it("inputSchema requires chain + tokenAddress + spender + amount (Plan 08-02)", () => {
     const tool = getRegisteredTool("prepare_token_approve");
     expect(tool).toBeDefined();
     if (!tool) return;
-    expect(tool.inputSchema.required).toEqual(["tokenAddress", "spender", "amount"]);
+    expect(tool.inputSchema.required).toEqual(["chain", "tokenAddress", "spender", "amount"]);
+    const props = tool.inputSchema.properties ?? {};
+    expect(props.chain).toMatchObject({
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+    });
   });
 
   it("register-all.ts contains the side-effect import line for ./prepare_token_approve.js", async () => {

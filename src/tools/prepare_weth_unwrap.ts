@@ -38,7 +38,7 @@
 import { type Address, type Hex } from "viem";
 
 import { isDemoMode } from "../config/env.js";
-import { getWethAddress } from "../config/contracts.js";
+import { chainIdFromName, getWethAddress, type ChainName } from "../config/contracts.js";
 import { getActivePersona } from "../demo/state.js";
 import { WETH9_DECIMALS, encodeWethWithdraw } from "../protocols/weth9.js";
 import { InvalidAmountError, parseAmountStrict } from "../signing/amount.js";
@@ -63,36 +63,46 @@ function errEnvelope(
 }
 
 const DESCRIPTION = [
-  "Prepare an unsigned WETH9.withdraw(amount) call on Ethereum mainnet — unwraps WETH back to native ETH.",
+  "Prepare an unsigned WETH9.withdraw(amount) call on the specified EVM chain — unwraps WETH back to the chain's native gas token (ETH on ethereum/arbitrum/base/optimism; MATIC on polygon).",
   "Returns a handle the agent passes to preview_send before send_transaction.",
-  "Use when the user wants to convert their WETH balance back to ETH (e.g. for gas, or to receive native ETH after a swap that produced WETH).",
-  "Do NOT use to wrap ETH into WETH — wrap is v2+ scope (no prepare_weth_wrap yet).",
+  "Use when the user wants to convert their WETH balance back to native (e.g. for gas, or to receive native after a swap that produced WETH).",
+  "Do NOT use to wrap native into WETH — wrap is v2+ scope (no prepare_weth_wrap yet).",
   "Do NOT use for arbitrary ERC-20 operations — each has a dedicated prepare_* tool (prepare_token_send / prepare_token_approve / prepare_revoke_approval).",
-  "`amount` is a DECIMAL STRING in WETH units (= ETH units; decimals=18). Example: \"1.0\" unwraps 1 WETH to 1 ETH.",
+  "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism. The server resolves the canonical WETH9 contract for that chain via the per-chain SOT (src/config/contracts.ts).",
+  "`amount` is a DECIMAL STRING in WETH units (= native units; decimals=18). Example: \"1.0\" unwraps 1 WETH to 1 native.",
   "`amount: \"max\"` is NOT accepted — there is no max-balance sentinel here; pass a concrete decimal amount. \"max\" rejects with INVALID_INPUT.",
-  "The server uses the canonical WETH9 contract address from src/config/contracts.ts; the agent does NOT pass a contract address (only one WETH9 per chain on mainnet).",
   "preview_send emits a LEDGER NOTICE block above the LEDGER BLIND-SIGN HASH — WETH unwrap requires 'Blind signing' enabled in the Ledger Ethereum app settings (most devices ship with blind-sign disabled).",
   "preview-time eth_call simulation catches insufficient-WETH-balance reverts BEFORE the user is asked to blind-sign.",
   "Requires a paired Ledger (real mode) or active persona (demo mode).",
-  "Returns `{ handle, chainId: 1, from, tokenAddress, amount, amountWei, payloadFingerprint }` plus a PREPARE RECEIPT text block surfacing the verbatim args.",
-  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set, INVALID_INPUT if amount malformed (including fractional-overflow vs decimals=18 — rare in practice since 18 decimals is generous).",
+  "Returns `{ handle, chain, chainId, from, tokenAddress, amount, amountWei, payloadFingerprint }` plus a PREPARE RECEIPT text block surfacing the verbatim args.",
+  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set, INVALID_INPUT if chain/amount malformed (including fractional-overflow vs decimals=18 — rare in practice since 18 decimals is generous).",
 ].join(" ");
 
 const INPUT_SCHEMA = {
   type: "object" as const,
   properties: {
+    chain: {
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+      description:
+        "Chain identifier (required). Supported: ethereum, arbitrum, polygon, base, optimism.",
+    },
     amount: {
       type: "string",
       description:
         "Decimal string in WETH units (decimals=18; e.g. \"1.0\" = 1 WETH). The literal \"max\" is NOT accepted — pass a concrete decimal.",
     },
   },
-  required: ["amount"],
+  required: ["chain", "amount"],
   additionalProperties: false,
 };
 
 registerTool("prepare_weth_unwrap", DESCRIPTION, INPUT_SCHEMA, async (args) => {
   try {
+    // Phase 8 — Plan 08-02: chainId from the agent's `chain` enum.
+    const chainName = args.chain as ChainName;
+    const chainId = chainIdFromName(chainName);
+
     // Validate `amount` is a string at the schema boundary; parseAmountStrict
     // does the deep validation (format / fractional-overflow).
     const rawAmount = typeof args.amount === "string" ? args.amount : "";
@@ -161,17 +171,18 @@ registerTool("prepare_weth_unwrap", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       };
     }
 
-    // tx.to comes from the SOT — getWethAddress(1) — NEVER inlined.
+    // tx.to comes from the SOT — getWethAddress(chainId) — NEVER inlined.
     // T-WETH-ADDR-INLINE-1 mitigation: agent tampering at the boundary cannot
     // redirect the call to a malicious clone contract because the agent has
     // no `tokenAddress` input slot here.
-    const wethAddress: Address = getWethAddress(1);
+    // Phase 8 — Plan 08-02: per-chain WETH9 via the typed SOT getter.
+    const wethAddress: Address = getWethAddress(chainId);
     const data: Hex = encodeWethWithdraw(amountWei);
 
     // tx.valueWei = 0n. Withdraw burns WETH for ETH at the contract level;
     // no native value is transferred IN the call.
     const tx = {
-      chainId: 1,
+      chainId,
       to: wethAddress,
       valueWei: 0n,
       data,
@@ -196,7 +207,9 @@ registerTool("prepare_weth_unwrap", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       payloadFingerprint,
     });
 
+    // Phase 8 — Plan 08-02: `{CHAIN}` slot widening.
     const receipt = WETH_UNWRAP_PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", `${chainName} (chainId ${chainId})`)
       .replace("{TOKEN_ADDRESS}", wethAddress)
       .replace("{AMOUNT}", rawAmount);
 
@@ -204,7 +217,8 @@ registerTool("prepare_weth_unwrap", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       content: [{ type: "text", text: receipt }],
       structuredContent: {
         handle,
-        chainId: 1,
+        chain: chainName,
+        chainId,
         from: fromAddress,
         tokenAddress: wethAddress,
         amount: rawAmount,

@@ -17,20 +17,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // vi.spyOn the named getEthereumClient export directly.
 let currentMockClient: PublicClient | undefined;
 
-vi.mock("../src/chains/ethereum.js", () => ({
-  getEthereumClient: () => {
+// Phase 8 — Plan 08-02: src/chains/erc20-scanner.ts migrated from the
+// `getEthereumClient()` singleton to `getChainClient(chainId)`. Mock the
+// registry — the scanner accepts an optional `chainId` arg (defaults to 1
+// for back-compat with the existing Phase 2 caller `get_portfolio_summary`).
+vi.mock("../src/chains/registry.js", () => ({
+  getChainClient: () => {
     if (!currentMockClient) {
       throw new Error("test bug: no mock client installed for scanErc20Balances");
     }
     return currentMockClient;
   },
-  // Stubs for the other named exports — never called from the scanner path,
-  // but keep the mocked module's shape consistent with the real one.
   isPublicNodeFallback: () => false,
-  _resetEthereumClientForTesting: () => {
+  _resetChainRegistryForTesting: () => {
     currentMockClient = undefined;
   },
-  PUBLICNODE_ETHEREUM_RPC_URL: "https://test.invalid",
+  PUBLICNODE_RPC_URLS: { 1: "https://test.invalid" },
 }));
 
 import {

@@ -1,5 +1,6 @@
 import { getAddress, type Address } from "viem";
 
+import type { ChainId } from "../config/contracts.js";
 import topFifty from "./ethereum-top-50.json" with { type: "json" };
 
 export interface Token {
@@ -21,11 +22,45 @@ let cached: Token[] | undefined;
  * Result is memoised; the JSON is parsed and re-checksummed once per process.
  * Re-checksumming on load defends against a corrupted snapshot file (an attacker
  * who flips a single hex digit in the file is caught by the checksum re-check).
+ *
+ * Phase 8 — Plan 08-02: still the canonical Ethereum-only loader; existing
+ * Phase 4-7 callers continue to use it byte-frozen. New Phase 8 per-chain
+ * consumers prefer `loadTokenRegistry(chainId)` below.
  */
 export function loadEthereumTokenRegistry(): Token[] {
   if (cached) return cached;
   cached = validateRegistry(topFifty);
   return cached;
+}
+
+/**
+ * Phase 8 — Plan 08-02. Per-chain token registry dispatcher. v1.2-Plan-08-02
+ * ship state: only `chainId=1` returns a populated registry; the 4 L2 chains
+ * return an empty array. Plan 08-03 lands `src/tokens/{arbitrum,polygon,base,
+ * optimism}-top-50.json` and wires them through here; until then, per-chain
+ * consumers fall through to the live-RPC `decimals()`/`symbol()` reads (Phase 6
+ * registry-cache-first then live-RPC fallback pattern). The fall-through is a
+ * small RPC-cost increase but no functional gap.
+ *
+ * Total + chainId-typed: TypeScript narrowing forces the caller to pass a
+ * `ChainId`-typed value; the switch is exhaustive against the 5-chain union.
+ */
+export function loadTokenRegistry(chainId: ChainId): Token[] {
+  switch (chainId) {
+    case 1:
+      return loadEthereumTokenRegistry();
+    case 42161:
+    case 137:
+    case 8453:
+    case 10:
+      // v1.2-Plan-08-02 ship state: empty per-chain registries; Plan 08-03
+      // lands the JSON. Per-chain consumers fall through to live-RPC reads.
+      return [];
+    default: {
+      const _exhaustive: never = chainId;
+      throw new Error(`loadTokenRegistry: unsupported chainId ${String(_exhaustive)}`);
+    }
+  }
 }
 
 /** Validates the parsed JSON shape; throws with a descriptive message on the first malformed entry. */

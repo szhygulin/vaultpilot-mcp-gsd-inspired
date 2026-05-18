@@ -53,13 +53,17 @@ await import("../src/tools/register-all.js");
 async function callRevoke(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("prepare_revoke_approval");
   if (!tool) throw new Error("prepare_revoke_approval not registered");
-  return tool.handler(args);
+  // Phase 8 — Plan 08-02: chain arg REQUIRED; default to "ethereum" for
+  // back-compat with the existing byte-identity invariants.
+  const merged = "chain" in args ? args : { chain: "ethereum", ...args };
+  return tool.handler(merged);
 }
 
 async function callApprove(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("prepare_token_approve");
   if (!tool) throw new Error("prepare_token_approve not registered");
-  return tool.handler(args);
+  const merged = "chain" in args ? args : { chain: "ethereum", ...args };
+  return tool.handler(merged);
 }
 
 const DEMO_KEY = "VAULTPILOT_DEMO";
@@ -240,13 +244,17 @@ describe("prepare_revoke_approval — register-all wiring (smoke)", () => {
     expect(names).toContain("prepare_revoke_approval");
   });
 
-  it("inputSchema requires tokenAddress + spender (NO amount)", () => {
+  it("inputSchema requires chain + tokenAddress + spender (NO amount) — Plan 08-02 adds chain", () => {
     const tool = getRegisteredTool("prepare_revoke_approval");
     expect(tool).toBeDefined();
     if (!tool) return;
-    expect(tool.inputSchema.required).toEqual(["tokenAddress", "spender"]);
+    expect(tool.inputSchema.required).toEqual(["chain", "tokenAddress", "spender"]);
     // Schema MUST NOT accept `amount` — revoke is approve(spender, 0) only.
     expect(tool.inputSchema.properties?.amount).toBeUndefined();
+    expect(tool.inputSchema.properties?.chain).toMatchObject({
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+    });
   });
 
   it("register-all.ts contains the side-effect import line for ./prepare_revoke_approval.js", async () => {

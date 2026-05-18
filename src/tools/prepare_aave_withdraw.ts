@@ -21,8 +21,13 @@
 
 import { type Address, type Hex, erc20Abi, getAddress } from "viem";
 
-import { getEthereumClient } from "../chains/ethereum.js";
-import { getAaveV3PoolAddress } from "../config/contracts.js";
+import { getChainClient } from "../chains/registry.js";
+import {
+  chainIdFromName,
+  getAaveV3PoolAddress,
+  type ChainId,
+  type ChainName,
+} from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
 import { getActivePersona } from "../demo/state.js";
 import { encodeAaveWithdraw } from "../protocols/aave-v3.js";
@@ -35,7 +40,7 @@ import {
 } from "../signing/error-codes.js";
 import { createHandle } from "../signing/handle-store.js";
 import { computePayloadFingerprint } from "../signing/payload-fingerprint.js";
-import { loadEthereumTokenRegistry } from "../tokens/registry.js";
+import { loadTokenRegistry } from "../tokens/registry.js";
 import { getStatus } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
 
@@ -49,25 +54,32 @@ function errEnvelope(
 }
 
 const DESCRIPTION = [
-  "Prepare an unsigned Aave V3 withdraw(asset, amount) call on Ethereum mainnet — withdraws the user's supplied ERC-20 back to their wallet.",
+  "Prepare an unsigned Aave V3 withdraw(asset, amount) call on the specified EVM chain — withdraws the user's supplied ERC-20 back to their wallet.",
   "Returns a handle the agent passes to preview_send before send_transaction.",
-  "Use when the user wants to withdraw an ERC-20 they previously supplied to Aave V3 on Ethereum mainnet (e.g. withdraw USDC / DAI / WETH from yield-earning position).",
+  "Use when the user wants to withdraw an ERC-20 they previously supplied to Aave V3 on a supported chain (e.g. withdraw USDC / DAI / WETH from yield-earning position).",
   "Do NOT use to withdraw to a DIFFERENT recipient — the recipient is hardcoded to the sender in v1.1 (explicit-self-recipient lock; a future dedicated tool can widen this).",
   "Do NOT use for borrow / repay — those are v2.3+ scope.",
-  "Do NOT use for non-Aave lending or other chains — v1.x is Ethereum mainnet only.",
+  "Do NOT use for non-Aave lending — Compound / Morpho / etc. are v2.3+ scope.",
+  "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism. The server resolves the per-chain Aave V3 Pool address via the typed SOT.",
   "`asset` is the underlying ERC-20 contract address (e.g. USDC `0xA0b8…`). `amount` is a DECIMAL STRING in human units (e.g. \"100.5\" for 100.5 USDC).",
   "`amount: \"max\"` is NOT accepted — pass a concrete decimal. Aave V3 supports MAX_UINT256 as a protocol-level \"withdraw entire balance\" sentinel, but v1.1's prepare surface requires an explicit amount. Call `get_lending_positions` first to read the supplied balance, then pass it as the amount.",
   "The recipient (`to`) is hardcoded to the sender (explicit-self-recipient). Withdrawals always go to the calling wallet in v1.1.",
   "If preview-time simulation reveals an insufficient-supplied-balance revert, surface the balance from `get_lending_positions` to the user before retrying.",
-  "Aave V3 withdraw is clear-signed on Ledger devices (covered by Ledger's ERC-7730 calldata registry); the device displays the asset symbol + amount, no blind-sign required.",
+  "Aave V3 withdraw is clear-signed on Ledger devices (covered by Ledger's ERC-7730 calldata registry on chainId=1); the device displays the asset symbol + amount, no blind-sign required.",
   "Requires a paired Ledger (real mode) or active persona (demo mode).",
-  "Returns `{ handle, chainId: 1, from, asset, amount, amountWei, payloadFingerprint }` plus a PREPARE RECEIPT text block surfacing the verbatim args.",
-  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set, INVALID_INPUT if asset/amount malformed (including \"max\" and fractional-overflow vs token decimals), INTERNAL_ERROR if RPC fails resolving an off-list asset's decimals.",
+  "Returns `{ handle, chain, chainId, from, asset, amount, amountWei, payloadFingerprint }` plus a PREPARE RECEIPT text block surfacing the verbatim args.",
+  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set, INVALID_INPUT if chain/asset/amount malformed (including \"max\" and fractional-overflow vs token decimals), INTERNAL_ERROR if RPC fails resolving an off-list asset's decimals.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
   type: "object" as const,
   properties: {
+    chain: {
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+      description:
+        "Chain identifier (required). Supported: ethereum, arbitrum, polygon, base, optimism.",
+    },
     asset: {
       type: "string",
       pattern: "^0x[0-9a-fA-F]{40}$",
@@ -80,19 +92,20 @@ const INPUT_SCHEMA = {
         "Decimal string in human units (e.g. \"100.5\"). The literal \"max\" is NOT accepted; pass a concrete decimal. Call `get_lending_positions` to read the supplied balance first.",
     },
   },
-  required: ["asset", "amount"],
+  required: ["chain", "asset", "amount"],
   additionalProperties: false,
 };
 
 async function resolveDecimals(
   assetAddress: Address,
+  chainId: ChainId,
 ): Promise<{ decimals: number; symbol: string }> {
-  const registry = loadEthereumTokenRegistry();
+  const registry = loadTokenRegistry(chainId);
   const cached = registry.find((entry) => entry.address === assetAddress);
   if (cached) {
     return { decimals: cached.decimals, symbol: cached.symbol };
   }
-  const client = getEthereumClient();
+  const client = getChainClient(chainId);
   const [decimals, symbol] = await Promise.all([
     client.readContract({ address: assetAddress, abi: erc20Abi, functionName: "decimals" }),
     client.readContract({ address: assetAddress, abi: erc20Abi, functionName: "symbol" }),
@@ -102,6 +115,10 @@ async function resolveDecimals(
 
 registerTool("prepare_aave_withdraw", DESCRIPTION, INPUT_SCHEMA, async (args) => {
   try {
+    // Phase 8 — Plan 08-02: chainId from the agent's `chain` enum.
+    const chainName = args.chain as ChainName;
+    const chainId = chainIdFromName(chainName);
+
     const rawAsset = typeof args.asset === "string" ? args.asset : "";
     if (!/^0x[0-9a-fA-F]{40}$/.test(rawAsset)) {
       return {
@@ -160,7 +177,7 @@ registerTool("prepare_aave_withdraw", DESCRIPTION, INPUT_SCHEMA, async (args) =>
 
     let decimals: number;
     try {
-      const meta = await resolveDecimals(assetAddr);
+      const meta = await resolveDecimals(assetAddr, chainId);
       decimals = meta.decimals;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -201,13 +218,14 @@ registerTool("prepare_aave_withdraw", DESCRIPTION, INPUT_SCHEMA, async (args) =>
       };
     }
 
-    const aavePool: Address = getAaveV3PoolAddress(1);
+    // Phase 8 — Plan 08-02: per-chain Pool address via the typed SOT.
+    const aavePool: Address = getAaveV3PoolAddress(chainId);
     // `to` hardcoded to fromAddress — explicit-self-recipient lock (research
     // § Topic 5). Agent CANNOT redirect the withdraw to a different recipient.
     const data: Hex = encodeAaveWithdraw(assetAddr, amountWei, fromAddress);
 
     const tx = {
-      chainId: 1,
+      chainId,
       to: aavePool,
       valueWei: 0n,
       data,
@@ -226,7 +244,9 @@ registerTool("prepare_aave_withdraw", DESCRIPTION, INPUT_SCHEMA, async (args) =>
       payloadFingerprint,
     });
 
+    // Phase 8 — Plan 08-02: `{CHAIN}` slot widening.
     const receipt = AAVE_WITHDRAW_PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", `${chainName} (chainId ${chainId})`)
       .replace("{ASSET}", rawAsset)
       .replace("{AMOUNT}", rawAmount);
 
@@ -234,7 +254,8 @@ registerTool("prepare_aave_withdraw", DESCRIPTION, INPUT_SCHEMA, async (args) =>
       content: [{ type: "text", text: receipt }],
       structuredContent: {
         handle,
-        chainId: 1,
+        chain: chainName,
+        chainId,
         from: fromAddress,
         asset: rawAsset,
         amount: rawAmount,

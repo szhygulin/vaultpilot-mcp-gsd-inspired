@@ -153,7 +153,11 @@ const PAIRED_STATUS = {
 async function callTool(name: string, args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool(name);
   if (!tool) throw new Error(`${name} not registered`);
-  return tool.handler(args);
+  // Phase 8 — Plan 08-02: auto-inject chain="ethereum" on prepare_* + read tools.
+  const needsChain =
+    /^(prepare_|get_|simulate_|check_)/.test(name) && !("chain" in args);
+  const merged = needsChain ? { chain: "ethereum", ...args } : args;
+  return tool.handler(merged);
 }
 
 beforeEach(() => {

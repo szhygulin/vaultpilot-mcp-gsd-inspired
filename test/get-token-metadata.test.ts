@@ -1,16 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock the ethereum chain module BEFORE importing register-all so the
-// get_token_metadata tool picks up the stubbed client. `isPublicNodeFallback`
-// is overridable per-test via the exposed __setFallback handle.
-vi.mock("../src/chains/ethereum.js", () => {
+// Phase 8 — Plan 08-02: tools migrated to src/chains/registry.js per-chain
+// factory. Mock seam moves to the registry; `isPublicNodeFallback(chainId)`
+// now takes a chainId arg (the per-test override doesn't differentiate by
+// chain — every chain returns the same fallback flag in this test suite).
+vi.mock("../src/chains/registry.js", () => {
   const client = {
     readContract: vi.fn(),
   };
   let fallback = false;
   return {
-    getEthereumClient: () => client,
+    getChainClient: () => client,
     isPublicNodeFallback: () => fallback,
+    _resetChainRegistryForTesting: () => {},
+    PUBLICNODE_RPC_URLS: { 1: "https://test.invalid" },
     __client: client,
     __setFallback: (v: boolean) => {
       fallback = v;
@@ -21,7 +24,7 @@ vi.mock("../src/chains/ethereum.js", () => {
 import { getRegisteredTool, type ToolHandlerResult } from "../src/tools/index.js";
 import "../src/tools/register-all.js";
 
-const mod = (await import("../src/chains/ethereum.js")) as unknown as {
+const mod = (await import("../src/chains/registry.js")) as unknown as {
   __client: { readContract: ReturnType<typeof vi.fn> };
   __setFallback: (v: boolean) => void;
 };
@@ -47,7 +50,8 @@ afterEach(() => {
 async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("get_token_metadata");
   if (!tool) throw new Error("get_token_metadata not registered");
-  return tool.handler(args);
+  const merged = "chain" in args ? args : { chain: "ethereum", ...args };
+  return tool.handler(merged);
 }
 
 describe("get_token_metadata tool — PREP-22 (decimals lookup + registry cache + RPC fallback)", () => {
@@ -140,12 +144,23 @@ describe("get_token_metadata tool — PREP-22 (decimals lookup + registry cache 
     expect(stubClient.readContract).toHaveBeenCalledTimes(0);
   });
 
-  it("rejects an invalid `chain` value with INVALID_INPUT (Phase 6 single-chain enum)", async () => {
+  it("Phase 8 — Plan 08-02: accepts `polygon` (5-chain enum widening); registry cache miss falls through to live RPC", async () => {
+    // v1.2-Plan-08-02 ship state: loadTokenRegistry(137) returns []; the
+    // tool falls through to live RPC (registry-cache-first + RPC fallback).
+    // Mock RPC reads to anchor the new accepted chain.
+    stubClient.readContract.mockImplementation(async ({ functionName }: { functionName: string }) => {
+      if (functionName === "decimals") return 6;
+      if (functionName === "symbol") return "USDC.e";
+      if (functionName === "name") return "USD Coin (PoS)";
+      throw new Error(`unexpected ${functionName}`);
+    });
     const result = await callTool({ chain: "polygon", address: USDC });
 
-    expect(result.isError).toBe(true);
-    expect((result.structuredContent as { errorCode: string }).errorCode).toBe("INVALID_INPUT");
-    expect(stubClient.readContract).not.toHaveBeenCalled();
+    // No longer an error post-Plan-08-02 — chain is in the widened enum.
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { symbol: string; decimals: number };
+    expect(sc.symbol).toBe("USDC.e");
+    expect(sc.decimals).toBe(6);
   });
 });
 

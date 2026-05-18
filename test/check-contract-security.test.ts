@@ -114,7 +114,8 @@ function creationPayloadVerified(overrides: Record<string, string> = {}) {
 async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("check_contract_security");
   if (!tool) throw new Error("check_contract_security not registered");
-  return tool.handler(args);
+  const merged = "chain" in args ? args : { chain: "ethereum", ...args };
+  return tool.handler(merged);
 }
 
 beforeEach(() => {

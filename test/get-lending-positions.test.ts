@@ -9,12 +9,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // of test/get-portfolio-summary.test.ts setup).
 let publicNodeFallback = false;
 
-vi.mock("../src/chains/ethereum.js", () => {
+// Phase 8 — Plan 08-02: tool migrated to src/chains/registry.js per-chain
+// factory. `getChainClient(chainId)` + `isPublicNodeFallback(chainId)` are
+// the new shapes — the test mock collapses the per-chain dispatch back to
+// a single stub since these tests only exercise chainId=1.
+vi.mock("../src/chains/registry.js", () => {
   return {
-    getEthereumClient: () => ({ readContract: vi.fn() }) as unknown as PublicClient,
+    getChainClient: () => ({ readContract: vi.fn() }) as unknown as PublicClient,
     isPublicNodeFallback: () => publicNodeFallback,
-    _resetEthereumClientForTesting: () => {},
-    PUBLICNODE_ETHEREUM_RPC_URL: "https://test.invalid",
+    _resetChainRegistryForTesting: () => {},
+    PUBLICNODE_RPC_URLS: { 1: "https://test.invalid" },
   };
 });
 
@@ -126,7 +130,8 @@ afterEach(() => {
 async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("get_lending_positions");
   if (!tool) throw new Error("get_lending_positions not registered");
-  return tool.handler(args);
+  const merged = "chain" in args ? args : { chain: "ethereum", ...args };
+  return tool.handler(merged);
 }
 
 describe("get_lending_positions tool (READ-20)", () => {
