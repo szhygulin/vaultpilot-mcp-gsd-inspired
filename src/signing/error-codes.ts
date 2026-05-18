@@ -49,6 +49,16 @@
 //                              code exists for the diagnostics surface
 //                              (`get_vaultpilot_config_status.skillIntegrity`)
 //                              and for skill-side test scaffolding.
+//   DISPATCH_TARGET_REFUSED  — Phase 9 Plan 09-04 — Layer 0.5 preview_send
+//                              refusal when `record.tx.to` is not in
+//                              `CANONICAL_DISPATCH_TARGETS` for the bound
+//                              chain. Fires for contract calls only —
+//                              native sends (`record.tx.data === "0x"`)
+//                              bypass per RESEARCH § Topic 6 lock. Layer 0.5
+//                              fires BEFORE Phase 8 Layer 2 chain-name
+//                              mismatch (a refusal that triggers BOTH
+//                              surfaces DISPATCH_TARGET_REFUSED first — the
+//                              more fundamental issue).
 
 export type ErrorCode =
   | "WALLET_NOT_PAIRED"
@@ -67,7 +77,8 @@ export type ErrorCode =
   | "WRONG_MODE"
   | "INVALID_ACCOUNT"
   | "CHAIN_ID_MISMATCH"
-  | "SKILL_INTEGRITY_FAILURE";
+  | "SKILL_INTEGRITY_FAILURE"
+  | "DISPATCH_TARGET_REFUSED";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

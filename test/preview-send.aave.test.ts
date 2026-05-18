@@ -75,6 +75,7 @@ import {
   _resetHandleStoreForTesting,
   createHandle,
 } from "../src/signing/handle-store.js";
+import { _canonicalDispatch } from "../src/security/canonical-dispatch.js";
 import {
   getRegisteredTool,
   type ToolHandlerResult,
@@ -234,6 +235,15 @@ beforeEach(() => {
   process.env[DEMO_KEY] = "false";
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
+  // Phase 9 — Plan 09-04: stub Layer 0.5 dispatch-target allowlist to OK so
+  // the Plan 07-03 unknown-selector test (`seedUnknownSelectorHandle` uses
+  // `0x1111…1111` as tx.to to exercise the decoder fall-through path) isn't
+  // contaminated by the new allowlist gate. Dedicated coverage for Layer
+  // 0.5 behavior lives in `test/preview-send.dispatch-allowlist.test.ts`.
+  // Mirror of the `_skillIntegrity` stub pattern from Plan 09-02.
+  vi.spyOn(_canonicalDispatch, "checkDispatchTarget").mockReturnValue({
+    kind: "ok",
+  });
 });
 
 afterEach(() => {
@@ -241,6 +251,7 @@ afterEach(() => {
   else process.env[DEMO_KEY] = savedDemo;
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
+  vi.restoreAllMocks();
 });
 
 describe("preview_send — Aave supply DECODED ARGS surfacing (Plan 07-03)", () => {

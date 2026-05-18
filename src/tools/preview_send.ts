@@ -66,9 +66,11 @@ import { getActivePersona } from "../demo/state.js";
 import { _aaveProtocols, type AaveV3Decoded } from "../protocols/aave-v3.js";
 import { _protocols, type Erc20Decoded } from "../protocols/erc20.js";
 import { WETH9_SELECTORS } from "../protocols/weth9.js";
+import { _canonicalDispatch } from "../security/canonical-dispatch.js";
 import {
   AGENT_TASK_TEMPLATE,
   CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE,
+  DISPATCH_TARGET_REFUSAL_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
   LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
@@ -154,6 +156,48 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       };
     }
     const record = lookupResult.record;
+
+    // Phase 9 — Plan 09-04. Layer 0.5 outer dispatch-target allowlist
+    // refusal (SEC-35). Fires AFTER handle lookup (needs record.tx.chainId
+    // + record.tx.to) and BEFORE the Phase 8 Layer 2 chain-name MISMATCH
+    // check below. Only applies to contract calls (data !== "0x"); native
+    // sends bypass — any `to` is valid for a value transfer per RESEARCH
+    // § Topic 6 lines 539-541 lock.
+    //
+    // The escape hatch (v2.4 prepare_custom_call with
+    // acknowledgeNonProtocolTarget: true) is OUT OF SCOPE for v1.3 —
+    // protocol-routed prepare_* tools only. Long-tail tokens NOT in
+    // BRIDGED_VARIANTS hit the refusal; user routes via resolve_token /
+    // get_token_metadata to find the canonical address (which lives in
+    // BRIDGED_VARIANTS by design).
+    //
+    // Layer order rationale: dispatch-target is a SECURITY GATE — must
+    // fire first. Chain-mismatch (Layer 2 below) is a STATE CONSISTENCY
+    // check. A refusal that triggers BOTH surfaces DISPATCH_TARGET_REFUSED
+    // (the more fundamental issue) — per RESEARCH § Topic 10 layer table.
+    if (record.tx.data !== "0x") {
+      const dispatchCheck = _canonicalDispatch.checkDispatchTarget(
+        record.tx.chainId as ChainId,
+        record.tx.to,
+      );
+      if (dispatchCheck.kind === "refused") {
+        const chainLabel = `${chainNameFromId(
+          record.tx.chainId as ChainId,
+        )} (chainId ${record.tx.chainId})`;
+        const refusalText = DISPATCH_TARGET_REFUSAL_TEMPLATE
+          .replace("{CHAIN}", chainLabel)
+          .replace("{TO}", dispatchCheck.to)
+          .replace("{ALLOWLIST}", dispatchCheck.allowlist.join("\n    "));
+        return {
+          isError: true,
+          content: [{ type: "text", text: refusalText }],
+          structuredContent: errEnvelope(
+            "DISPATCH_TARGET_REFUSED",
+            `tx.to ${dispatchCheck.to} is not in the v1.3 canonical dispatch allowlist for chain ${record.tx.chainId}`,
+          ),
+        };
+      }
+    }
 
     // Phase 8 — Plan 08-02. Layer 2 defense-in-depth chain-name MISMATCH
     // refusal. Fires AFTER handle lookup (needs record.tx.chainId) but
