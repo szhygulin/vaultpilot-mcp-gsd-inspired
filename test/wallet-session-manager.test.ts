@@ -108,6 +108,12 @@ describe("session-manager.pair() — happy path + status (PAIR-01, PAIR-02)", ()
       address: ADDRESS,
       chainId: 1,
       sessionTopicLast8: "00c0ffee",
+      // Plan 08-05 — multi-chain widening.
+      accountsByChain: { 1: [ADDRESS] },
+      activeChainId: 1,
+      // Pair returned a session covering Ethereum only; the configured
+      // set spans 5 chains in v1.2 → partiallyPaired is true.
+      partiallyPaired: true,
     });
   });
 
@@ -160,6 +166,10 @@ describe("session-manager.pair() — happy path + status (PAIR-01, PAIR-02)", ()
       address: ADDRESS,
       chainId: 1,
       sessionTopicLast8: "00c0ffee",
+      // Plan 08-05 — multi-chain widening.
+      accountsByChain: { 1: [ADDRESS] },
+      activeChainId: 1,
+      partiallyPaired: true,
     });
 
     // Asserts parseEvmAccountId is the parse path — caip.ts wraps
@@ -398,6 +408,10 @@ describe("session-manager.pairStart() — URI returned immediately, handle parke
       address: ADDRESS,
       chainId: 1,
       sessionTopicLast8: "00c0ffee",
+      // Plan 08-05 — multi-chain widening.
+      accountsByChain: { 1: [ADDRESS] },
+      activeChainId: 1,
+      partiallyPaired: true,
     });
   });
 

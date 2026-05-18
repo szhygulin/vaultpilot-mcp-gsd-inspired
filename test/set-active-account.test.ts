@@ -11,6 +11,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const setActiveAccountSpy = vi.fn();
+// Plan 08-05 — per-chain scope reads `getStatus()` to consult
+// `accountsByChain`. Existing tests don't drive this branch (they omit
+// `chain`); the new Tests 5-7 below script the spy per scenario.
+const getStatusSpy = vi.fn(async () => null);
 
 vi.mock("../src/wallet/session-manager.js", async () => {
   const actual = await vi.importActual<typeof import("../src/wallet/session-manager.js")>(
@@ -20,11 +24,13 @@ vi.mock("../src/wallet/session-manager.js", async () => {
     ...actual,
     setActiveAccount: (...args: Parameters<typeof actual.setActiveAccount>) =>
       setActiveAccountSpy(...args),
+    // Plan 08-05 — getStatus is consulted by the per-chain scope branch.
+    getStatus: (...args: Parameters<typeof actual.getStatus>) =>
+      getStatusSpy(...args),
     // Defensive stubs — these MUST NOT be called from set_active_account tests.
     pair: vi.fn(async () => {
       throw new Error("pair not expected from set_active_account tests");
     }),
-    getStatus: vi.fn(async () => null),
     disconnect: vi.fn(async () => undefined),
   };
 });
@@ -59,6 +65,8 @@ async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResul
 
 beforeEach(() => {
   setActiveAccountSpy.mockReset();
+  getStatusSpy.mockReset();
+  getStatusSpy.mockResolvedValue(null);
   savedDemo = process.env[DEMO_KEY];
   process.env[DEMO_KEY] = "false";
   _resetDemoModeForTesting();
@@ -180,5 +188,155 @@ describe("set_active_account — INVALID_INPUT for malformed address (defense-in
 describe("set_active_account — register-all wiring (smoke)", () => {
   it("set_active_account is registered after register-all import", () => {
     expect(getRegisteredTool("set_active_account")).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 08-05 — per-chain scope (Tests 5-7).
+//
+// When `args.chain` is provided, the address must appear in
+// `status.accountsByChain[chainIdFromName(args.chain)]`. When omitted, the
+// lookup falls through to the existing cross-chain `setActiveAccount` path
+// (back-compat with Phase 5 quick-task `wc-multi-account-session`).
+//
+// Threat anchor: T-SET-ACTIVE-ACCOUNT-CHAIN-SCOPE-BYPASS-1 (Test 5 — chain
+// scope MUST refuse an Ethereum-only address when `chain: "polygon"`).
+// ---------------------------------------------------------------------------
+
+const ETH_ONLY = "0x742d35Cc6634C0532925a3b844Bc9e7595f06b9D" as const;
+const POL_ONLY = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as const;
+
+function multiChainStatusFixture() {
+  return {
+    paired: true as const,
+    accounts: [ETH_ONLY, POL_ONLY],
+    activeAccount: ETH_ONLY,
+    address: ETH_ONLY,
+    chainId: 1,
+    sessionTopicLast8: "deadbeef",
+    accountsByChain: {
+      1: [ETH_ONLY],
+      137: [POL_ONLY],
+    },
+    activeChainId: 1,
+    partiallyPaired: true,
+  };
+}
+
+describe("set_active_account — per-chain scope (Plan 08-05, T-SET-ACTIVE-ACCOUNT-CHAIN-SCOPE-BYPASS-1)", () => {
+  it("Test 5: { address: <Eth-only>, chain: 'polygon' } → INVALID_ACCOUNT; setActiveAccount NEVER called (cross-scope bypass blocked)", async () => {
+    getStatusSpy.mockResolvedValue(multiChainStatusFixture());
+
+    const result = await callTool({ address: ETH_ONLY, chain: "polygon" });
+
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as {
+      errorCode: string;
+      message: string;
+    };
+    expect(sc.errorCode).toBe("INVALID_ACCOUNT");
+
+    // The refusal text MUST name (a) the address, (b) the chain string,
+    // (c) the chainId, (d) the per-chain account set — so the agent can
+    // self-correct without a second tool round-trip.
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain(ETH_ONLY);
+    expect(text).toContain("polygon");
+    expect(text).toContain("137");
+    expect(text).toContain(POL_ONLY);
+
+    // T-SET-ACTIVE-ACCOUNT-CHAIN-SCOPE-BYPASS-1 anchor — the cross-scope
+    // bypass MUST NOT call setActiveAccount with the wrong-chain address.
+    expect(setActiveAccountSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("Test 6: { address: <Eth-only>, chain: 'ethereum' } → success; setActiveAccount called", async () => {
+    getStatusSpy.mockResolvedValue(multiChainStatusFixture());
+    setActiveAccountSpy.mockResolvedValueOnce({
+      paired: true,
+      accounts: [ETH_ONLY, POL_ONLY],
+      activeAccount: ETH_ONLY,
+      address: ETH_ONLY,
+      chainId: 1,
+      sessionTopicLast8: "deadbeef",
+      accountsByChain: {
+        1: [ETH_ONLY],
+        137: [POL_ONLY],
+      },
+      activeChainId: 1,
+      partiallyPaired: true,
+    });
+
+    const result = await callTool({ address: ETH_ONLY, chain: "ethereum" });
+
+    expect(result.isError).toBeFalsy();
+    expect(setActiveAccountSpy).toHaveBeenCalledTimes(1);
+    expect(setActiveAccountSpy).toHaveBeenCalledWith(ETH_ONLY);
+    const sc = result.structuredContent as { address: string; accounts: string[] };
+    expect(sc.address).toBe(ETH_ONLY);
+  });
+
+  it("Test 7: { address: <Pol-only> } NO chain → back-compat cross-chain search succeeds", async () => {
+    // Phase 5 quick-task `wc-multi-account-session` behavior preserved:
+    // when `chain` is OMITTED, the lookup goes straight to
+    // setActiveAccount which searches across `status.accounts` (the
+    // cross-chain union). getStatus is NOT consulted by the
+    // chain-undefined branch — we don't even script it here.
+    setActiveAccountSpy.mockResolvedValueOnce({
+      paired: true,
+      accounts: [ETH_ONLY, POL_ONLY],
+      activeAccount: POL_ONLY,
+      address: POL_ONLY,
+      chainId: 137,
+      sessionTopicLast8: "deadbeef",
+      accountsByChain: {
+        1: [ETH_ONLY],
+        137: [POL_ONLY],
+      },
+      activeChainId: 137,
+      partiallyPaired: true,
+    });
+
+    const result = await callTool({ address: POL_ONLY });
+
+    expect(result.isError).toBeFalsy();
+    expect(setActiveAccountSpy).toHaveBeenCalledTimes(1);
+    expect(setActiveAccountSpy).toHaveBeenCalledWith(POL_ONLY);
+    // The chain-undefined branch should NOT have invoked getStatus.
+    expect(getStatusSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("Test 7b: { address, chain: 'arbitrum' } with WALLET_NOT_PAIRED → returns WALLET_NOT_PAIRED, no setActiveAccount", async () => {
+    // The per-chain scope branch calls getStatus first; null surfaces as
+    // WALLET_NOT_PAIRED. setActiveAccount is never invoked because the
+    // chain branch short-circuits on the null status.
+    getStatusSpy.mockResolvedValue(null);
+
+    const result = await callTool({ address: ETH_ONLY, chain: "arbitrum" });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "WALLET_NOT_PAIRED",
+    );
+    expect(setActiveAccountSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("Test 7c: { address, chain: 'optimism' } where chain not covered by session → INVALID_ACCOUNT names empty-set state", async () => {
+    // The user has a session covering Ethereum + Polygon only; calling
+    // with `chain: "optimism"` triggers a per-chain lookup against an
+    // empty array. The refusal text MUST explicitly name the empty-set
+    // state so the agent can route to `pair_ledger_live({ force: true })`
+    // or surface the LL Manage Accounts hint.
+    getStatusSpy.mockResolvedValue(multiChainStatusFixture());
+
+    const result = await callTool({ address: ETH_ONLY, chain: "optimism" });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "INVALID_ACCOUNT",
+    );
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/chain not covered by current session/);
+    expect(setActiveAccountSpy).toHaveBeenCalledTimes(0);
   });
 });

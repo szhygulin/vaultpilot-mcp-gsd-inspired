@@ -23,6 +23,7 @@
 //   took the trouble to write a config; we respect their implicit opt-out
 //   of auto-demo.
 
+import type { ChainId } from "./contracts.js";
 import { log } from "../diagnostics/logger.js";
 import { getActivePersona, setActivePersona } from "../demo/state.js";
 import { _paths, readConfigFile } from "./config-file.js";
@@ -59,6 +60,43 @@ export function getBaseRpcUrl(): string | undefined {
 
 export function getOptimismRpcUrl(): string | undefined {
   return read("OPTIMISM_RPC_URL");
+}
+
+// Plan 08-05 — multi-chain WalletConnect pairing.
+//
+// Returns the list of EVM chains this v1.2 build supports. Drives
+// `REQUIRED_NAMESPACES.eip155.chains` in `src/wallet/session-manager.ts`
+// so the WC pairing proposal asks Ledger Live for accounts on every
+// configured chain (not just Ethereum). The same list also drives the
+// `partiallyPaired` detection in `sessionToStatus` — when Ledger Live
+// approves fewer chains than this returns, the user has L2 networks
+// disabled in Manage Accounts.
+//
+// For v1.2 the list is STATIC: every chain in `ChainId` is supported
+// because the PublicNode fallback covers all 5 (per Plan 08-01's
+// `getChainClient`). Future v1.3+ may filter to chains with an EXPLICIT
+// custom RPC URL if a "fail-fast on unconfigured chain" mode becomes
+// desirable; v1.2 is permissive.
+//
+// Order matters: the FIRST chain (Ethereum) is the default
+// `activeChainId` when `sessionToStatus` resolves a pair (research §
+// Topic 8 — "first configured chain in the session"). The
+// T-WC-MULTI-CHAIN-PAIRING-REGRESSION-1 anchor pins this in tests.
+const CONFIGURED_CHAIN_IDS: readonly ChainId[] = [1, 42161, 137, 8453, 10];
+
+/**
+ * Returns the list of EVM chains this v1.2 build supports. Static list:
+ * every chain in `ChainId` (Plan 08-01) is supported via PublicNode
+ * fallback. v1.3+ may filter to chains with explicit RPC config if a
+ * strict "fail-fast on unconfigured chain" mode becomes desirable; for
+ * v1.2 the list is permissive.
+ *
+ * Ethereum (chainId 1) is ALWAYS the first entry — `sessionToStatus`
+ * picks it as the default `activeChainId` when a fresh pair resolves
+ * (research § Topic 8 line 717).
+ */
+export function getConfiguredChainIds(): readonly ChainId[] {
+  return CONFIGURED_CHAIN_IDS;
 }
 
 export function getRpcProvider(): string | undefined {
