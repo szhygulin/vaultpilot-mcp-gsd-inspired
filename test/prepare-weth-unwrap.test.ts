@@ -67,7 +67,9 @@ await import("../src/tools/register-all.js");
 async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("prepare_weth_unwrap");
   if (!tool) throw new Error("prepare_weth_unwrap not registered");
-  return tool.handler(args);
+  // Phase 8 — Plan 08-02: chain arg REQUIRED; default to "ethereum".
+  const merged = "chain" in args ? args : { chain: "ethereum", ...args };
+  return tool.handler(merged);
 }
 
 const DEMO_KEY = "VAULTPILOT_DEMO";
@@ -250,6 +252,7 @@ describe("prepare_weth_unwrap — verbatim PREPARE RECEIPT (PREP-02 / T-PREP-RCP
     const text = result.content[0]?.text ?? "";
 
     const expected = WETH_UNWRAP_PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", "ethereum (chainId 1)")
       .replace("{TOKEN_ADDRESS}", WETH_CHECKSUMMED)
       .replace("{AMOUNT}", FIXTURE_F_AMOUNT);
     expect(text).toBe(expected);
@@ -301,11 +304,15 @@ describe("prepare_weth_unwrap — register-all wiring (smoke)", () => {
     expect(names).toContain("prepare_weth_unwrap");
   });
 
-  it("inputSchema requires amount ONLY (no `to`, no `tokenAddress`)", () => {
+  it("inputSchema requires chain + amount (no `to`, no `tokenAddress`) — Plan 08-02 adds chain", () => {
     const tool = getRegisteredTool("prepare_weth_unwrap");
     expect(tool).toBeDefined();
     if (!tool) return;
-    expect(tool.inputSchema.required).toEqual(["amount"]);
+    expect(tool.inputSchema.required).toEqual(["chain", "amount"]);
+    expect(tool.inputSchema.properties?.chain).toMatchObject({
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+    });
   });
 
   it("register-all.ts contains the side-effect import line for ./prepare_weth_unwrap.js", async () => {

@@ -51,9 +51,16 @@
 import { erc20Abi, type Address, type Hex } from "viem";
 import { estimateFeesPerGas, estimateGas, getTransactionCount } from "viem/actions";
 
-import { getEthereumClient } from "../chains/ethereum.js";
+import { getChainClient } from "../chains/registry.js";
 import { lookupSelector } from "../clients/fourbyte.js";
-import { getAaveV3PoolAddress, getWethAddress } from "../config/contracts.js";
+import {
+  chainIdFromName,
+  chainNameFromId,
+  getAaveV3PoolAddress,
+  getWethAddress,
+  type ChainId,
+  type ChainName,
+} from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
 import { getActivePersona } from "../demo/state.js";
 import { _aaveProtocols, type AaveV3Decoded } from "../protocols/aave-v3.js";
@@ -61,6 +68,7 @@ import { _protocols, type Erc20Decoded } from "../protocols/erc20.js";
 import { WETH9_SELECTORS } from "../protocols/weth9.js";
 import {
   AGENT_TASK_TEMPLATE,
+  CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
   LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
@@ -78,7 +86,7 @@ import {
 import { lookup, transitionToPreviewed } from "../signing/handle-store.js";
 import { computePresignHash } from "../signing/presign-hash.js";
 import { _simulation } from "../signing/simulation.js";
-import { loadEthereumTokenRegistry } from "../tokens/registry.js";
+import { loadTokenRegistry } from "../tokens/registry.js";
 import { getStatus } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
 
@@ -104,7 +112,8 @@ const DESCRIPTION = [
   "Returns `{ previewToken, presignHash, chainId, nonce, gas, maxFeePerGas, maxPriorityFeePerGas, selector, fourbyte }` plus the three-block text payload (LEDGER BLIND-SIGN HASH, AGENT TASK, 4BYTE CROSS-CHECK) and a VERIFY BEFORE SIGNING summary.",
   "Idempotent re-preview (Q4): calling preview_send twice on the same handle re-pins fresh nonce/gas/fees and INVALIDATES the prior previewToken. Only the most recent token matches at send time — call again after a long pause to freshen the pin.",
   "In demo mode, succeeds against the active persona's address as the SENDER for nonce/gas/fees resolution; the LEDGER BLIND-SIGN HASH block is emitted unchanged so the rehearsal exercises the same verification ritual the real flow uses.",
-  "Failure modes: HANDLE_NOT_FOUND if the handle is unknown, HANDLE_EXPIRED past 15-min TTL, WRONG_STATUS on already-sent or cancelled handles, WALLET_NOT_PAIRED if the WalletConnect session has dropped (real mode), WRONG_MODE if demo mode is on but no persona is set.",
+  "Optional `chain` arg (Phase 8 — Plan 08-02 Layer 2 defense-in-depth): when provided, the server asserts `chainIdFromName(chain) === record.tx.chainId` BEFORE the existing three gates; mismatch refuses with CHAIN_ID_MISMATCH. Omitting falls back to Layer 3 fingerprint-drift + Layer 4 on-device Network display as the sole chain-consistency defense.",
+  "Failure modes: HANDLE_NOT_FOUND if the handle is unknown, HANDLE_EXPIRED past 15-min TTL, WRONG_STATUS on already-sent or cancelled handles, WALLET_NOT_PAIRED if the WalletConnect session has dropped (real mode), WRONG_MODE if demo mode is on but no persona is set, CHAIN_ID_MISMATCH if the optional `chain` arg disagrees with the prepared handle's chainId.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -113,6 +122,12 @@ const INPUT_SCHEMA = {
     handle: {
       type: "string",
       description: "Handle returned by prepare_native_send (or any other prepare_* tool).",
+    },
+    chain: {
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+      description:
+        "Optional defense-in-depth chain assertion. When provided, refuses if the stored handle's chainId does not match.",
     },
   },
   required: ["handle"],
@@ -139,6 +154,41 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       };
     }
     const record = lookupResult.record;
+
+    // Phase 8 — Plan 08-02. Layer 2 defense-in-depth chain-name MISMATCH
+    // refusal. Fires AFTER handle lookup (needs record.tx.chainId) but
+    // BEFORE the state-machine + fingerprint-drift gates, so a wrong-chain
+    // claim refuses with a chain-specific error instead of cascading into
+    // an unrelated state-machine refusal. Layer 3 (payloadFingerprint
+    // drift in send_transaction) already byte-binds chainId; this Layer 2
+    // catches the case where the agent's natural-language story ("this is
+    // an Ethereum tx") diverges from the bytes ("record.tx.chainId === 137")
+    // at preview time, so the user sees a structured refusal instead of an
+    // on-device Network mismatch surprise.
+    //
+    // GUARD: only fires when `args.chain` is provided (back-compat — Phase
+    // 4-7 callers don't pass it). The JSON-schema enum at the dispatch
+    // boundary already refuses bogus chain names; runtime-side this check
+    // narrows via `chainIdFromName(... as ChainName)`.
+    if (typeof args.chain === "string") {
+      const claimedChainName = args.chain as ChainName;
+      const claimedChainId = chainIdFromName(claimedChainName);
+      if (claimedChainId !== record.tx.chainId) {
+        const storedChainName = chainNameFromId(record.tx.chainId as ChainId);
+        const refusalText = CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE
+          .replace("{REQUESTED_CHAIN}", `${claimedChainName} (chainId ${claimedChainId})`)
+          .replace("{STORED_CHAIN}", storedChainName)
+          .replace("{STORED_CHAIN_ID}", String(record.tx.chainId));
+        return {
+          isError: true,
+          content: [{ type: "text", text: refusalText }],
+          structuredContent: errEnvelope(
+            "CHAIN_ID_MISMATCH",
+            `preview chain="${claimedChainName}" but handle prepared for chainId=${record.tx.chainId}`,
+          ),
+        };
+      }
+    }
 
     // T-STATE-3: refuse re-preview on a `sent` or `cancelled` handle.
     // `transitionToPreviewed` would return `WRONG_STATUS` for these states
@@ -218,7 +268,12 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // (research § Anti-Patterns line 416). RPC errors here are
     // operational — surface as `INTERNAL_ERROR` with the underlying
     // message; the user retries.
-    const client = getEthereumClient();
+    //
+    // Phase 8 — Plan 08-02: per-chain client. The handle's bound chainId
+    // (cryptographically pinned via payloadFingerprint Layer 3) drives the
+    // RPC target; an attacker who flips `record.tx.chainId` post-prepare
+    // would also break the recomputed fingerprint at send time.
+    const client = getChainClient(record.tx.chainId as ChainId);
     let pendingNonce: number;
     let fees: { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint };
     let gasEstimate: bigint;
@@ -349,7 +404,7 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     //     block surfaces an "(unknown asset)" label verbatim.
     let tokenContext: { symbol: string; decimals: number } | null = null;
     if (aaveDecoded !== null) {
-      const registry = loadEthereumTokenRegistry();
+      const registry = loadTokenRegistry(record.tx.chainId as ChainId);
       const entry = registry.find((e) => e.address === aaveDecoded!.asset);
       tokenContext = entry ? { symbol: entry.symbol, decimals: entry.decimals } : null;
       if (tokenContext === null) {
@@ -372,7 +427,7 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
         }
       }
     } else if (decodedArgs.kind === "transfer" || decodedArgs.kind === "approve") {
-      const registry = loadEthereumTokenRegistry();
+      const registry = loadTokenRegistry(record.tx.chainId as ChainId);
       const entry = registry.find((e) => e.address === record.tx.to);
       tokenContext = entry
         ? { symbol: entry.symbol, decimals: entry.decimals }
@@ -384,7 +439,11 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // template drift).
     const decodedArgsBlock =
       aaveDecoded !== null
-        ? buildAaveDecodedArgsBlock(aaveDecoded, tokenContext, getAaveV3PoolAddress(1))
+        ? buildAaveDecodedArgsBlock(
+            aaveDecoded,
+            tokenContext,
+            getAaveV3PoolAddress(record.tx.chainId as ChainId),
+          )
         : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
 
     // Phase 6 — Plan 06-02: wide eth_call simulation. DF-1 LOCKED. Runs for
@@ -434,7 +493,8 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // expose a withdraw(uint256) selector — only the SOT-canonical WETH9
     // gets the NOTICE).
     const isWethUnwrap =
-      selector === WETH9_SELECTORS.withdraw && record.tx.to === getWethAddress(1);
+      selector === WETH9_SELECTORS.withdraw &&
+      record.tx.to === getWethAddress(record.tx.chainId as ChainId);
     const ledgerNoticeBlock: string | null = isWethUnwrap
       ? LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE
       : null;

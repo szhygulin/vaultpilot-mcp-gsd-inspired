@@ -33,6 +33,12 @@
 //                              the live WC session's approved set; surfaces the
 //                              in-session list so the agent can self-correct
 //                              without a second tool call).
+//   CHAIN_ID_MISMATCH        — Phase 8 Plan 08-02 — Layer 2 defense-in-depth at
+//                              `preview_send` + `send_transaction` when the
+//                              agent's optional `chain` arg disagrees with the
+//                              chainId bound into the prepared transaction.
+//                              ONE code for any chain-discrepancy refusal
+//                              regardless of layer (research § line 926 lock).
 
 export type ErrorCode =
   | "WALLET_NOT_PAIRED"
@@ -49,7 +55,8 @@ export type ErrorCode =
   | "INVALID_INPUT"
   | "INTERNAL_ERROR"
   | "WRONG_MODE"
-  | "INVALID_ACCOUNT";
+  | "INVALID_ACCOUNT"
+  | "CHAIN_ID_MISMATCH";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

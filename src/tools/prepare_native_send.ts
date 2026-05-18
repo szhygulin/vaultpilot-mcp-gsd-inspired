@@ -1,4 +1,4 @@
-// MCP tool: prepare_native_send({ to, valueWei })
+// MCP tool: prepare_native_send({ chain, to, valueWei })
 //
 // First step of the Phase 4 trust pipeline (PREP-01 / PREP-02 / PREP-03).
 // Composes Plan 04-01's signing primitives + Phase 3's session-manager:
@@ -8,8 +8,13 @@
 //     → pairing check (`getStatus()` non-null)
 //     → compute `payloadFingerprint` over the viem-typed tx
 //     → `createHandle` with RAW agent strings on `args` + viem-typed on `tx`
-//     → return `{ handle, chainId: 1, to, valueWei, payloadFingerprint, prepareReceipt }`
+//     → return `{ handle, chain, chainId, to, valueWei, payloadFingerprint, prepareReceipt }`
 //       plus a `PREPARE RECEIPT` text block surfacing verbatim agent args.
+//
+// Phase 8 — Plan 08-02 (PREP-40 + PREP-41): `chain` arg threaded through;
+// REQUIRED enum (`ethereum | arbitrum | polygon | base | optimism`). The
+// JSON-schema enum is the dispatch-boundary gate; per-handler re-validation
+// is unreachable on enum violation.
 //
 // Three load-bearing invariants asserted by `test/prepare-native-send.test.ts`:
 //
@@ -38,10 +43,8 @@
 //      so Fixture A holds REGARDLESS of whether `from` is the paired Ledger
 //      address (real mode) or the persona address (Plan 05-02 demo mode).
 //
-// `chainId: 1` hard-coded per Q3 locked decision (research § Open Questions).
-// Phase 8 PREP-40 generalizes every `prepare_*` with a mandatory `chain`
-// parameter in a single coordinated pass; exposing it optionally here would
-// force Phase 8 to revisit this contract twice.
+// Phase 8 — Plan 08-02 (PREP-40 + PREP-41): chainId derives from the agent's
+// `chain` enum arg via `chainIdFromName(args.chain as ChainName)`.
 //
 // `valueWei` is WEI as a decimal string (NOT decimal ETH). Phase 6 adds
 // decimal-aware parsing for ERC-20 `prepare_token_send` via
@@ -51,6 +54,7 @@
 
 import { type Address, type Hex, getAddress } from "viem";
 
+import { chainIdFromName, type ChainName } from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
 import { getActivePersona } from "../demo/state.js";
 import { PREPARE_RECEIPT_TEMPLATE } from "../signing/blocks.js";
@@ -79,25 +83,31 @@ function errEnvelope(
 }
 
 const DESCRIPTION = [
-  "Prepare an unsigned native ETH transfer on Ethereum mainnet.",
+  "Prepare an unsigned native gas-token transfer on the specified EVM chain.",
   "Returns a handle the agent then passes to preview_send before send_transaction.",
-  "Use when the user wants to send native ETH from their paired Ledger on Ethereum mainnet.",
+  "Use when the user wants to send native ETH / MATIC / etc. from their paired Ledger on one of: ethereum, arbitrum, polygon, base, optimism.",
   "Do NOT use for ERC-20 token transfers — those land in Phase 6 (prepare_token_send).",
   "Do NOT use for contract calls / approve / swap / withdraw — each gets its own dedicated prepare_* tool.",
-  "Do NOT use for other chains — v1.0 is Ethereum mainnet only; multi-chain is Phase 8.",
+  "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism. No default-pick; omitting the arg refuses at the dispatch boundary.",
   "`valueWei` is the amount in WEI (10^18 wei = 1 ETH), passed as a decimal string (e.g. \"1000000000000000000\" for 1 ETH).",
   "Do NOT pass human-readable ETH amounts — off-by-decimal is the most common user-facing bug class.",
   "`to` is the recipient address as a 0x-prefixed 20-byte hex string.",
   "Requires a paired Ledger (call pair_ledger_live first if get_ledger_status shows paired: false).",
-  "Returns `{ handle, chainId: 1, to, valueWei, payloadFingerprint, prepareReceipt }` plus a PREPARE RECEIPT text block surfacing the verbatim args.",
+  "Returns `{ handle, chain, chainId, to, valueWei, payloadFingerprint, prepareReceipt }` plus a PREPARE RECEIPT text block surfacing the verbatim args.",
   "The agent MUST pass the handle to preview_send next — without preview + the resulting previewToken, send_transaction refuses.",
   "In demo mode, succeeds against the active persona's address (set via set_demo_wallet); send_transaction returns a simulation envelope instead of broadcasting.",
-  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona is set, INVALID_INPUT if to/valueWei malformed.",
+  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona is set, INVALID_INPUT if chain/to/valueWei malformed.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
   type: "object" as const,
   properties: {
+    chain: {
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+      description:
+        "Chain identifier (required). Supported: ethereum, arbitrum, polygon, base, optimism.",
+    },
     to: {
       type: "string",
       description:
@@ -110,12 +120,18 @@ const INPUT_SCHEMA = {
         "Amount in WEI as a decimal string (10^18 wei = 1 ETH). Example: \"1000000000000000000\" for 1 ETH. Do NOT pass decimal ETH — Phase 6 adds decimal-aware ERC-20 sends.",
     },
   },
-  required: ["to", "valueWei"],
+  required: ["chain", "to", "valueWei"],
   additionalProperties: false,
 };
 
 registerTool("prepare_native_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
   try {
+    // Phase 8 — Plan 08-02: chainId from the agent's `chain` arg. JSON-schema
+    // enum is the dispatch-boundary gate; per-handler re-validation is
+    // unreachable on enum violation.
+    const chainName = args.chain as ChainName;
+    const chainId = chainIdFromName(chainName);
+
     // T-ADDR-1: validate `to` shape BEFORE any state read. Refuses with
     // INVALID_INPUT and names the offending value in the text response so
     // the agent can self-correct. NO handle is created.
@@ -230,14 +246,9 @@ registerTool("prepare_native_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       fromAddress = status.activeAccount;
     }
 
-    // chainId hard-coded to 1 (Ethereum mainnet) — v1.0 is mainnet-only.
-    // Phase 8 (PREP-40) generalizes every prepare_* with a mandatory `chain`
-    // parameter in a single coordinated pass; adding it optionally here
-    // invites Phase 8 to revisit this contract twice. See
-    // .planning/phases/04-native-eth-send-the-trust-pipeline/04-RESEARCH.md
-    // § Open Questions Q3.
+    // Phase 8 — Plan 08-02: chainId from `args.chain` enum (above).
     const tx = {
-      chainId: 1,
+      chainId,
       // Checksummed for server-internal correctness — NEVER surfaced in
       // the receipt text. T-PREP-RCPT-1 mitigation: the receipt reads from
       // `args.to` (raw string), not `tx.to`.
@@ -270,7 +281,12 @@ registerTool("prepare_native_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // string in this file (or in the test) would violate the format-fanout-
     // regex-sync invariant — a future edit to the const would silently
     // leave a duplicate behind.
+    //
+    // Phase 8 — Plan 08-02: `{CHAIN}` slot widening surfaces the chain name +
+    // chainId verbatim in the receipt body (the on-device clear-sign display
+    // shows the same chain — the receipt is the cross-check anchor).
     const receipt = PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", `${chainName} (chainId ${chainId})`)
       .replace("{TO}", to)
       .replace("{VALUE_WEI}", rawValueWei);
 
@@ -278,7 +294,9 @@ registerTool("prepare_native_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       content: [{ type: "text", text: receipt }],
       structuredContent: {
         handle,
-        chainId: 1,
+        // Phase 8 — Plan 08-02: chain name + chainId surfaced verbatim.
+        chain: chainName,
+        chainId,
         // `from` surfaces the resolved sender (persona address in demo,
         // paired Ledger address in real mode). Plan 05-02 addition. The
         // PREPARE_RECEIPT_TEMPLATE text block is unchanged (PREP-02

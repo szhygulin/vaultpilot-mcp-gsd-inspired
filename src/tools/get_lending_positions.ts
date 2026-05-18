@@ -27,8 +27,8 @@
 import { formatUnits, getAddress, isAddress, type Address } from "viem";
 
 import { _aaveChains } from "../chains/aave-v3.js";
-import { getEthereumClient, isPublicNodeFallback } from "../chains/ethereum.js";
-import type { ChainId } from "../config/contracts.js";
+import { getChainClient, isPublicNodeFallback } from "../chains/registry.js";
+import { chainIdFromName, type ChainId, type ChainName } from "../config/contracts.js";
 import {
   classifyLiquidationRisk,
   computeHealthFactor,
@@ -37,18 +37,17 @@ import {
   type DebtPosition,
   type LiquidationRisk,
 } from "../signing/aave-health.js";
-import { loadEthereumTokenRegistry } from "../tokens/registry.js";
+import { loadTokenRegistry } from "../tokens/registry.js";
 import { registerTool } from "./index.js";
 
-const ETHEREUM_CHAIN_ID: ChainId = 1;
-
 const DESCRIPTION = [
-  "Read Aave V3 lending positions on Ethereum mainnet for a wallet address.",
+  "Read Aave V3 lending positions on a supported EVM chain for a wallet address.",
   "Returns supplied + borrowed positions per asset, aggregate health factor, and liquidation-risk flag.",
   "Use when the user asks about their Aave positions, lending balances, borrow position, or health factor.",
   "Do NOT use for non-Aave lending — Compound / Morpho / etc. are v2.3+ scope.",
   "Do NOT use for non-lending wallet balances — call `get_portfolio_summary` for wallet-level holdings.",
-  "Returns `{ chain: \"ethereum\", wallet, positions: [...], totalCollateralUsd, totalDebtUsd, healthFactor, noDebt, liquidationRisk, userEModeCategoryId, rpcDegraded? }`.",
+  "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism. Aave V3 reserves differ per chain; the server resolves the per-chain UiPoolDataProvider via the typed SOT.",
+  "Returns `{ chain, wallet, positions: [...], totalCollateralUsd, totalDebtUsd, healthFactor, noDebt, liquidationRisk, userEModeCategoryId, rpcDegraded? }`.",
   "`healthFactor` is `null` when the user has no debt (`noDebt: true`); the agent checks `noDebt` BEFORE comparing `healthFactor` numerically.",
   "`liquidationRisk` is one of `\"safe\"` (HF >= 1.50), `\"warning\"` (1.10 <= HF < 1.50), `\"danger\"` (HF < 1.10), or `\"noDebt\"`.",
   "Each position row carries `{ asset, symbol, decimals, suppliedHuman, suppliedUsd, borrowedHuman, borrowedUsd, liquidityRate, variableBorrowRate, liquidationThresholdBps, isFrozen, isActive, usageAsCollateralEnabledOnUser, aTokenAddress, variableDebtTokenAddress, priceInMarketReferenceCurrency }`.",
@@ -60,13 +59,19 @@ const DESCRIPTION = [
 const INPUT_SCHEMA = {
   type: "object" as const,
   properties: {
+    chain: {
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+      description:
+        "Chain identifier (required). Supported: ethereum, arbitrum, polygon, base, optimism.",
+    },
     wallet: {
       type: "string",
       pattern: "^0x[0-9a-fA-F]{40}$",
-      description: "Ethereum wallet address (EIP-55 not required; case-insensitive).",
+      description: "EVM wallet address (EIP-55 not required; case-insensitive).",
     },
   },
-  required: ["wallet"],
+  required: ["chain", "wallet"],
   additionalProperties: false,
 };
 
@@ -92,7 +97,8 @@ interface LendingPositionRow {
 }
 
 interface LendingPositionsResult {
-  chain: "ethereum";
+  chain: ChainName;
+  chainId: number;
   wallet: Address;
   positions: LendingPositionRow[];
   totalCollateralUsd: string;
@@ -105,23 +111,29 @@ interface LendingPositionsResult {
 }
 
 registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) => {
+  // Phase 8 — Plan 08-02: chainId from the agent's `chain` enum. The
+  // ETHEREUM_CHAIN_ID constant retired in this migration — Aave V3 reserve
+  // sets differ per chain, so the chainId now flows through every read.
+  const chainName = args.chain as ChainName;
+  const chainId = chainIdFromName(chainName);
+
   const walletRaw = args.wallet;
   if (typeof walletRaw !== "string" || !isAddress(walletRaw, { strict: false })) {
     return {
-      content: [{ type: "text", text: "error: `wallet` must be a valid 0x-prefixed Ethereum address" }],
+      content: [{ type: "text", text: "error: `wallet` must be a valid 0x-prefixed EVM address" }],
       isError: true,
     };
   }
   const wallet: Address = getAddress(walletRaw);
 
-  const client = getEthereumClient();
+  const client = getChainClient(chainId);
 
   let reservesData: Awaited<ReturnType<typeof _aaveChains.getReservesData>>;
   let userReservesData: Awaited<ReturnType<typeof _aaveChains.getUserReservesData>>;
   try {
     [reservesData, userReservesData] = await Promise.all([
-      _aaveChains.getReservesData(client, ETHEREUM_CHAIN_ID),
-      _aaveChains.getUserReservesData(client, ETHEREUM_CHAIN_ID, wallet),
+      _aaveChains.getReservesData(client, chainId),
+      _aaveChains.getUserReservesData(client, chainId, wallet),
     ]);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -167,7 +179,7 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     // majority are zero/zero for any given user.
     if (ur.scaledATokenBalance === 0n && ur.scaledVariableDebt === 0n) continue;
 
-    const row = buildPositionRow(ur, reserve, baseUnit);
+    const row = buildPositionRow(ur, reserve, baseUnit, chainId);
     positions.push(row);
 
     const decimals = Number(reserve.decimals);
@@ -210,7 +222,8 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
   const totalDebtUsd = formatUsdFromBase(totalDebtBase, baseDecimals);
 
   const result: LendingPositionsResult = {
-    chain: "ethereum",
+    chain: chainName,
+    chainId,
     wallet,
     positions,
     totalCollateralUsd,
@@ -220,7 +233,7 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     liquidationRisk,
     userEModeCategoryId: userReservesData.userEModeCategoryId,
   };
-  if (isPublicNodeFallback()) result.rpcDegraded = true;
+  if (isPublicNodeFallback(chainId)) result.rpcDegraded = true;
 
   const summaryLines: string[] = [];
   summaryLines.push(`Aave V3 positions for ${wallet}:`);
@@ -288,6 +301,7 @@ function buildPositionRow(
     variableDebtTokenAddress: Address;
   },
   baseUnit: bigint,
+  chainId: ChainId,
 ): LendingPositionRow {
   const decimals = Number(reserve.decimals);
   const baseDecimals = countBaseDecimals(baseUnit);
@@ -299,7 +313,10 @@ function buildPositionRow(
   const borrowedBase =
     (borrowedWei * reserve.priceInMarketReferenceCurrency) / 10n ** BigInt(decimals);
 
-  const symbol = reserve.symbol.length > 0 ? reserve.symbol : resolveSymbolFallback(reserve.underlyingAsset);
+  // Phase 8 — Plan 08-02: per-chain registry dispatch (only chainId=1 has a
+  // populated registry until Plan 08-03 lands the L2 JSON files). On L2s, the
+  // fallback path returns the literal address.
+  const symbol = reserve.symbol.length > 0 ? reserve.symbol : resolveSymbolFallback(reserve.underlyingAsset, chainId);
 
   return {
     asset: getAddress(reserve.underlyingAsset),
@@ -328,11 +345,15 @@ function buildPositionRow(
  * `symbol` is the primary surface; the registry can only cover the top-50
  * ERC-20s, so rare misses surface as the literal underlying address rather
  * than synthesising an opaque label.
+ *
+ * Phase 8 — Plan 08-02: per-chain registry dispatch. v1.2-Plan-08-02 ship
+ * state: only chainId=1 has a populated registry; L2 chains return [] and
+ * the fallback path surfaces the literal underlying address.
  */
-function resolveSymbolFallback(underlying: Address): string {
-  const registry = loadEthereumTokenRegistry();
+function resolveSymbolFallback(underlying: Address, chainId: ChainId): string {
+  const registry = loadTokenRegistry(chainId);
   const checksummed = getAddress(underlying);
-  const hit = registry.find((t) => t.address === checksummed);
+  const hit = registry.find((t: { address: Address }) => t.address === checksummed);
   return hit?.symbol ?? checksummed;
 }
 

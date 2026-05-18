@@ -17,12 +17,13 @@ import type { Address, PublicClient } from "viem";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let publicNodeFallback = false;
-vi.mock("../src/chains/ethereum.js", () => {
+// Phase 8 — Plan 08-02: tool migrated to per-chain registry.
+vi.mock("../src/chains/registry.js", () => {
   return {
-    getEthereumClient: () => ({ readContract: vi.fn() }) as unknown as PublicClient,
+    getChainClient: () => ({ readContract: vi.fn() }) as unknown as PublicClient,
     isPublicNodeFallback: () => publicNodeFallback,
-    _resetEthereumClientForTesting: () => {},
-    PUBLICNODE_ETHEREUM_RPC_URL: "https://test.invalid",
+    _resetChainRegistryForTesting: () => {},
+    PUBLICNODE_RPC_URLS: { 1: "https://test.invalid" },
   };
 });
 
@@ -146,7 +147,8 @@ const ALL_RESERVES = [
 async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("simulate_position_change");
   if (!tool) throw new Error("simulate_position_change not registered");
-  return tool.handler(args);
+  const merged = "chain" in args ? args : { chain: "ethereum", ...args };
+  return tool.handler(merged);
 }
 
 beforeEach(() => {
@@ -448,14 +450,20 @@ describe("simulate_position_change — register-all wiring (smoke)", () => {
     expect(names).toContain("simulate_position_change");
   });
 
-  it("inputSchema requires asset + action + amount; action enum is the locked 4-arm set", () => {
+  it("inputSchema requires chain + asset + action + amount; action enum is the locked 4-arm set (Plan 08-02 adds chain)", () => {
     const tool = getRegisteredTool("simulate_position_change");
     expect(tool).toBeDefined();
     if (!tool) return;
-    expect(tool.inputSchema.required).toEqual(["asset", "action", "amount"]);
-    const actionProp = (tool.inputSchema.properties as { action: { enum: readonly string[] } })
-      .action;
-    expect([...actionProp.enum].sort()).toEqual(["borrow", "repay", "supply", "withdraw"]);
+    expect(tool.inputSchema.required).toEqual(["chain", "asset", "action", "amount"]);
+    const props = tool.inputSchema.properties as {
+      action: { enum: readonly string[] };
+      chain: { type: string; enum: readonly string[] };
+    };
+    expect([...props.action.enum].sort()).toEqual(["borrow", "repay", "supply", "withdraw"]);
+    expect(props.chain).toMatchObject({
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+    });
   });
 
   it("register-all.ts contains the side-effect import line for ./simulate_position_change.js", async () => {

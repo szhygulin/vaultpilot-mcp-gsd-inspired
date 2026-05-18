@@ -27,11 +27,38 @@ import type { Erc20Decoded } from "../protocols/erc20.js";
 import { WETH9_DECIMALS } from "../protocols/weth9.js";
 import type { SimulationResult } from "./simulation.js";
 
+/**
+ * Phase 8 — Plan 08-02. Layer 2 chain-mismatch refusal block emitted by
+ * `preview_send` + `send_transaction` BEFORE the existing three gates when
+ * the agent-supplied `chain` arg does NOT match the chainId bound into the
+ * prepared transaction. NOT a cryptographic gate — Layer 3 (payloadFingerprint
+ * drift) already byte-binds chainId; this Layer 2 catches the case where the
+ * agent's natural-language story ("this is an Ethereum tx") diverges from
+ * the bytes ("record.tx.chainId === 137") at preview/send time, so the user
+ * sees a structured refusal instead of an on-device Network mismatch surprise.
+ *
+ * Substituted by preview_send + send_transaction with `{REQUESTED_CHAIN}`,
+ * `{STORED_CHAIN}`, `{STORED_CHAIN_ID}`. Format-fanout-sentinel: one block,
+ * one home; both callsites import this template.
+ */
+export const CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE: string = [
+  "CHAIN ID MISMATCH",
+  "  agent requested:  {REQUESTED_CHAIN}",
+  "  handle prepared:  {STORED_CHAIN} (chainId {STORED_CHAIN_ID})",
+  "  refusal:          the agent's `chain` parameter does not match the chain bound into the prepared transaction.",
+  "                    re-call prepare_* with the correct chain and try again.",
+].join("\n");
+
 // Verbatim PREPARE RECEIPT (PREP-02 — verbatim args, NO normalization).
 // PrepareArgs field types are `string` (not Address / not bigint) so the
 // type system blocks normalization at the storage boundary.
+//
+// Phase 8 — Plan 08-02: `{CHAIN}` slot widening — uniform across all 6
+// PREPARE_RECEIPT templates (native + ERC-20 + approve + WETH unwrap + Aave
+// supply + Aave withdraw). Substituted to e.g. "polygon (chainId 137)".
 export const PREPARE_RECEIPT_TEMPLATE: string = [
   "PREPARE RECEIPT",
+  "  chain:    {CHAIN}",
   "  to:       {TO}",
   "  valueWei: {VALUE_WEI}",
 ].join("\n");
@@ -182,6 +209,7 @@ export function build4byteBlock(selector: Hex | null, result: FourbyteResult): s
  */
 export const ERC20_PREPARE_RECEIPT_TEMPLATE: string = [
   "PREPARE RECEIPT",
+  "  chain:        {CHAIN}",
   "  tokenAddress: {TOKEN_ADDRESS}",
   "  to:           {TO}",
   "  amount:       {AMOUNT}",
@@ -220,6 +248,7 @@ export const DECODED_ARGS_TEMPLATE_TRANSFER: string = [
  */
 export const APPROVE_PREPARE_RECEIPT_TEMPLATE: string = [
   "PREPARE RECEIPT",
+  "  chain:        {CHAIN}",
   "  tokenAddress: {TOKEN_ADDRESS}",
   "  spender:      {SPENDER}",
   "  amount:       {AMOUNT}",
@@ -265,6 +294,7 @@ export const DECODED_ARGS_TEMPLATE_APPROVE: string = [
 export const WETH_UNWRAP_PREPARE_RECEIPT_TEMPLATE: string = [
   "PREPARE RECEIPT",
   "  operation:    WETH unwrap",
+  "  chain:        {CHAIN}",
   "  tokenAddress: {TOKEN_ADDRESS}",
   "  amount:       {AMOUNT}",
 ].join("\n");
@@ -475,6 +505,7 @@ export function buildSimulationBlock(result: SimulationResult): string {
 export const AAVE_SUPPLY_PREPARE_RECEIPT_TEMPLATE: string = [
   "PREPARE RECEIPT",
   "  operation:    Aave V3 supply",
+  "  chain:        {CHAIN}",
   "  asset:        {ASSET}",
   "  amount:       {AMOUNT}",
 ].join("\n");
@@ -491,6 +522,7 @@ export const AAVE_SUPPLY_PREPARE_RECEIPT_TEMPLATE: string = [
 export const AAVE_WITHDRAW_PREPARE_RECEIPT_TEMPLATE: string = [
   "PREPARE RECEIPT",
   "  operation:    Aave V3 withdraw",
+  "  chain:        {CHAIN}",
   "  asset:        {ASSET}",
   "  amount:       {AMOUNT}",
 ].join("\n");

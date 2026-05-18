@@ -1,14 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TransactionNotFoundError, TransactionReceiptNotFoundError } from "viem";
 
-vi.mock("../src/chains/ethereum.js", () => {
+// Phase 8 — Plan 08-02: tool migrated to per-chain registry.
+vi.mock("../src/chains/registry.js", () => {
   const client = {
     getTransactionReceipt: vi.fn(),
     getTransaction: vi.fn(),
   };
   return {
-    getEthereumClient: () => client,
+    getChainClient: () => client,
     isPublicNodeFallback: () => false,
+    _resetChainRegistryForTesting: () => {},
+    PUBLICNODE_RPC_URLS: { 1: "https://test.invalid" },
     __client: client,
   };
 });
@@ -20,7 +23,7 @@ import {
 } from "../src/tools/index.js";
 import "../src/tools/register-all.js";
 
-const mod = (await import("../src/chains/ethereum.js")) as unknown as {
+const mod = (await import("../src/chains/registry.js")) as unknown as {
   __client: {
     getTransactionReceipt: ReturnType<typeof vi.fn>;
     getTransaction: ReturnType<typeof vi.fn>;
@@ -42,7 +45,8 @@ afterEach(() => {
 async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("get_transaction_status");
   if (!tool) throw new Error("get_transaction_status not registered");
-  return tool.handler(args);
+  const merged = "chain" in args ? args : { chain: "ethereum", ...args };
+  return tool.handler(merged);
 }
 
 describe("get_transaction_status tool", () => {

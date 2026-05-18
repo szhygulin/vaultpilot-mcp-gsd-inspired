@@ -1,11 +1,13 @@
 import { type Address, erc20Abi, formatUnits, getAddress, isAddress } from "viem";
 
-import { getEthereumClient, isPublicNodeFallback } from "../chains/ethereum.js";
+import { getChainClient, isPublicNodeFallback } from "../chains/registry.js";
+import { chainIdFromName, type ChainName } from "../config/contracts.js";
 import { registerTool } from "./index.js";
 
 const DESCRIPTION = [
-  "Read a single ERC-20 token balance for one wallet on Ethereum mainnet, returning the on-chain `balanceOf` result formatted as a decimal string alongside the token's `decimals` and `symbol`.",
+  "Read a single ERC-20 token balance for one wallet on a supported EVM chain, returning the on-chain `balanceOf` result formatted as a decimal string alongside the token's `decimals` and `symbol`.",
   "Use this when the user asks about a specific token by contract address (e.g. \"what's my USDC balance\" once you have the USDC contract address) — NOT for full-portfolio scans (use `get_portfolio_summary` for that) and NOT when you only know the symbol (resolve the contract address first).",
+  "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism. No default; omitting refuses at the dispatch boundary.",
   "USD valuation is OPTIONAL: `balanceUsd` and `priceUnknown` are populated only once the pricing layer is wired; until then both are absent and the response is balance-only.",
   "Decimal strings cross the boundary, never numbers — preserves precision for downstream signing flows.",
 ].join(" ");
@@ -13,6 +15,12 @@ const DESCRIPTION = [
 const INPUT_SCHEMA = {
   type: "object" as const,
   properties: {
+    chain: {
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+      description:
+        "Chain identifier (required). Supported: ethereum, arbitrum, polygon, base, optimism.",
+    },
     wallet: {
       type: "string",
       description: "Wallet address to query (0x-prefixed, 40 hex chars). Mixed case accepted; checksum is normalized.",
@@ -24,7 +32,7 @@ const INPUT_SCHEMA = {
       pattern: "^0x[0-9a-fA-F]{40}$",
     },
   },
-  required: ["wallet", "tokenAddress"],
+  required: ["chain", "wallet", "tokenAddress"],
   additionalProperties: false,
 };
 
@@ -38,6 +46,10 @@ interface TokenBalanceResult {
 }
 
 registerTool("get_token_balance", DESCRIPTION, INPUT_SCHEMA, async (args) => {
+  // Phase 8 — Plan 08-02: chainId from the agent's `chain` enum.
+  const chainName = args.chain as ChainName;
+  const chainId = chainIdFromName(chainName);
+
   const walletRaw = args.wallet;
   const tokenRaw = args.tokenAddress;
   if (typeof walletRaw !== "string" || !isAddress(walletRaw, { strict: false })) {
@@ -55,7 +67,7 @@ registerTool("get_token_balance", DESCRIPTION, INPUT_SCHEMA, async (args) => {
   const wallet: Address = getAddress(walletRaw);
   const tokenAddress: Address = getAddress(tokenRaw);
 
-  const client = getEthereumClient();
+  const client = getChainClient(chainId);
 
   try {
     const [balanceRaw, decimals, symbol] = await Promise.all([
@@ -79,7 +91,7 @@ registerTool("get_token_balance", DESCRIPTION, INPUT_SCHEMA, async (args) => {
 
     const balance = formatUnits(balanceRaw, decimals);
     const result: TokenBalanceResult = { balance, decimals, symbol };
-    if (isPublicNodeFallback()) result.rpcDegraded = true;
+    if (isPublicNodeFallback(chainId)) result.rpcDegraded = true;
 
     return {
       content: [

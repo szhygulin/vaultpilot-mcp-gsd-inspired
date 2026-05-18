@@ -170,4 +170,28 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
       }),
     ).toThrow(/hex|notahex/i);
   });
+
+  // Phase 8 — Plan 08-02. Fixture J is a PROPERTY test, not a literal pin
+  // (research § Topic 9 line 873-875 + CLAUDE.md "NO `beforeAll`-snapshot"):
+  // pinning 5 fingerprints adds NO information beyond Fixture A (which
+  // already proves chainId flows into the keccak). Fixture J proves the
+  // FUNCTION is chain-distinct, which is the actually-load-bearing claim
+  // for Phase 8's chain-id binding defense — a future edit to
+  // payload-fingerprint.ts that accidentally drops the chainId slot from
+  // the preimage produces 5 identical fingerprints and this test fires.
+  it("Fixture J — chain-distinctness property (Phase 8 / Plan 08-02)", () => {
+    const to = "0xab16a96d359ec26a11e2c2b3d8f8b8942d5bfcdb" as Address;
+    const params = { to, valueWei: 10n ** 18n, data: "0x" as Hex };
+    const fps = ([1, 42161, 137, 8453, 10] as const).map((chainId) =>
+      computePayloadFingerprint({ chainId, ...params }),
+    );
+    // All 5 fingerprints distinct — chainId-dependence is load-bearing for
+    // the Layer 3 cryptographic-binding gate in send_transaction.ts.
+    expect(new Set(fps).size).toBe(5);
+    // Each fingerprint is a 32-byte 0x-prefixed hex (66 chars total) — guards
+    // against a regression where the encoder collapses to a shorter shape.
+    for (const fp of fps) {
+      expect(fp).toMatch(/^0x[0-9a-f]{64}$/);
+    }
+  });
 });

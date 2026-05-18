@@ -1,7 +1,8 @@
 import { formatUnits, parseAbi, type Address } from "viem";
 
-import { loadEthereumTokenRegistry, type Token } from "../tokens/registry.js";
-import { getEthereumClient } from "./ethereum.js";
+import type { ChainId } from "../config/contracts.js";
+import { loadTokenRegistry, type Token } from "../tokens/registry.js";
+import { getChainClient } from "./registry.js";
 
 /**
  * Result row for one token in a balance scan.
@@ -27,9 +28,10 @@ const ERC20_BALANCE_OF_ABI = parseAbi([
 /**
  * Scans ERC-20 balances for a wallet via a single multicall round-trip.
  *
- * Defaults to the static top-50 token registry. Pass an explicit `tokens`
- * array to scan a custom set (used by 02-04's single-token-balance tool +
- * Phase 8's user-supplied lists).
+ * Defaults to the static top-50 token registry for the given chain (Phase 8
+ * Plan 08-02 widening — chainId defaults to `1` for back-compat with Phase 4-7
+ * single-chain callers). Pass an explicit `tokens` array to scan a custom set
+ * (used by 02-04's single-token-balance tool + Phase 8's user-supplied lists).
  *
  * One RPC round-trip per call regardless of token count — viem's `multicall`
  * batches all `balanceOf` reads through the canonical multicall3 contract.
@@ -39,11 +41,12 @@ const ERC20_BALANCE_OF_ABI = parseAbi([
 export async function scanErc20Balances(
   wallet: Address,
   tokens?: readonly Token[],
+  chainId: ChainId = 1,
 ): Promise<TokenBalance[]> {
-  const list = tokens ?? loadEthereumTokenRegistry();
+  const list = tokens ?? loadTokenRegistry(chainId);
   if (list.length === 0) return [];
 
-  const client = getEthereumClient();
+  const client = getChainClient(chainId);
   const contracts = list.map((token) => ({
     address: token.address,
     abi: ERC20_BALANCE_OF_ABI,

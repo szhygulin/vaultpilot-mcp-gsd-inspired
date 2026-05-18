@@ -26,7 +26,13 @@
 
 import { type Address, type Hex, erc20Abi, getAddress } from "viem";
 
-import { getEthereumClient } from "../chains/ethereum.js";
+import { getChainClient } from "../chains/registry.js";
+import {
+  chainIdFromName,
+  chainNameFromId,
+  type ChainId,
+  type ChainName,
+} from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
 import { getActivePersona } from "../demo/state.js";
 import { MAX_UINT256, encodeErc20Approve } from "../protocols/erc20.js";
@@ -39,7 +45,7 @@ import {
 } from "../signing/error-codes.js";
 import { createHandle } from "../signing/handle-store.js";
 import { computePayloadFingerprint } from "../signing/payload-fingerprint.js";
-import { loadEthereumTokenRegistry } from "../tokens/registry.js";
+import { loadTokenRegistry } from "../tokens/registry.js";
 import { getStatus } from "../wallet/session-manager.js";
 import { type ToolHandlerResult, registerTool } from "./index.js";
 
@@ -53,23 +59,29 @@ function errEnvelope(
 }
 
 const DESCRIPTION = [
-  "Prepare an unsigned ERC-20 approval on Ethereum mainnet. Returns a handle the agent passes to preview_send before send_transaction.",
+  "Prepare an unsigned ERC-20 approval on the specified EVM chain. Returns a handle the agent passes to preview_send before send_transaction.",
   "Use when the user wants to authorize a spender (a DEX router, a lending pool, a bridge, etc.) to move tokens on their behalf.",
   "Do NOT use to REVOKE an existing approval — call prepare_revoke_approval (distinct tool name; routes by user intent).",
   "Do NOT use for ERC-20 transfers — that's prepare_token_send.",
   "Do NOT use for native ETH / WETH unwrap / contract calls — each has a dedicated prepare_* tool.",
-  "Do NOT use for other chains — v1.0 is Ethereum mainnet only.",
+  "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism.",
   "`tokenAddress` is the ERC-20 contract address (0x-prefixed 20-byte hex). `spender` is the contract that will be authorized to move tokens — NOT a wallet address.",
   "`amount` is a DECIMAL STRING in human units (e.g. \"100.5\") OR the literal string \"max\" for unlimited (= 2^256-1). \"max\" is the ONLY accepted unlimited spelling — \"MAX\" / \"unlimited\" / \"infinite\" all refuse with INVALID_INPUT (strict-mode parity with userDecision: \"send\"'s enum lock).",
   "preview_send labels the approval `⚠ UNLIMITED APPROVAL` when amount === 2^256-1 (strict equality, not threshold-based) and surfaces a one-line revoke-path hint pointing at prepare_revoke_approval.",
   "Requires a paired Ledger (call pair_ledger_live first if get_ledger_status shows paired: false). In demo mode, succeeds against the active persona's address as `from`; send_transaction returns a simulation envelope instead of broadcasting.",
-  "Returns `{ handle, chainId: 1, from, spender, tokenAddress, amount, amountWei, payloadFingerprint }` plus a PREPARE RECEIPT text block surfacing the verbatim agent args.",
-  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set, INVALID_INPUT if tokenAddress/spender/amount malformed (including non-canonical \"max\" spellings and fractional-overflow vs token decimals).",
+  "Returns `{ handle, chain, chainId, from, spender, tokenAddress, amount, amountWei, payloadFingerprint }` plus a PREPARE RECEIPT text block surfacing the verbatim agent args.",
+  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set, INVALID_INPUT if chain/tokenAddress/spender/amount malformed (including non-canonical \"max\" spellings and fractional-overflow vs token decimals).",
 ].join(" ");
 
 const INPUT_SCHEMA = {
   type: "object" as const,
   properties: {
+    chain: {
+      type: "string",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
+      description:
+        "Chain identifier (required). Supported: ethereum, arbitrum, polygon, base, optimism.",
+    },
     tokenAddress: {
       type: "string",
       pattern: "^0x[0-9a-fA-F]{40}$",
@@ -86,7 +98,7 @@ const INPUT_SCHEMA = {
         "Decimal string in human units (e.g. \"100.5\") OR the literal string \"max\" for 2^256-1. \"max\" is the only accepted unlimited spelling.",
     },
   },
-  required: ["tokenAddress", "spender", "amount"],
+  required: ["chain", "tokenAddress", "spender", "amount"],
   additionalProperties: false,
 };
 
@@ -101,13 +113,14 @@ const INPUT_SCHEMA = {
  */
 async function resolveDecimals(
   tokenAddress: Address,
+  chainId: ChainId,
 ): Promise<{ decimals: number; symbol: string }> {
-  const registry = loadEthereumTokenRegistry();
+  const registry = loadTokenRegistry(chainId);
   const cached = registry.find((entry) => entry.address === tokenAddress);
   if (cached) {
     return { decimals: cached.decimals, symbol: cached.symbol };
   }
-  const client = getEthereumClient();
+  const client = getChainClient(chainId);
   const [decimals, symbol] = await Promise.all([
     client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: "decimals" }),
     client.readContract({ address: tokenAddress, abi: erc20Abi, functionName: "symbol" }),
@@ -140,8 +153,12 @@ export async function prepareApproveInternal(input: {
   rawSpender: string;
   rawAmount: string;
   amountWei: bigint;
+  /** Phase 8 — Plan 08-02: per-chain dispatch (defaults to ethereum for back-compat with revoke callers that omit it). */
+  chainId?: ChainId;
 }): Promise<ToolHandlerResult> {
   const { rawTokenAddress, rawSpender, rawAmount, amountWei } = input;
+  const chainId: ChainId = input.chainId ?? 1;
+  const chainName = chainNameFromId(chainId);
 
   // SENDER resolution (Plan 05-02 Option B): demo branch SKIPS getStatus()
   // so the spy observes zero calls in the demo arm. T-DEMO-1 + T-NULL-
@@ -195,8 +212,9 @@ export async function prepareApproveInternal(input: {
 
   // tx.to is the TOKEN CONTRACT (T-TX-TO-CONFUSION-1 mitigation parity).
   // tx.valueWei is 0n — approve never moves native value.
+  // Phase 8 — Plan 08-02: chainId per-chain.
   const tx = {
-    chainId: 1,
+    chainId,
     to: tokenAddress,
     valueWei: 0n,
     data,
@@ -224,7 +242,9 @@ export async function prepareApproveInternal(input: {
     payloadFingerprint,
   });
 
+  // Phase 8 — Plan 08-02: `{CHAIN}` slot widening.
   const receipt = APPROVE_PREPARE_RECEIPT_TEMPLATE
+    .replace("{CHAIN}", `${chainName} (chainId ${chainId})`)
     .replace("{TOKEN_ADDRESS}", rawTokenAddress)
     .replace("{SPENDER}", rawSpender)
     .replace("{AMOUNT}", rawAmount);
@@ -233,7 +253,8 @@ export async function prepareApproveInternal(input: {
     content: [{ type: "text", text: receipt }],
     structuredContent: {
       handle,
-      chainId: 1,
+      chain: chainName,
+      chainId,
       from: fromAddress,
       spender: rawSpender,
       tokenAddress: rawTokenAddress,
@@ -246,6 +267,10 @@ export async function prepareApproveInternal(input: {
 
 registerTool("prepare_token_approve", DESCRIPTION, INPUT_SCHEMA, async (args) => {
   try {
+    // Phase 8 — Plan 08-02: chainId from the agent's `chain` enum.
+    const chainName = args.chain as ChainName;
+    const chainId = chainIdFromName(chainName);
+
     // Validate tokenAddress shape — defense BEFORE any state read.
     const rawTokenAddress = typeof args.tokenAddress === "string" ? args.tokenAddress : "";
     if (!/^0x[0-9a-fA-F]{40}$/.test(rawTokenAddress)) {
@@ -292,7 +317,7 @@ registerTool("prepare_token_approve", DESCRIPTION, INPUT_SCHEMA, async (args) =>
       const tokenAddress = getAddress(rawTokenAddress) as Address;
       let decimals: number;
       try {
-        const meta = await resolveDecimals(tokenAddress);
+        const meta = await resolveDecimals(tokenAddress, chainId);
         decimals = meta.decimals;
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -336,6 +361,7 @@ registerTool("prepare_token_approve", DESCRIPTION, INPUT_SCHEMA, async (args) =>
       rawSpender,
       rawAmount,
       amountWei,
+      chainId,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

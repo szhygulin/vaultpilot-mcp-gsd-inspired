@@ -1,6 +1,23 @@
 import { getAddress, type Address } from "viem";
 
+import type { ChainName } from "../config/contracts.js";
 import { log } from "../diagnostics/logger.js";
+
+/**
+ * Phase 8 — Plan 08-02. Per-chain coin reference for {@link getPrices}.
+ * DefiLlama keys URLs by `coins=<chain>:<address>,<chain>:<address>` —
+ * passing this shape directly preserves the API contract without forcing
+ * downstream cross-chain consumers (Plan 08-03 cross-chain
+ * `get_portfolio_summary`) to coalesce by chain client-side.
+ *
+ * Existing single-chain callers continue to pass `Address[]` via the
+ * back-compat overload; the implementation maps both shapes to the same
+ * internal per-coin pipeline.
+ */
+export interface PriceCoin {
+  chain: ChainName;
+  address: Address;
+}
 
 /**
  * Per-row price quote returned by {@link getPrices}.
@@ -22,7 +39,7 @@ export interface PriceQuote {
 
 const DEFILLAMA_BASE_URL = "https://coins.llama.fi";
 const CACHE_TTL_MS = 60_000; // 60-second in-memory cache per phase decision.
-const CHAIN = "ethereum"; // v1.x is Ethereum-only; widening this is a Phase 8 concern.
+const DEFAULT_CHAIN: ChainName = "ethereum"; // legacy `Address[]` overload assumes ethereum
 
 interface CacheEntry {
   quote: PriceQuote;
@@ -32,54 +49,77 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 
 /**
- * Batch-fetches USD prices for a set of Ethereum mainnet addresses from
- * DefiLlama's `/prices/current/{coins}` endpoint.
+ * Type-guard for the Phase 8 per-chain `PriceCoin[]` overload — both shapes
+ * fall into the same internal pipeline below.
+ */
+function isPriceCoinArray(
+  input: readonly Address[] | readonly PriceCoin[],
+): input is readonly PriceCoin[] {
+  return input.length > 0 && typeof (input[0] as PriceCoin)?.chain === "string";
+}
+
+/**
+ * Batch-fetches USD prices from DefiLlama's `/prices/current/{coins}`
+ * endpoint. Two-shape input contract:
  *
- * Behaviour:
- * - Addresses are normalised via `getAddress` (checksum) for cache keys; the
- *   wire format uses lowercase per DefiLlama convention.
- * - Cache entries live for 60 seconds; rapid-fire portfolio reads hit the
- *   in-process Map without touching the network.
- * - Addresses missing from the response carry `priceUnknown: true` (NOT zero
- *   and NOT absent from the result Map). Cached the same way — DefiLlama's
- *   price set is stable enough that a missing entry today is missing in 60s.
- * - On HTTP failure, every requested address is cached as `priceUnknown` for
- *   the TTL window; the failure is logged at warn level. This keeps an outage
- *   from cascading into per-call latency spikes.
+ *   - `getPrices(addresses: Address[])` — legacy single-chain shape; coins
+ *     default to `ethereum:{address}`. Phase 4-7 callers continue to use this.
+ *   - `getPrices(coins: PriceCoin[])` — Phase 8 per-chain shape;
+ *     `ethereum:{address}`, `polygon:{address}`, etc. interleaved. Plan 08-03's
+ *     cross-chain `get_portfolio_summary` consumes this.
+ *
+ * The result Map keys by checksummed address regardless of input shape — for
+ * the per-chain overload, two different chains' rows for the same token
+ * address collapse to one entry (DefiLlama's price set is per-token, not per-
+ * chain at the contract level; bridged variants live at distinct addresses).
+ *
+ * Cache keys are CAIP-2-prefixed (`<chain>:<address>`) so the same address on
+ * different chains caches independently. Cache entries live for 60 seconds;
+ * rapid-fire portfolio reads hit the in-process Map without touching the
+ * network. On HTTP failure, every requested coin is cached as `priceUnknown`
+ * for the TTL window; the failure is logged at warn level. This keeps an
+ * outage from cascading into per-call latency spikes.
  *
  * No new dependency: uses the global `fetch` from Node 18+.
  */
 export async function getPrices(
-  addresses: readonly Address[],
+  input: readonly Address[] | readonly PriceCoin[],
 ): Promise<Map<Address, PriceQuote>> {
   const result = new Map<Address, PriceQuote>();
-  if (addresses.length === 0) return result;
+  if (input.length === 0) return result;
 
-  // Deduplicate by checksum and split cache hits vs misses.
+  // Normalize to PriceCoin[] internally — both shapes flow through one path.
+  const coinsInput: PriceCoin[] = isPriceCoinArray(input)
+    ? input.map((c) => ({ chain: c.chain, address: c.address }))
+    : input.map((address) => ({ chain: DEFAULT_CHAIN, address }));
+
+  // Deduplicate by `(chain, checksum)` and split cache hits vs misses.
   const now = Date.now();
-  const toFetch: Address[] = [];
+  const toFetch: PriceCoin[] = [];
   const seen = new Set<string>();
-  const checksummed: Address[] = [];
+  const checksummed: PriceCoin[] = [];
 
-  for (const raw of addresses) {
+  for (const raw of coinsInput) {
     let addr: Address;
     try {
-      addr = getAddress(raw);
+      addr = getAddress(raw.address);
     } catch {
       // Malformed address — surface as priceUnknown rather than throw; the
       // caller's wallet/token list shouldn't kill the whole portfolio fetch.
-      result.set(raw, { priceUnknown: true });
+      result.set(raw.address, { priceUnknown: true });
       continue;
     }
-    if (seen.has(addr)) continue;
-    seen.add(addr);
-    checksummed.push(addr);
+    const key = `${raw.chain}:${addr}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const coin: PriceCoin = { chain: raw.chain, address: addr };
+    checksummed.push(coin);
 
-    const cached = cache.get(cacheKey(addr));
+    const cached = cache.get(key);
     if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
       result.set(addr, cached.quote);
     } else {
-      toFetch.push(addr);
+      toFetch.push(coin);
     }
   }
 
@@ -90,7 +130,9 @@ export async function getPrices(
   }
 
   // DefiLlama wants `chain:address` joined by commas, lowercase address.
-  const coins = toFetch.map((addr) => `${CHAIN}:${addr.toLowerCase()}`).join(",");
+  const coins = toFetch
+    .map((c) => `${c.chain}:${c.address.toLowerCase()}`)
+    .join(",");
   const url = `${DEFILLAMA_BASE_URL}/prices/current/${coins}`;
 
   let payload: DefiLlamaResponse | undefined;
@@ -104,17 +146,17 @@ export async function getPrices(
     const message = err instanceof Error ? err.message : String(err);
     log("warn", `defillama: price fetch failed (${message}); ${toFetch.length} addresses marked priceUnknown for ${CACHE_TTL_MS / 1000}s`);
     // Cache the failure so we don't hammer DefiLlama on a sustained outage.
-    for (const addr of toFetch) {
+    for (const coin of toFetch) {
       const quote: PriceQuote = { priceUnknown: true };
-      cache.set(cacheKey(addr), { quote, fetchedAt: now });
-      result.set(addr, quote);
+      cache.set(cacheKey(coin), { quote, fetchedAt: now });
+      result.set(coin.address, quote);
     }
     return result;
   }
 
   const coinsMap = (payload.coins ?? {}) as Record<string, { price?: unknown }>;
-  for (const addr of toFetch) {
-    const wireKey = `${CHAIN}:${addr.toLowerCase()}`;
+  for (const coin of toFetch) {
+    const wireKey = `${coin.chain}:${coin.address.toLowerCase()}`;
     const entry = coinsMap[wireKey];
     let quote: PriceQuote;
     const price = entry?.price;
@@ -123,15 +165,15 @@ export async function getPrices(
     } else {
       quote = { priceUnknown: true };
     }
-    cache.set(cacheKey(addr), { quote, fetchedAt: now });
-    result.set(addr, quote);
+    cache.set(cacheKey(coin), { quote, fetchedAt: now });
+    result.set(coin.address, quote);
   }
 
   // Defensive: ensure every requested address has an entry, even if the
   // DefiLlama response shape drifted (extra rows / missing rows).
-  for (const addr of checksummed) {
-    if (!result.has(addr)) {
-      result.set(addr, { priceUnknown: true });
+  for (const coin of checksummed) {
+    if (!result.has(coin.address)) {
+      result.set(coin.address, { priceUnknown: true });
     }
   }
 
@@ -147,6 +189,6 @@ interface DefiLlamaResponse {
   coins?: Record<string, { price?: unknown; symbol?: string; decimals?: number; timestamp?: number; confidence?: number }>;
 }
 
-function cacheKey(address: Address): string {
-  return `${CHAIN}:${address}`;
+function cacheKey(coin: PriceCoin): string {
+  return `${coin.chain}:${coin.address}`;
 }
