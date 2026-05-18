@@ -229,11 +229,11 @@ Plans:
 **Plans**: 5 plans
 
 Plans:
-- [ ] 09-01: Sister repo `vaultpilot-preflight-skill` + `SKILL.md` + Step 0 integrity self-check + invariants #1/#2/#2.5/#5/#11
-- [ ] 09-02: Server-side skill SHA-256 pin + `VAULTPILOT NOTICE` block on missing/tampered skill + dedup-per-session
-- [ ] 09-03: `get_verification_artifact` + `pasteableBlock` shape + canned second-LLM prompt
-- [ ] 09-04: Dispatch-target allowlist (`src/security/canonical-dispatch.ts`) + per-tool wiring + regression tests
-- [ ] 09-05: `verify_tx_decode` (server-side decode cross-check) + `get_tx_verification` (15-min handle re-emit) + verification-tool routing docs
+- [ ] 09-01-PLAN.md — Sister repo `vaultpilot-preflight-skill` (execute-time `gh repo create szhygulin/vaultpilot-preflight-skill --private` checkpoint per memory `feedback_auto_mode.md`) + `SKILL.md` (planning-time SOT in `09-01-SKILL-TEMPLATE.md`) + Step 0 self-check + invariants #1/#2/#2.5/#5/#11/#14 encoded. EXPECTED_SKILL_SHA256 externalized to MCP INSTRUCTIONS (not SKILL.md body — self-referential SHA-256 is impossible by construction). Sister-repo v1.3.0 tag deferred to coordinated 09-02 step per plan-checker W-1.
+- [ ] 09-02-PLAN.md — `src/security/skill-integrity.ts` SHA-256 lazy probe (Node `crypto`, no fetch — local file read at `~/.claude/skills/vaultpilot-preflight/SKILL.md` personal scope OR `.claude/skills/...` project scope; whichever exists) + `VAULTPILOT_NOTICE_TEMPLATE` for missing/tampered in `src/signing/blocks.ts` + dispatcher-wrap NOTICE prepend at `server.ts:153-161` (mirror Plan 05-03 auto-demo) + dedup-per-session via `noticeEmitted` flag set BEFORE return (Pitfall 4 race-defense) + INSTRUCTIONS field surfaces EXPECTED_SKILL_SHA256 + sister-repo v1.3.0 tag created here in coordinated step. Wave B parallel-eligible with 09-04.
+- [ ] 09-03-PLAN.md — `get_verification_artifact({ handle })` tool + sparse JSON + `pasteableBlock` byte-stable template + canned second-LLM prompt for out-of-band decode (instructs out-of-context decoder to decode from scratch without trusting the agent's narrative). Wave C sequential after Wave B.
+- [ ] 09-04-PLAN.md — `src/security/canonical-dispatch.ts` (parallel `CANONICAL_DISPATCH_TARGETS` per-chain table per DF-2 — NOT a widening of `KNOWN_SPENDERS_ETHEREUM`; Aave + WETH sourced from existing SOT getters; 1inch V6 + LiFi inline; **option (b) PARTIAL: also consumes BRIDGED_VARIANTS from Plan 08-04** so ERC-20 token contracts pass T-DISPATCH-MISMATCH-1 without false-positive refusal) + Layer 0.5 wiring at `preview_send.ts:144-156` (fires AFTER handle lookup, BEFORE Phase 8 Layer 2 chain-mismatch at lines 173-191; distinct line region) + per-tool regression tests across 5 chains × ~4 known targets. Wave B parallel-eligible with 09-02.
+- [ ] 09-05-PLAN.md — `verify_tx_decode({ handle, claimedDecode })` (3-arm discriminated union `ok | divergence | decode-unsupported`; tighter than Phase 7 `check_contract_security`'s 5-arm because decode is deterministic; reuses `src/protocols/*.ts` decoders as single SOT per T-DECODER-SINGLE-SOT-1; agent passes WEI string in `claimedDecode.args.amount` per option (c) locked WEI-string discipline) + `get_tx_verification` v1.3 ADDITIVE EXTENSION (existing tool from Plan 04-05; v1.3 adds `txJson` + `sessionTopicLast8` + `dispatchCheckResult` structuredContent fields at lines 524-530 — OUTSIDE `send_transaction.ts` three-gate FROZEN region) + WC `sessionTopicLast8` additive surfacing across preview/send/pair responses (T-WC-TOPIC-DRIFT-1) + register-all.ts close-out import for BOTH `verify_tx_decode.js` AND Plan 09-03's `get_verification_artifact.js` (carve consolidation avoids 09-03 ∥ 09-05 rebase risk per PATTERNS § 3 line 583). Wave D sequential.
 
 ---
 
@@ -294,5 +294,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 6. ERC-20 lifecycle (transfer + approve + revoke + WETH unwrap) | v1.1 | 4/4 | Complete (verify-phase open) | 2026-05-13 |
 | 7. Aave V3 (Ethereum) | v1.1 | 4/4 | Complete (verify-phase open) | 2026-05-16 |
 | 8. Multi-EVM fan-out + token tooling | v1.2 | 5/5 | Complete (verify-phase open) | 2026-05-18 |
-| 9. Hardening (skill + three verification tools + dispatch allowlist) | v1.3 | 0/5 | Not started | - |
+| 9. Hardening (skill + three verification tools + dispatch allowlist) | v1.3 | 0/5 | Planned (bundle on `plan/phase-09`) | - |
 | 10. Distribution + ergonomics | v1.4 | 0/4 | Not started | - |
