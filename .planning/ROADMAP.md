@@ -256,10 +256,10 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 10-01: Build pipeline for per-platform binaries (`pkg` or `bun build`) + GitHub release workflow
-- [ ] 10-02: `install.sh` + `install.ps1` + `InstallEnvelope` JSON output + idempotency
-- [ ] 10-03: `vaultpilot-mcp setup` wizard (interactive + `--non-interactive --json` mode) + config.json writer
-- [ ] 10-04: `request_capability` tool + pre-filled URL builder + 3/hour rate limit
+- [ ] 10-01-PLAN.md — `@yao-pkg/pkg@^6.19.0` binary build pipeline (DF-1 locked over Bun/SEA/nexe for Node-runtime fidelity to FROZEN cryptographic-binding chain) + `package.json` scripts.build:binary + `.github/workflows/release.yml` semver-tag-triggered 4-target matrix (linux-x64, macos-x64, macos-arm64, windows-x64; linux-arm64 falls back to npm-install message) + per-asset SHA-256 sums + combined SHA256SUMS index + softprops/action-gh-release@v2 asset upload + T-PKG-CROSS-COMPILE-1 (all 4 binaries from single Linux runner).
+- [ ] 10-02-PLAN.md — `install.sh` (POSIX bash `main() { … }; main "$@"` wrapper + SHA-256 verify BEFORE extract via T-SHA256-VERIFY-BEFORE-EXTRACT-1 + idempotency via existing-binary-version-check + macOS quarantine `xattr -d com.apple.quarantine` interactive offer + InstallEnvelope JSON via `--json` mode) + `install.ps1` (PowerShell + Invoke-WebRequest + `Unblock-File` for Windows SmartScreen) + `src/diagnostics/install-envelope.ts` APPEND CheckId literals for install-flow (NO ENVELOPE_VERSION bump — T-INSTALL-ENVELOPE-COMPAT-1 preserves Phase 1 `--check --json` consumer byte-compat).
+- [ ] 10-03-PLAN.md — `src/cli/` shelf (5 NEW files: setup.ts + setup-prompts.ts + setup-non-interactive.ts + setup-mcp-clients.ts + setup-schema.ts) + `vaultpilot-mcp setup` CLI subcommand with `@clack/prompts@^1.4.0` interactive flow (DF-2 locked for ESM + clean multi-step API + zero native deps) + `--non-interactive --json` stdin reader + Zod schema SOT shared by both paths (T-WIZARD-SCHEMA-SOT-1) + dry-run + MCP client auto-registration (Claude Code CLI + Claude Desktop + Cursor) + Ledger pairing delegation to existing `pair_ledger_live_start`/`_wait` tools + ADDITIVE `writeConfigFile()` in `src/config/config-file.ts` AFTER line 95 (lines 1-95 byte-frozen Plan 05-03 surface) + T-CONFIG-LEAK-1 3-sentinel API-key substring scan.
+- [ ] 10-04-PLAN.md — `request_capability` MCP tool (`src/tools/request_capability.ts`) + URL builder via `URLSearchParams` (WHATWG-compliant; repo `szhygulin/vaultpilot-mcp-gsd-inspired`; labels `capability-request`) + 7KB body cap with truncation-to-local-file fallback at `~/.vaultpilot-mcp/capability-requests/<timestamp>.md` (T-CAPABILITY-BODY-CAP-1) + sliding-window 3/hour in-memory rate limit (`src/security/request-capability-rate-limit.ts` mirroring Phase 9 `_skillIntegrity` spy-affordance shape; T-CAPABILITY-RATE-LIMIT-1) + `RATE_LIMIT_EXCEEDED` errorCode + register-all import + tool DESCRIPTION includes literal `"NEVER auto-submits"` (T-CAPABILITY-AUTO-SUBMIT-1; DIST-43 lock).
 
 ---
 
@@ -297,4 +297,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 7. Aave V3 (Ethereum) | v1.1 | 4/4 | Complete (verify-phase open) | 2026-05-16 |
 | 8. Multi-EVM fan-out + token tooling | v1.2 | 5/5 | Complete (verify-phase open) | 2026-05-18 |
 | 9. Hardening (skill + three verification tools + dispatch allowlist) | v1.3 | 5/5 | Complete (verify-phase open) | 2026-05-18 |
-| 10. Distribution + ergonomics | v1.4 | 0/4 | Not started | - |
+| 10. Distribution + ergonomics | v1.4 | 0/4 | Planned (bundle on `plan/phase-10`) | - |
