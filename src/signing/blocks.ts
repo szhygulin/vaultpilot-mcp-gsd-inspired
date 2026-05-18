@@ -492,6 +492,53 @@ export function buildSimulationBlock(result: SimulationResult): string {
 // does NOT contain `LEDGER NOTICE` for Aave selectors).
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// Phase 8 — Plan 08-04 additive extension. `SET_LEVEL_ENUMERATION_TEMPLATE`
+// is the verbatim block shape emitted by `get_token_allowances` (READ-44).
+//
+// LOAD-BEARING for v1.3 Inv #14: the companion `vaultpilot-preflight` skill
+// parses this verbatim text to assemble the outer dispatch-target allowlist
+// for revoke-flow enforcement. Drift in this template breaks the v1.3 parser
+// at PR-review time — Test 4 in `test/get-token-allowances.test.ts` anchors
+// the shape via a hardcoded literal. Keep this template + the substitution
+// logic in `get_token_allowances.ts` in lockstep.
+//
+// All Phase 4 / 6 / 7 / 08-02 templates above BYTE-FROZEN — this is an
+// append-only addition (format-fanout-sentinel: one block, one home).
+// -----------------------------------------------------------------------------
+
+/**
+ * `[SET-LEVEL ENUMERATION]` block template (Phase 8 — Plan 08-04, READ-44).
+ *
+ * Slots (substituted by `get_token_allowances.ts`):
+ *   - `{SCOPE}`           — wallet address (full, 0x-prefixed)
+ *   - `{CHAIN}`           — `<chain-name> (chainId <id>)` (e.g. `ethereum (chainId 1)`)
+ *   - `{FROM_BLOCK}`      — scan window start block (decimal string)
+ *   - `{TO_BLOCK}`        — scan window end block (decimal string)
+ *   - `{LOOKBACK_BLOCKS}` — width of the scan window (decimal string)
+ *   - `{ROW_COUNT}`       — number of active rows (after multicall cross-check)
+ *   - `{TABLE}`           — Unicode-box-drawing table body (or "no active allowances")
+ *
+ * The block opens with `[SET-LEVEL ENUMERATION]` and closes with
+ * `[END SET-LEVEL ENUMERATION]` so a downstream parser (the v1.3 preflight
+ * skill) can extract the block by simple delimiter scan. The `scope:` /
+ * `chain:` / `fromBlock:` / `toBlock:` / `active rows:` lines are stable
+ * `<label>:<padding><value>` shapes — parsers split on `: ` and strip
+ * leading whitespace from the value. The `{TABLE}` slot's per-row shape is
+ * documented at the substitution site (`get_token_allowances.ts`).
+ */
+export const SET_LEVEL_ENUMERATION_TEMPLATE: string = [
+  "[SET-LEVEL ENUMERATION]",
+  "  scope:        {SCOPE}",
+  "  chain:        {CHAIN}",
+  "  fromBlock:    {FROM_BLOCK}",
+  "  toBlock:      {TO_BLOCK} ({LOOKBACK_BLOCKS} blocks)",
+  "  active rows:  {ROW_COUNT}",
+  "",
+  "{TABLE}",
+  "[END SET-LEVEL ENUMERATION]",
+].join("\n");
+
 /**
  * Aave V3 supply PREPARE RECEIPT (PREP-02 — verbatim agent args).
  *
