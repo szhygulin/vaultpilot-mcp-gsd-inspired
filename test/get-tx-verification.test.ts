@@ -164,9 +164,11 @@ describe("get_tx_verification — 'prepared' status re-emits PREPARE RECEIPT onl
     // No block emission — the preview-not-run note literally mentions the
     // string "LEDGER BLIND-SIGN HASH" as a routing hint, so we assert the
     // full BLOCK isn't emitted (header on its own line + the placeholder
-    // labels). The actual ledger block contains "Expected on-device hash";
-    // its absence proves the block didn't render.
-    expect(text).not.toContain("Expected on-device hash");
+    // labels). The actual ledger block contains "EXPECTED LEDGER DEVICE
+    // DISPLAY" (issue #63 — temporal-flow correction); its absence proves
+    // the block didn't render.
+    expect(text).not.toContain("EXPECTED LEDGER DEVICE DISPLAY");
+    expect(text).not.toContain("Predicted hash (full):");
     expect(text).not.toContain("[AGENT TASK");
     expect(text).not.toContain("4BYTE CROSS-CHECK");
     expect(text).toContain("preview has not run yet");
@@ -197,7 +199,11 @@ describe("get_tx_verification — 'previewed' re-emit equality (PREP-10, T-REEMI
 
     const text = result.content[0]?.text ?? "";
     expect(text).toContain("PREPARE RECEIPT");
-    expect(text).toContain("LEDGER BLIND-SIGN HASH");
+    // Issue #63: ledger block header renamed to EXPECTED LEDGER DEVICE DISPLAY
+    // (temporal-flow correction). Both the new header AND the post-send
+    // ritual prose must appear.
+    expect(text).toContain('EXPECTED LEDGER DEVICE DISPLAY (after you say "send")');
+    expect(text).toContain("Predicted hash (full):");
     expect(text).toContain("[AGENT TASK");
     expect(text).toContain("4BYTE CROSS-CHECK");
     expect(text).toContain("VERIFY BEFORE SIGNING");
@@ -255,7 +261,8 @@ describe("get_tx_verification — 'sent' status re-emits previewed blocks + BROA
 
     const text = result.content[0]?.text ?? "";
     expect(text).toContain("PREPARE RECEIPT");
-    expect(text).toContain("LEDGER BLIND-SIGN HASH");
+    // Issue #63: ledger block now uses EXPECTED LEDGER DEVICE DISPLAY header.
+    expect(text).toContain("EXPECTED LEDGER DEVICE DISPLAY");
     expect(text).toContain("[AGENT TASK");
     expect(text).toContain("BROADCAST CONFIRMATION");
     expect(text).toContain(TX_HASH);
@@ -280,7 +287,8 @@ describe("get_tx_verification — 'cancelled' status re-emits the reached blocks
 
     const text = result.content[0]?.text ?? "";
     expect(text).toContain("PREPARE RECEIPT");
-    expect(text).toContain("LEDGER BLIND-SIGN HASH");
+    // Issue #63: ledger block now uses EXPECTED LEDGER DEVICE DISPLAY header.
+    expect(text).toContain("EXPECTED LEDGER DEVICE DISPLAY");
     expect(text).toContain("CANCELLED");
     expect(text.toLowerCase()).toContain("cancelledat");
   });

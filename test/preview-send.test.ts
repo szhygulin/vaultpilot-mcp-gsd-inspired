@@ -620,10 +620,11 @@ describe("preview_send — demo mode succeeds against active persona (Plan 05-02
     );
     expect(sc.nonce).toBe(FIXTURE_C_NONCE);
 
-    // LEDGER BLIND-SIGN HASH block is emitted unchanged in demo mode
-    // (the rehearsal exercises the same verification ritual).
+    // Issue #63: ledger block emitted unchanged in demo mode (the rehearsal
+    // teaches the same temporal sequence the real flow uses). Header renamed
+    // to EXPECTED LEDGER DEVICE DISPLAY.
     const text = result.content[0]?.text ?? "";
-    expect(text).toContain("LEDGER BLIND-SIGN");
+    expect(text).toContain("EXPECTED LEDGER DEVICE DISPLAY");
     expect(text).toContain(FIXTURE_C_PRESIGN_HASH);
 
     // T-DEMO-1: getStatus is NEVER called in demo mode.
