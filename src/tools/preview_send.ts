@@ -50,8 +50,10 @@
 
 import { erc20Abi, type Address, type Hex } from "viem";
 import { estimateFeesPerGas, estimateGas, getTransactionCount } from "viem/actions";
+import { Message, Transaction } from "@solana/web3.js";
 
 import { getChainClient } from "../chains/registry.js";
+import { _solanaRegistry } from "../chains/solana/registry.js";
 import { lookupSelector } from "../clients/fourbyte.js";
 import {
   chainIdFromName,
@@ -65,8 +67,11 @@ import { isDemoMode } from "../config/env.js";
 import { getActivePersona } from "../demo/state.js";
 import { _aaveProtocols, type AaveV3Decoded } from "../protocols/aave-v3.js";
 import { _protocols, type Erc20Decoded } from "../protocols/erc20.js";
+import { _solanaSpl } from "../protocols/solana-spl.js";
+import { _solanaSystem } from "../protocols/solana-system.js";
 import { WETH9_SELECTORS } from "../protocols/weth9.js";
 import { _canonicalDispatch } from "../security/canonical-dispatch.js";
+import { _canonicalDispatchSolana } from "../security/canonical-dispatch-solana.js";
 import {
   AGENT_TASK_TEMPLATE,
   CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE,
@@ -81,12 +86,27 @@ import {
   chunkHex,
 } from "../signing/blocks.js";
 import {
+  LEDGER_BLIND_SIGN_HASH_SOLANA_TEMPLATE,
+  PREPARE_RECEIPT_SOLANA_NATIVE_TEMPLATE,
+  PREPARE_RECEIPT_SOLANA_SPL_TEMPLATE,
+  SIMULATION_BLOCK_SOLANA_TEMPLATE,
+  VERIFY_BEFORE_SIGNING_SOLANA_TEMPLATE,
+} from "../signing/blocks-solana.js";
+import {
   type ErrorCode,
   type StructuredError,
   makeStructuredError,
 } from "../signing/error-codes.js";
-import { lookup, transitionToPreviewed } from "../signing/handle-store.js";
+import {
+  lookup,
+  transitionToPreviewed,
+  type HandleRecord,
+  type PreparedTxSolana,
+  type SolanaInstructionSummary,
+} from "../signing/handle-store.js";
+import { _solanaPresign } from "../signing/presign-hash-solana.js";
 import { computePresignHash } from "../signing/presign-hash.js";
+import { _simulationSolana } from "../signing/simulation-solana.js";
 import { _simulation } from "../signing/simulation.js";
 import { loadTokenRegistry } from "../tokens/registry.js";
 import { getStatus } from "../wallet/session-manager.js";
@@ -157,6 +177,18 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       };
     }
     const record = lookupResult.record;
+
+    // Phase 12 — Plan 12-04 — dispatch on txType discriminator. EVM branch
+    // (the Phase 4-9 byte-identical FROZEN region below) handles every
+    // existing handle (txType absent OR "evm"). Solana branch routes to the
+    // sibling pipeline (Layer 0.5 canonical-dispatch-solana + Layer 0.7
+    // mandatory simulation gate per DF-4). The discriminator-dispatch block
+    // here is the ONLY edit inside the FROZEN region; extracted Solana
+    // branch lives at the bottom of this file.
+    const txType = record.tx.txType ?? "evm";
+    if (txType === "solana") {
+      return await previewSendSolanaBranch(record);
+    }
 
     // Phase 9 — Plan 09-04. Layer 0.5 outer dispatch-target allowlist
     // refusal (SEC-35). Fires AFTER handle lookup (needs record.tx.chainId
@@ -656,3 +688,350 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     };
   }
 });
+
+// ===========================================================================
+// Phase 12 — Plan 12-04 — Solana branch (additive; outside the EVM FROZEN
+// region above). Dispatcher in the main handler reads `record.tx.txType` and
+// routes here for `"solana"` handles. The EVM branch above stays byte-
+// identical to Phase 4-9.
+//
+// Layer order in this branch (mirrors EVM but with Solana-specific gates):
+//   0.5  canonical-dispatch-solana — refuse on non-allowlisted programIds.
+//   0.7  MANDATORY simulation gate — refuse on `sim.status !== "ok"` per DF-4
+//         (NOT advisory like EVM `eth_call`; logs surfaced verbatim).
+//   1.   handle-state machine — `transitionToPreviewed` overwrites pinned
+//         (Q4 invariant; sentinel zeros for EVM-specific fields).
+//
+// EVM equivalents skipped:
+//   - Layer 2 chain-name mismatch: Solana has no `chainId` concept; the
+//     discriminator-dispatch already routed to the Solana arm.
+//   - Layer 3 fingerprint drift: fires in `send_transaction` (Plan 12-05),
+//     NOT at preview. Preview is informational + simulation-gated; drift
+//     detection at send is the canonical PREP-08 invariant.
+// ===========================================================================
+
+/**
+ * Chunk a 32-byte hex digest into 16 groups of 4 hex chars for readable
+ * on-device comparison. Mirrors `chunkHex` from `blocks.ts` but specialized
+ * for SHA-256 64-hex output (no 0x prefix in chunks; insert single spaces).
+ * Stays inline here to keep `blocks-solana.ts` byte-frozen (Wave 1 lock).
+ */
+function chunkSolanaHash(hashFull64Hex: string): string {
+  // Strip `0x` prefix if present.
+  const raw = hashFull64Hex.startsWith("0x") ? hashFull64Hex.slice(2) : hashFull64Hex;
+  const groups: string[] = [];
+  for (let i = 0; i < raw.length; i += 4) {
+    groups.push(raw.slice(i, i + 4));
+  }
+  return groups.join(" ");
+}
+
+/**
+ * Render the DECODED ARGS block for a Solana preview. Dispatcher on
+ * `instructionSummary[0].kind`:
+ *   - `native-transfer`     → System Program Transfer decoded args.
+ *   - `spl-transfer-checked` → SPL TransferChecked decoded args.
+ *
+ * Reads from the pre-decoded `instructionSummary` on the handle (Plans
+ * 12-02 / 12-03 populate this at prepare time).
+ */
+function buildSolanaDecodedArgsBlock(
+  instructionSummary: SolanaInstructionSummary[] | undefined,
+): string {
+  if (!instructionSummary || instructionSummary.length === 0) {
+    return [
+      "DECODED ARGS (Solana — unknown)",
+      "  No decoded instruction summary on the handle.",
+    ].join("\n");
+  }
+  const first = instructionSummary[0];
+  if (!first) {
+    return [
+      "DECODED ARGS (Solana — unknown)",
+      "  Empty instruction summary on the handle.",
+    ].join("\n");
+  }
+  if (first.kind === "native-transfer") {
+    return [
+      "DECODED ARGS (Solana — native transfer)",
+      `  from:     ${first.from}`,
+      `  to:       ${first.to}`,
+      `  lamports: ${first.lamports.toString()}`,
+    ].join("\n");
+  }
+  // spl-transfer-checked
+  return [
+    "DECODED ARGS (Solana — SPL TransferChecked)",
+    `  mint:           ${first.mint}`,
+    `  sourceAta:      ${first.sourceAta}`,
+    `  destAta:        ${first.destAta}`,
+    `  destOwner:      ${first.destOwner}`,
+    `  amount (raw):   ${first.amount.toString()}`,
+    `  decimals:       ${first.decimals}`,
+  ].join("\n");
+}
+
+/**
+ * Render the SIMULATION_BLOCK_SOLANA template with status + err + log
+ * preview. `logPreview` joins the first 3 log lines with 4-space indent so
+ * the substitution lands inside the template's `{LOG_PREVIEW_LINES}` slot
+ * uniformly.
+ */
+function renderSimulationBlockSolana(input: {
+  status: string;
+  err: string | null;
+  unitsConsumed: number | null;
+  logs: string[];
+}): string {
+  const logPreview = input.logs
+    .slice(0, 3)
+    .map((line) => `    ${line}`)
+    .join("\n");
+  return SIMULATION_BLOCK_SOLANA_TEMPLATE
+    .replace("{STATUS}", input.status)
+    .replace("{ERR}", input.err ?? "")
+    .replace(
+      "{UNITS_CONSUMED}",
+      input.unitsConsumed === null ? "n/a" : input.unitsConsumed.toString(),
+    )
+    .replace("{LOG_COUNT}", input.logs.length.toString())
+    .replace("{LOG_PREVIEW_LINES}", logPreview);
+}
+
+/**
+ * Render the PREPARE RECEIPT block dispatcher on `instructionSummary[0].kind`.
+ * Reads verbatim agent strings from `record.args` per PREP-02.
+ */
+function buildPrepareReceiptForSolana(record: HandleRecord): string {
+  const args = record.args;
+  const instructionSummary = (record.tx as PreparedTxSolana).instructionSummary;
+  const first = instructionSummary && instructionSummary[0];
+  if (first && first.kind === "spl-transfer-checked") {
+    return PREPARE_RECEIPT_SOLANA_SPL_TEMPLATE
+      .replace("{TO}", args.to)
+      .replace("{MINT}", args.mint ?? first.mint)
+      .replace("{AMOUNT}", args.amount ?? "")
+      .replace("{RECENT_BLOCKHASH}", args.recentBlockhash ?? "")
+      .replace("{ATA_NOTICE}", "");
+  }
+  // Native transfer (default).
+  return PREPARE_RECEIPT_SOLANA_NATIVE_TEMPLATE
+    .replace("{TO}", args.to)
+    .replace("{LAMPORTS}", args.lamports ?? "")
+    .replace("{RECENT_BLOCKHASH}", args.recentBlockhash ?? "");
+}
+
+/**
+ * Preview a Solana-typed handle. EVM body (above) stays byte-identical;
+ * this branch is the additive Plan 12-04 surface. Performs:
+ *
+ *   1. Layer 0.5 canonical-dispatch-solana refusal on non-allowlisted
+ *      programIds (`DISPATCH_TARGET_REFUSED`).
+ *   2. Reconstruct the legacy `Transaction` from `record.tx.messageBytes`
+ *      via `Transaction.populate(Message.from(messageBytes))` — the
+ *      canonical SDK helper for round-tripping serialized messages.
+ *   3. Layer 0.7 MANDATORY simulation gate via
+ *      `_simulationSolana.runSolanaPreviewSimulation` — refuses
+ *      (`SIMULATION_REFUSED`) on any `status !== "ok"` per DF-4.
+ *   4. Recompute `presignHash` (SHA-256 of messageBytes) via
+ *      `_solanaPresign.computeSolanaPresignHash`.
+ *   5. Mint a fresh `previewToken` UUID.
+ *   6. Pin via `transitionToPreviewed(handle, { ...sentinel-zeros,
+ *      previewToken, presignHash })`.
+ *   7. Render the 5-block text response: PREPARE RECEIPT + DECODED ARGS +
+ *      LEDGER BLIND-SIGN HASH + CHECKS PERFORMED (Solana sim) + VERIFY
+ *      BEFORE SIGNING.
+ */
+async function previewSendSolanaBranch(record: HandleRecord) {
+  const solTx = record.tx as PreparedTxSolana;
+
+  // ---- Layer 0.5 — canonical-dispatch-solana allowlist refusal --------
+  const dispatchCheck = _canonicalDispatchSolana.checkSolanaDispatchTarget(
+    solTx.programIds,
+  );
+  if (dispatchCheck.kind === "refused") {
+    const message = `Solana program(s) not in v1.x allowlist: ${dispatchCheck.offenders.join(
+      ", ",
+    )}. v1.x scope = System Program + SPL Token Program + Associated Token Program. MarginFi / Kamino / Jupiter / Marinade defer to Phases 13-15.`;
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text: `error: ${message}\n\nallowlist:\n  ${dispatchCheck.allowlist.join(
+            "\n  ",
+          )}`,
+        },
+      ],
+      structuredContent: errEnvelope("DISPATCH_TARGET_REFUSED", message),
+    };
+  }
+
+  // ---- Reconstruct legacy Transaction from messageBytes ---------------
+  let tx: Transaction;
+  try {
+    const message = Message.from(Buffer.from(solTx.messageBytes));
+    tx = Transaction.populate(message);
+  } catch (err) {
+    const cause = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text: `error: failed to reconstruct Solana transaction from messageBytes: ${cause}`,
+        },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        "failed to reconstruct Solana transaction from messageBytes",
+        cause,
+      ),
+    };
+  }
+
+  // ---- Layer 0.7 — MANDATORY simulation gate (DF-4) -------------------
+  // EVM simulation stayed advisory because stale-nonce / flaky-RPC false
+  // reverts are common; Solana `simulateTransaction.err` is high-fidelity
+  // (RPC re-executes against current state) so refusal is the correct
+  // posture. ANY non-`ok` status refuses with `SIMULATION_REFUSED`. logs
+  // surfaced verbatim in `structuredContent.simulation.logs`.
+  const connection = _solanaRegistry.getConnection();
+  const sim = await _simulationSolana.runSolanaPreviewSimulation({
+    connection,
+    transaction: tx,
+  });
+  if (sim.status !== "ok") {
+    const causeMessage =
+      sim.err ?? sim.rpcError ?? `simulation status: ${sim.status}`;
+    const simBlock = renderSimulationBlockSolana({
+      status: sim.status.toUpperCase(),
+      err: causeMessage,
+      unitsConsumed: sim.unitsConsumed,
+      logs: sim.logs,
+    });
+    const message = `Solana preview simulation refused: ${causeMessage}. Re-run prepare_solana_* to refresh the blockhash + re-derive ATAs.`;
+    return {
+      isError: true,
+      content: [{ type: "text" as const, text: simBlock }],
+      structuredContent: {
+        ...(errEnvelope("SIMULATION_REFUSED", message, causeMessage) as Record<
+          string,
+          unknown
+        >),
+        simulation: {
+          status: sim.status,
+          err: sim.err,
+          unitsConsumed: sim.unitsConsumed,
+          logCount: sim.logs.length,
+          logs: sim.logs,
+          rpcError: sim.rpcError ?? null,
+        },
+      },
+    };
+  }
+
+  // ---- Mint previewToken + recompute presignHash ---------------------
+  const previewToken = crypto.randomUUID();
+  const { presignHash } = _solanaPresign.computeSolanaPresignHash({
+    messageBytes: solTx.messageBytes,
+  });
+
+  // ---- Pin onto handle. Sentinel zeros for EVM-specific fields keep
+  // PreviewPinned type-stable. selector is null (Solana programs addressed
+  // by program ID, not by 4-byte selector).
+  const trans = transitionToPreviewed(record.handle, {
+    nonce: 0,
+    gas: 0n,
+    maxFeePerGas: 0n,
+    maxPriorityFeePerGas: 0n,
+    previewToken,
+    presignHash,
+    selector: null,
+  });
+  if (!trans.ok) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text: `error: handle state changed during preview (${trans.errorCode})`,
+        },
+      ],
+      structuredContent: errEnvelope(
+        trans.errorCode,
+        `handle transition failed: ${trans.errorCode}`,
+      ),
+    };
+  }
+
+  // ---- Render text blocks ---------------------------------------------
+  const prepareReceiptBlock = buildPrepareReceiptForSolana(record);
+  const decodedArgsBlock = buildSolanaDecodedArgsBlock(solTx.instructionSummary);
+  const ledgerBlock = LEDGER_BLIND_SIGN_HASH_SOLANA_TEMPLATE
+    .replace("{HASH_FULL_64HEX}", presignHash)
+    .replace("{HASH_CHUNKED_4_CHAR_GROUPS}", chunkSolanaHash(presignHash));
+  const simBlock = renderSimulationBlockSolana({
+    status: "OK",
+    err: null,
+    unitsConsumed: sim.unitsConsumed,
+    logs: sim.logs,
+  });
+  const text = [
+    prepareReceiptBlock,
+    "",
+    decodedArgsBlock,
+    "",
+    ledgerBlock,
+    "",
+    simBlock,
+    "",
+    VERIFY_BEFORE_SIGNING_SOLANA_TEMPLATE,
+  ].join("\n");
+
+  return {
+    content: [{ type: "text" as const, text }],
+    structuredContent: {
+      handle: record.handle,
+      previewToken,
+      presignHash,
+      payloadFingerprint: record.payloadFingerprint,
+      txType: "solana" as const,
+      simulation: {
+        status: sim.status,
+        unitsConsumed: sim.unitsConsumed,
+        logCount: sim.logs.length,
+        logs: sim.logs,
+      },
+      // Serialize instructionSummary for JSON safety — bigint → string.
+      decodedArgs: (solTx.instructionSummary ?? []).map((s) =>
+        s.kind === "native-transfer"
+          ? {
+              kind: "native-transfer" as const,
+              from: s.from,
+              to: s.to,
+              lamports: s.lamports.toString(),
+            }
+          : {
+              kind: "spl-transfer-checked" as const,
+              mint: s.mint,
+              sourceAta: s.sourceAta,
+              destAta: s.destAta,
+              destOwner: s.destOwner,
+              amount: s.amount.toString(),
+              decimals: s.decimals,
+            },
+      ),
+      // Phase 12: Solana branch has no WC session topic (the trust pipeline
+      // bypasses WC entirely on send via USB-HID — Plan 12-05). null surfaces
+      // for cross-chain agent symmetry.
+      sessionTopicLast8: null,
+    },
+  };
+}
+
+// Keep decoder indirection objects referenced (Plan 12-05 send-time branch
+// will dispatch to them; this plan only consumes via instructionSummary so
+// the import-warn rule sees them as unused).
+void _solanaSystem;
+void _solanaSpl;
