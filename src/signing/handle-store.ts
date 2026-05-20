@@ -13,6 +13,14 @@
 // Cross-ref: research § Pattern 1 (HandleRecord shape, transitionTo* sketches),
 // research § Q1 (transitionToCancelled added for userDecision: "cancel" path),
 // research § Q4 (idempotent re-preview semantics — last-write wins).
+//
+// Phase 18 — Plan 18-01 widening: `PreparedTx` literal-union further widens to
+// `PreparedTxEvm | PreparedTxSolana | PreparedTxTron`. New `PreparedTxTron`
+// interface mirrors `PreparedTxSolana` sentinel-fields pattern with TRON-specific
+// cryptographic-binding fields. `txType` literal-union widens from `"evm" | "solana"`
+// to `"evm" | "solana" | "tron"` (CONTEXT D-10). The rawDataObject persistence
+// rationale is documented in 18-RESEARCH §Topic 7.
+// State machine + TTL + handle lifecycle BYTE-IDENTICAL.
 
 import type { Address, Hex } from "viem";
 
@@ -61,6 +69,13 @@ export interface PrepareArgs {
   lamports?: string;
   /** Phase 12 — pinned recent blockhash, base58 (raw agent string when surfaced; server-derived at prepare time). */
   recentBlockhash?: string;
+  /** Phase 18 — native TRX amount as raw sun decimal string. Populated by `prepare_tron_native_send` (Plan 18-02). */
+  sun?: string;
+  /** Phase 18 — agent-supplied expiration override in seconds (optional; defaults to 900 = 15min in encoder). */
+  expiration?: string;
+  /** Phase 18 — pinned ref-block fields (server-derived at prepare time; surfaced in PREPARE RECEIPT). */
+  refBlockBytes?: string;
+  refBlockHash?: string;
 }
 
 /**
@@ -93,6 +108,37 @@ export type SolanaInstructionSummary =
       /** Raw token amount. */
       amount: bigint;
       /** Mint decimals (TransferChecked encodes decimals in the instruction data). */
+      decimals: number;
+    };
+
+/**
+ * Phase 18 — decoded TRON instruction summary surfaced in the DECODED ARGS
+ * block by preview_send TRON branch (Plan 18-04). Discriminated union mirrors
+ * the `SolanaInstructionSummary` shape — preview_send narrows via `kind`.
+ * Prepared by the TRON prepare tools (Plans 18-02 / 18-03) and pinned onto
+ * `PreparedTxTron.instructionSummary`.
+ */
+export type TronInstructionSummary =
+  | {
+      kind: "native-transfer";
+      /** Sender base58check address. */
+      from: string;
+      /** Recipient base58check address. */
+      to: string;
+      /** Raw sun amount (bigint). 1 TRX = 1_000_000 sun. */
+      sun: bigint;
+    }
+  | {
+      kind: "trc20-transfer";
+      /** Sender base58check address. */
+      from: string;
+      /** Recipient base58check address. */
+      to: string;
+      /** TRC-20 contract base58check address. */
+      tokenAddress: string;
+      /** Raw token amount (bigint), scaled per `decimals`. */
+      amount: bigint;
+      /** Token decimals (from `get_tron_token_metadata`). */
       decimals: number;
     };
 
@@ -196,7 +242,94 @@ export interface PreparedTxSolana {
   instructionSummary?: SolanaInstructionSummary[];
 }
 
-export type PreparedTx = PreparedTxEvm | PreparedTxSolana;
+/**
+ * TRON prepared-tx shape. Phase 18 — Plan 18-01. Mirrors the `PreparedTxSolana`
+ * sentinel-fields pattern — EVM-shape sentinel fields allow existing EVM-side
+ * consumers to remain BYTE-IDENTICAL without narrowing at every call site.
+ * The discriminator (`txType: "tron"`) + TRON-specific fields carry the
+ * cryptographic-binding inputs; the sentinel EVM fields are set to zero/empty
+ * values so accidental EVM dispatch hits the Layer 0.5 canonical-dispatch-tron
+ * refusal before reaching any meaningful EVM processing.
+ *
+ * `rawDataObject` is persisted as `unknown` to avoid leaking tronweb SDK types
+ * into handle-store (Plan 18-04 send branch rebuilds the broadcast envelope
+ * from this object). Rationale in 18-RESEARCH §Topic 7.
+ */
+export interface PreparedTxTron {
+  /** Required discriminator — TRON shape. */
+  txType: "tron";
+
+  // -----------------------------------------------------------------------
+  // EVM-shape sentinel fields (set to zero / empty values for TRON handles).
+  // Present to keep the discriminated union accessible by existing EVM-side
+  // consumers without forcing narrowing at every site. EVM call paths that
+  // reach a TRON handle will hit the Layer 0.5 dispatch-target refusal
+  // before reading these — the sentinels are defensive, not load-bearing.
+  // -----------------------------------------------------------------------
+  /** Sentinel — TRON has no EVM chainId. Always 0. */
+  chainId: number;
+  /** Sentinel — TRON addresses are base58check, not 0x-prefixed. Always the zero address. */
+  to: Address;
+  /** Sentinel — TRON uses sun, not valueWei. Always 0n. */
+  valueWei: bigint;
+  /** Sentinel — TRON has no EVM calldata. Always `"0x"`. */
+  data: Hex;
+  /** Sentinel — TRON has no EVM nonce. Always undefined. */
+  nonce?: number;
+  gas?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+
+  // -----------------------------------------------------------------------
+  // TRON-specific cryptographic-binding fields. Populated by Plan 18-02 /
+  // 18-03 prepare tools; consumed by Plan 18-04 preview_send / send branches.
+  // -----------------------------------------------------------------------
+  /**
+   * Canonical Protobuf-serialized raw_data hex (no 0x prefix per tronweb
+   * convention). Source of both payloadFingerprint preimage (DF-1) and
+   * presignHash computation (DF-2 = SHA-256(raw_data) = transaction.txID).
+   */
+  rawDataHex: string;
+  /**
+   * Original tronweb raw_data object (typed as `unknown` to avoid leaking SDK
+   * types into handle-store). Plan 18-04 send branch reconstructs the
+   * broadcast envelope from this object. Rationale in 18-RESEARCH §Topic 7.
+   */
+  rawDataObject: unknown;
+  /**
+   * Pinned ref-block fields from prepare time. Surfaced verbatim in
+   * PREPARE RECEIPT (Plans 18-02 + 18-03). Used by Plan 18-04 send branch
+   * to validate the transaction has not expired.
+   */
+  refBlockBytes: string;
+  refBlockHash: string;
+  /**
+   * Transaction expiration timestamp (ms since epoch). Plans 18-02 + 18-03
+   * set this to `Date.now() + 900_000` (15 min) via `extendExpiration` per
+   * 18-RESEARCH §Topic 5. Plan 18-04 checks `Date.now() < expiration` at
+   * send time.
+   */
+  expiration: number;
+  /**
+   * TRON-specific discriminator — routes Layer 0.5 + Layer 0.7 dispatch at
+   * preview_send TRON branch (Plan 18-04). `"native"` skips canonical-dispatch-
+   * tron allowlist and simulation gate; `"trc20"` enforces both.
+   */
+  kind: "native" | "trc20";
+  /**
+   * TRC-20 only — base58check token contract address. Consumed by
+   * `canonical-dispatch-tron` allowlist (Plan 18-04 Layer 0.5 gate).
+   * Undefined for native TRX handles.
+   */
+  contractAddress?: string;
+  /**
+   * Decoded instruction summary — populated by Plan 18-02 / 18-03 encoders;
+   * consumed by Plan 18-04 DECODED ARGS surface.
+   */
+  instructionSummary?: TronInstructionSummary[];
+}
+
+export type PreparedTx = PreparedTxEvm | PreparedTxSolana | PreparedTxTron;
 
 /**
  * Preview-pinned fields, persisted onto the record at `transitionToPreviewed`
