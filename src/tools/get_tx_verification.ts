@@ -530,7 +530,7 @@ function getTxVerificationSolanaBranch(
 // ===========================================================================
 // Phase 18 — Plan 18-04 — TRON re-emit branch (additive). EVM + Solana bodies
 // above stay byte-untouched. TRON handles re-emit the TRON-shape PREPARE
-// RECEIPT (dispatcher on `kind`) + LEDGER BLIND-SIGN HASH (TRON) + status-
+// RECEIPT (dispatcher on `kind`) + LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE + status-
 // aware footer + `blockHeader` + `rawDataHex` + `dispatchCheckResult`.
 // ===========================================================================
 
@@ -586,7 +586,7 @@ function getTxVerificationTronBranch(
     const text = [
       prepareReceiptBlock,
       "",
-      "(preview has not run yet; call preview_send to get the LEDGER BLIND-SIGN HASH (TRON))",
+      "(preview has not run yet; call preview_send to get the TRON blind-sign hash block)",
     ].join("\n");
     return {
       content: [{ type: "text" as const, text }],

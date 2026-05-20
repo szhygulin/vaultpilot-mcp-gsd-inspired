@@ -84,6 +84,7 @@ import {
   signSolanaTransaction,
 } from "../wallet/ledger-solana-transport.js";
 import {
+  LedgerDeviceNotConnectedError as LedgerTronDeviceNotConnectedError,
   LedgerTronAppNotOpenError,
   _tronLedgerTransport,
 } from "../wallet/ledger-tron-transport.js";
@@ -1173,7 +1174,7 @@ async function sendTransactionTronBranch(
       tokenSignatures: [], // Phase 18 — bundled token registry covers Phase 18 set
     });
   } catch (err) {
-    if (err instanceof LedgerDeviceNotConnectedError) {
+    if (err instanceof LedgerTronDeviceNotConnectedError) {
       return {
         isError: true,
         content: [{ type: "text", text: `error: ${err.message}` }],

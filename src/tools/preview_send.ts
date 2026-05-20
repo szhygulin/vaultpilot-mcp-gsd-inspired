@@ -1243,7 +1243,7 @@ function shouldEmitTronLedgerNotice(tx: PreparedTxTron):
  *   5. Pin via `transitionToPreviewed(handle, { ...sentinel-zeros,
  *      previewToken, presignHash })`.
  *   6. Render text response: PREPARE RECEIPT + LEDGER NOTICE (conditional) +
- *      LEDGER BLIND-SIGN HASH (TRON) + CHECKS PERFORMED + VERIFY BEFORE SIGNING.
+ *      LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE + CHECKS PERFORMED + VERIFY BEFORE SIGNING.
  */
 async function previewSendTronBranch(
   record: HandleRecord & { tx: PreparedTxTron },
