@@ -229,11 +229,14 @@ export async function signTronTransaction(input: {
 }
 
 /**
- * ESM spy-affordance for the TRON signing path. Plan 18-04 `send_transaction`
- * TRON branch calls `_tronLedgerTransport.signTransaction(...)` so tests can
- * `vi.spyOn(_tronLedgerTransport, "signTransaction")` without monkey-patching
- * the named export (ESM bindings are immutable). Per CLAUDE.md "Add the
- * indirection at write time."
+ * ESM spy-affordance for the TRON signing + address-probe paths. Plan 18-04
+ * `send_transaction` TRON branch calls `_tronLedgerTransport.signTransaction`
+ * so tests can `vi.spyOn(_tronLedgerTransport, "signTransaction")`. Plan 21-01
+ * `get_tron_setup_status` calls `_tronLedgerTransport.fetchTronAddress` so
+ * tests can `vi.spyOn(_tronLedgerTransport, "fetchTronAddress")` without
+ * monkey-patching the named exports (ESM bindings are immutable). Per CLAUDE.md
+ * "Add the indirection at write time." — widening ADDITIVE; pre-existing
+ * `signTransaction` export BYTE-IDENTICAL.
  */
 export const _tronLedgerTransport = {
   signTransaction: (input: {
@@ -241,6 +244,10 @@ export const _tronLedgerTransport = {
     rawTxHex: string;
     tokenSignatures: string[];
   }): Promise<string> => signTronTransaction(input),
+  fetchTronAddress: (
+    derivationPath?: string,
+  ): Promise<{ address: string; publicKey: string; appVersion: string }> =>
+    fetchTronAddress(derivationPath),
 };
 
 /**

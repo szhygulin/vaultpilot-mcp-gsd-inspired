@@ -325,3 +325,52 @@ Cross-chain bridging (TRC-20/TRON → EVM via LiFi router) is deferred. The Phas
 | T-ROUTER-SUB | Tampering | CRITICAL | TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST (1-entry); T-SOT-DRIFT-1 cross-import assert |
 | T-AMOUNT-ZERO | Tampering | HIGH | slippageBps ≥ 10000 refused; amountOutMin = outAmount × (10000 − bps) / 10000 ≥ 1 |
 | T-FROZEN-20 | Tampering | CRITICAL | git diff origin/main -- <frozen-paths> empty at Task 3 commit |
+
+## TRON v2.1 milestone close-out summary
+
+Closes out the v2.1 TRON milestone. Phases 17 + 18 + 19 + 20 (SunSwap only) shipped under per-plan admin-merge cadence; LiFi TRON facet deferred to v2.2.x per Phase 20 D-04b.
+
+### Milestone PRs
+
+- Phase 17 (TRON scaffolding) — PRs #83 / #84 / #88 / #91 / #92 — USB-HID transport, TRX reads, TRC-20 registry, `tronweb@6.3.0` research-lock, `fetchTronAddress` base58check DIRECTLY regression anchor, 5-level BIP-44 path divergence, persona, multi-chain portfolio TRON leg (TRON-READ-04 shipped here ahead of Phase 21 placement per Phase 17 FLAG-1)
+- Phase 18 (TRON native + TRC-20 trust pipeline) — PRs #97 / #98 / #99 / #100 — `payload-fingerprint-tron.ts` domain-tagged keccak256 + `presign-hash-tron.ts` SHA-256 = TRON consensus tx-id = Ledger TRX-app blind-sign display + `simulation-tron.ts` NEVER-throws classifier + `blocks-tron.ts` 7 templates + `amount-tron.ts` u64/u256-discriminated parser + `canonical-dispatch-tron.ts` 4-stablecoin allowlist + `handle-store.ts` PreparedTxTron widening + Fixtures M + N hardcoded literals + `prepare_tron_native_send` + `prepare_tron_trc20_send` + `preview_send` / `send_transaction` / `get_tx_verification` TRON branches + Layer 0.5 canonical-dispatch + Layer 0.7 asymmetric simulation gate + LOAD-BEARING `extendExpiration(tx, 900)` + trust-pipeline integration test
+- Phase 19 (TRC-20 approve + Stake 2.0) — PRs #106 / #107 / #108 / #109 — `prepare_tron_token_approve` + `prepare_tron_revoke_approval` + Stake 2.0 full lifecycle (freeze / unfreeze / withdraw-expire / vote / claim-rewards) + SR registry hybrid live+snapshot + `INVALID_INPUT + hintTool` intent-vs-reality gates + Fixtures Tron-19-{A,B,C,D} hardcoded literals + lifecycle integration test
+- Phase 20 (SunSwap V2) — PR #113 — `get_sunswap_quote` + `prepare_sunswap_swap` + sandwich-MEV refusal at >2% price impact + `TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST` (SunSwap V2 router) + Fixture Tron-20-A hardcoded literal + LiFi TRON-W-11 + TRON-W-12 LiFi portion DEFERRED to v2.2.x
+
+### Trust-shape recap
+
+The v2.1 TRON trust pipeline mirrors the v2.0 Solana shape with TRON-specific cryptographic primitives:
+
+- **USB-HID direct broadcast** via `tronweb.trx.sendRawTransaction` — NOT the WalletConnect bridge. TRON mirrors Solana's USB-HID direct broadcast; the WC bridge is EVM-only. The USB-HID transport is the physical custody boundary.
+- **Domain-tagged `payloadFingerprint`**: `keccak256("VaultPilot-trontx-v1:" ‖ raw_data_bytes)` — the 21-byte UTF-8 domain tag makes cross-chain fingerprint reuse impossible by construction. Different from EVM (`"VaultPilot-evmtx-v1:"` — 22 bytes) and Solana (`"VaultPilot-soltx-v1:"` — 20 bytes).
+- **`presignHash = SHA-256(raw_data)`** — TRON consensus tx-id. The Ledger TRX app displays this exact 32-byte hash on blind-sign mode, labeled "Transaction ID". The `LEDGER BLIND-SIGN HASH (TRON)` block in `preview_send` shows the same hash for character-for-character on-device comparison. Same input bytes as `payloadFingerprint`; different hash function for layer-appropriate uniqueness.
+- **Asymmetric Layer 0.7 simulation gate** — TRC-20 mandatory `triggerconstantcontract` refusal vs native TRX `NO_SIMULATION_AVAILABLE_TRON_TEMPLATE` advisory (asymmetry documented in Phase 18 §6 sub-3 + Phase 19 sub-3; accepted residual for native TRX).
+- **`extendExpiration(tx, 900)`** — broadcast window extended to 15 minutes to match the 15-min handle TTL. Prevents `TRANSACTION_EXPIRATION_ERROR` from a ~5-min user pause between prepare and send. The 15-min window sits inside the TAPOS replay window.
+
+### 21-code error union FROZEN — `INVALID_INPUT + hintTool` pattern
+
+The 21-code `errorCodes` union (`src/signing/error-codes.ts`) has been frozen since Phase 18 close. Phases 19 + 20 + 21 all adopted the `INVALID_INPUT + hintTool` refusal pattern (intent-vs-reality gates / sandwich-MEV / pairing-not-set diagnostics) rather than extending the union with new codes.
+
+Canonical adopters:
+- Phase 19 D-11a — TRC-20 approve not-set + Stake 2.0 freeze/unfreeze invalid (`INVALID_INPUT + hintTool: "pair_tron_ledger"`)
+- Phase 20 D-03b — sandwich-MEV >2% price impact refusal (`INVALID_INPUT + hintTool: "get_sunswap_quote"`)
+- Phase 21 D-06 — no-pairing diagnostic (`INVALID_INPUT + hintTool: "pair_tron_ledger"`)
+
+**Any future TRON write tool MUST follow this pattern. The 21-code union is closed.**
+
+### Accepted residual risks
+
+- **LiFi TRON-W-11 + TRON-W-12 LiFi portion DEFERRED to v2.2.x** per Phase 20 D-04b. LiFi has no TRON deployment as of 2026-05-20 (verified via live `/v1/chains` returning 69 EVM chains with no TRON, GitHub `lifinance/contracts/deployments/` no `tron*.json`, `/v1/quote?fromChain=TRX` returning error 1011). Reschedule preconditions documented in `20-02-DEFERRED.md`; the `checkpoint:human-verify` task signature is preserved for v2.2.x replan.
+
+- **SR registry snapshot refresh cadence undocumented** — `src/tokens/tron-srs.json` (Phase 19 Plan 19-03) is a top-30 SR snapshot fallback when `tronWeb.trx.listSuperRepresentatives()` fails. The snapshot was anchored in Phase 19 from live data on 2026-05-20; no automated refresh cadence is documented. Backlog item: cron / CI job to refresh the snapshot quarterly + commit the diff under a labeled chore PR. Tracked-but-open residual; voting-tool reliability degrades over time as the on-chain SR set rotates.
+
+- **v2.1 verify-phase pending real-Ledger USB-HID smoke** — TRX-app small-amount mainnet broadcast for: native TRX transfer, TRC-20 transfer (USDT-TRC20), Stake 2.0 freeze (Energy + Bandwidth), Stake 2.0 claim-rewards, SunSwap swap (small amount, low slippage). The smoke is bundled with Phase 17's deferred USB-HID smoke. Each broadcast verifies the on-device SHA-256 tx-id matches the `LEDGER BLIND-SIGN HASH (TRON)` block from `preview_send`. Open milestone-completion gate; NOT auto-resolved by Phase 21.
+
+### Phase 21 (diagnostics) threat register summary
+
+| Threat ID | STRIDE | Severity | Mitigation |
+|-----------|--------|----------|------------|
+| T-PAIRING-DRIFT (T-21-01) | Tampering | MEDIUM | `addressVerified = walletAddress === walletAddressOnDevice` strict-equality surfaced verbatim in tool response. Agent SHOULD warn user if false. NO automatic refusal — this is a diagnostic, not a guard. Test arm 2 covers the false case explicitly. |
+| T-RPC-FAILURE-MASKED-AS-EMPTY (T-21-02) | Information Disclosure | LOW | `rpcDegraded.reason` set explicitly on TronGrid failure; frozen amounts default to "0" only when account is verifiably empty (frozenV2 is empty) OR explicitly degraded (rpcDegraded set). `resourceAccountPresent: false` distinguishes "account never touched" from "RPC down." Tests arms 6 + 7. |
+| T-LEDGER-APP-VERSION-LIES (T-21-03) | Spoofing | LOW | `ledgerTrxAppVersion` is INFORMATIONAL only — no version-gating in v2.1. Spoofed version cannot weaponize the diagnostic by construction. Future `request_capability` integration may gate on minimum version; out of scope here. |
+| T-FROZEN (T-21-FROZEN) | Tampering | CRITICAL | `git diff origin/main` empty assertion on the FROZEN file list at plan close (cryptographic-binding primitives + protocols + prepare tools + fingerprint test files + 21-code error union + handle-store + preview_send + send_transaction + canonical-dispatch-tron + contracts.ts). Phase 21 is READ-ONLY by construction. |

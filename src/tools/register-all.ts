@@ -38,6 +38,7 @@ import "./prepare_tron_stake_unfreeze.js";           // Phase 19 Plan 19-02 (TRO
 import "./prepare_tron_withdraw_expire_unfreeze.js"; // Phase 19 Plan 19-02 (TRON-W-06) — Stake 2.0 withdraw-expire
 import "./prepare_tron_stake_vote.js";               // Phase 19 Plan 19-03 (TRON-W-06) — Stake 2.0 vote
 import "./prepare_tron_stake_claim_rewards.js";      // Phase 19 Plan 19-03 (TRON-W-07) — Stake 2.0 claim rewards
+import "./get_tron_setup_status.js";                  // Phase 21 Plan 21-01 (TRON-DIAG-01) — TRON setup diagnostic
 import "./get_sunswap_quote.js";                       // Phase 20 Plan 20-01 (TRON-W-09) — SunSwap V2 quote
 import "./prepare_sunswap_swap.js";                    // Phase 20 Plan 20-01 (TRON-W-09) — SunSwap V2 swap + sandwich-MEV gate
 import "./prepare_token_approve.js";
