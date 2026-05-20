@@ -140,6 +140,52 @@ export type TronInstructionSummary =
       amount: bigint;
       /** Token decimals (from `get_tron_token_metadata`). */
       decimals: number;
+    }
+  | {
+      // Phase 19 Plan 19-01 — TRC-20 approve via `approve(spender, amount)` ABI.
+      // selector: 0x095ea7b3 (distinct from transfer 0xa9059cbb).
+      // Approve and revoke BOTH reuse `PreparedTxTron.kind: "trc20"` because they
+      // are TriggerSmartContract dispatches; the semantic distinction lives here.
+      kind: "trc20-approve";
+      /** Sender base58check address. */
+      from: string;
+      /** TRC-20 contract base58check address. */
+      tokenAddress: string;
+      /** Approved spender base58check address. */
+      spender: string;
+      /** Raw approved amount (bigint), scaled per token decimals. */
+      amount: bigint;
+      /**
+       * True iff `amount === U256_MAX` (strict equality per D-02a).
+       * Read by preview_send approve arm to gate UNLIMITED_APPROVAL_TRON_TEMPLATE.
+       * Name `amountIsMax` chosen over `isUnlimited` for grep-friendly clarity;
+       * avoids collision with the decoder's local `isUnlimited` field.
+       */
+      amountIsMax: boolean;
+      /**
+       * Resolved label from KNOWN_SPENDERS_TRON, or the literal
+       * `"(unknown spender — no prior interaction recorded)"` for unknown spenders.
+       * Label is ADVISORY — on-device spender address is the trust anchor.
+       */
+      spenderLabel: string;
+    }
+  | {
+      // Phase 19 Plan 19-01 — TRC-20 allowance revoke (approve with amount=0n).
+      // D-01 byte-identity: calldata is IDENTICAL to `trc20-approve` with amount=0n;
+      // the discriminator here is the SURFACE-LAYER distinction only.
+      // NO `amount` field on revoke — the amount is always 0 by definition.
+      kind: "trc20-revoke";
+      /** Sender base58check address. */
+      from: string;
+      /** TRC-20 contract base58check address. */
+      tokenAddress: string;
+      /** Revoked spender base58check address. */
+      spender: string;
+      /**
+       * Resolved label from KNOWN_SPENDERS_TRON, or the literal
+       * `"(unknown spender — no prior interaction recorded)"` for unknown spenders.
+       */
+      spenderLabel: string;
     };
 
 /**

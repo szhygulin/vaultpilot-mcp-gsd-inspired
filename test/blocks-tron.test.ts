@@ -15,12 +15,15 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  KNOWN_SPENDER_LABEL_TRON_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE,
   LEDGER_NOTICE_TRON_TEMPLATE,
   NO_SIMULATION_AVAILABLE_TRON_TEMPLATE,
+  PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE,
   PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE,
   PREPARE_RECEIPT_TRON_TRC20_TEMPLATE,
   SIMULATION_BLOCK_TRON_TEMPLATE,
+  UNLIMITED_APPROVAL_TRON_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
 } from "../src/signing/blocks-tron.js";
 
@@ -299,7 +302,7 @@ describe("VERIFY_BEFORE_SIGNING_TRON_TEMPLATE", () => {
 // Cross-template distinctions
 // ============================================================================
 describe("Cross-template distinctness regression", () => {
-  it("all 7 templates are distinct strings (no accidental duplication)", () => {
+  it("all 7 Phase 18 templates are distinct strings (no accidental duplication)", () => {
     const templates = [
       PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE,
       PREPARE_RECEIPT_TRON_TRC20_TEMPLATE,
@@ -311,5 +314,146 @@ describe("Cross-template distinctness regression", () => {
     ];
     const unique = new Set(templates);
     expect(unique.size).toBe(7);
+  });
+});
+
+// ============================================================================
+// Phase 19 Plan 19-01 — APPEND-ONLY templates
+// ============================================================================
+
+// ============================================================================
+// Template 8 — PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE
+// ============================================================================
+describe("PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE — Phase 19 Plan 19-01", () => {
+  it("substitution: all slots replaced with sentinels produce expected output", () => {
+    const result = PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE
+      .replace("{CHAIN}", "<CHAIN-SENTINEL>")
+      .replace("{TOKEN}", "<TOKEN-SENTINEL>")
+      .replace("{SPENDER}", "<SPENDER-SENTINEL>")
+      .replace("{AMOUNT}", "<AMOUNT-SENTINEL>")
+      .replace("{REF_BLOCK_BYTES}", "<REF_BLOCK_BYTES-SENTINEL>")
+      .replace("{REF_BLOCK_HASH}", "<REF_BLOCK_HASH-SENTINEL>")
+      .replace("{EXPIRATION}", "<EXPIRATION-SENTINEL>");
+
+    expect(result).toContain("<CHAIN-SENTINEL>");
+    expect(result).toContain("<TOKEN-SENTINEL>");
+    expect(result).toContain("<SPENDER-SENTINEL>");
+    expect(result).toContain("<AMOUNT-SENTINEL>");
+    expect(result).toContain("<REF_BLOCK_BYTES-SENTINEL>");
+    expect(result).toContain("<REF_BLOCK_HASH-SENTINEL>");
+    expect(result).toContain("<EXPIRATION-SENTINEL>");
+    expect(result).toContain("PREPARE RECEIPT (TRON — TRC-20 approve)");
+  });
+
+  it("slot-pin: all expected slots are present in the template", () => {
+    expect(PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE).toContain("{CHAIN}");
+    expect(PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE).toContain("{TOKEN}");
+    expect(PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE).toContain("{SPENDER}");
+    expect(PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE).toContain("{AMOUNT}");
+    expect(PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE).toContain("{REF_BLOCK_BYTES}");
+    expect(PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE).toContain("{REF_BLOCK_HASH}");
+    expect(PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE).toContain("{EXPIRATION}");
+  });
+
+  it("slot naming: uses {TOKEN} and {SPENDER} (NOT {TOKEN_ADDRESS} or {TO})", () => {
+    // The approve template uses {TOKEN}/{SPENDER} slot names, NOT {TOKEN_ADDRESS}/{TO}
+    // (which are the TRC-20 transfer template's slot names). Regression anchor.
+    expect(PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE).not.toContain("{TOKEN_ADDRESS}");
+    expect(PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE).not.toContain("{TO}");
+  });
+
+  it("format-fanout-sentinel: header present in canonical file", () => {
+    expect(CANONICAL_FILE).toContain("PREPARE RECEIPT (TRON — TRC-20 approve)");
+  });
+
+  it("format-fanout-sentinel: header NOT inlined in consumer source files", () => {
+    assertNotInlinedInConsumerFiles("PREPARE RECEIPT (TRON — TRC-20 approve)");
+  });
+});
+
+// ============================================================================
+// Template 9 — UNLIMITED_APPROVAL_TRON_TEMPLATE
+// ============================================================================
+describe("UNLIMITED_APPROVAL_TRON_TEMPLATE — Phase 19 Plan 19-01", () => {
+  it("substitution: slots replaced produce expected output", () => {
+    const result = UNLIMITED_APPROVAL_TRON_TEMPLATE
+      .replaceAll("{TOKEN}", "<TOKEN-SENTINEL>")
+      .replaceAll("{SPENDER}", "<SPENDER-SENTINEL>");
+
+    expect(result).toContain("<TOKEN-SENTINEL>");
+    expect(result).toContain("<SPENDER-SENTINEL>");
+    expect(result).toContain("⚠ UNLIMITED APPROVAL (TRON)");
+    expect(result).toContain("prepare_tron_revoke_approval");
+    expect(result).toContain("MAX_UINT256");
+  });
+
+  it("slot-pin: {TOKEN} and {SPENDER} slots present (used multiple times)", () => {
+    expect(UNLIMITED_APPROVAL_TRON_TEMPLATE).toContain("{TOKEN}");
+    expect(UNLIMITED_APPROVAL_TRON_TEMPLATE).toContain("{SPENDER}");
+  });
+
+  it("revoke hint present — directs user to prepare_tron_revoke_approval", () => {
+    expect(UNLIMITED_APPROVAL_TRON_TEMPLATE).toContain("prepare_tron_revoke_approval");
+  });
+
+  it("format-fanout-sentinel: header present in canonical file", () => {
+    expect(CANONICAL_FILE).toContain("⚠ UNLIMITED APPROVAL (TRON)");
+  });
+
+  it("format-fanout-sentinel: header NOT inlined in consumer source files", () => {
+    assertNotInlinedInConsumerFiles("⚠ UNLIMITED APPROVAL (TRON)");
+  });
+});
+
+// ============================================================================
+// Template 10 — KNOWN_SPENDER_LABEL_TRON_TEMPLATE
+// ============================================================================
+describe("KNOWN_SPENDER_LABEL_TRON_TEMPLATE — Phase 19 Plan 19-01", () => {
+  it("substitution: all slots replaced with sentinels produce expected output", () => {
+    const result = KNOWN_SPENDER_LABEL_TRON_TEMPLATE
+      .replace("{SPENDER}", "<SPENDER-SENTINEL>")
+      .replace("{LABEL}", "<LABEL-SENTINEL>")
+      .replace("{SOURCE}", "<SOURCE-SENTINEL>");
+
+    expect(result).toContain("<SPENDER-SENTINEL>");
+    expect(result).toContain("<LABEL-SENTINEL>");
+    expect(result).toContain("<SOURCE-SENTINEL>");
+    expect(result).toContain("SPENDER LABEL (TRON)");
+  });
+
+  it("slot-pin: all expected slots are present in the template", () => {
+    expect(KNOWN_SPENDER_LABEL_TRON_TEMPLATE).toContain("{SPENDER}");
+    expect(KNOWN_SPENDER_LABEL_TRON_TEMPLATE).toContain("{LABEL}");
+    expect(KNOWN_SPENDER_LABEL_TRON_TEMPLATE).toContain("{SOURCE}");
+  });
+
+  it("format-fanout-sentinel: header present in canonical file", () => {
+    expect(CANONICAL_FILE).toContain("SPENDER LABEL (TRON)");
+  });
+
+  it("format-fanout-sentinel: header NOT inlined in consumer source files", () => {
+    assertNotInlinedInConsumerFiles("SPENDER LABEL (TRON)");
+  });
+});
+
+// ============================================================================
+// Phase 19 cross-template: all 10 templates are distinct
+// ============================================================================
+describe("All 10 templates (Phase 18 + Phase 19) distinctness", () => {
+  it("all 10 templates are distinct strings", () => {
+    const all = [
+      PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE,
+      PREPARE_RECEIPT_TRON_TRC20_TEMPLATE,
+      LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE,
+      LEDGER_NOTICE_TRON_TEMPLATE,
+      SIMULATION_BLOCK_TRON_TEMPLATE,
+      NO_SIMULATION_AVAILABLE_TRON_TEMPLATE,
+      VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
+      PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE,
+      UNLIMITED_APPROVAL_TRON_TEMPLATE,
+      KNOWN_SPENDER_LABEL_TRON_TEMPLATE,
+    ];
+    const unique = new Set(all);
+    expect(unique.size).toBe(10);
   });
 });

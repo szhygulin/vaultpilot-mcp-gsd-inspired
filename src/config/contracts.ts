@@ -443,3 +443,117 @@ export function lookupSpender(spender: Address): KnownSpender | undefined {
  * intercept the lookup without monkey-patching the production import path.
  */
 export const _contracts = { lookupSpender };
+
+// ---------------------------------------------------------------------------
+// KNOWN_SPENDERS_TRON — Phase 19 Plan 19-01 (TRON-W-08).
+// ---------------------------------------------------------------------------
+//
+// Sibling sub-table (NOT a widening of KNOWN_SPENDERS_ETHEREUM or any existing
+// export). TRON addresses are base58check (T-prefixed, 34 chars) — NOT EIP-55
+// checksummed 0x-prefixed. No `getAddress()` wrapping. DOA validation at module
+// load via `tronUtils.address.isAddress()` (mirrors tron-top-25.ts validateEntry).
+//
+// Entries (D-07a + Task 0 defer-lifi outcome):
+//   - SunSwap V2 Router (cross-verified: https://docs.sun.io)
+//   - USDT-TRC20 contract (TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t — canonical Tether TRON)
+//   - USDC-TRC20 contract (TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8 — canonical Circle TRON)
+//   - USDD contract (TPYmHEhy5n8TCEfYGqW2rPxsghSfzghPDn — Decentralized USD by TRON DAO)
+//   - TUSD-TRC20 contract (TUpMhErZL2fhh4sVNULAbNKLokS4GjC1F4 — TrueUSD TRON)
+//
+// LiFi TRON facet: deferred to Phase 20 per Task 0 checkpoint:decision outcome
+// (defer-lifi). Address was not verified against official deployment manifests at
+// Phase 19 research time. Phase 20 adds it when TRON LiFi bridging ships.
+//
+// Format-fanout-sentinel: `_contractsTron.lookupTronSpender` is the only consumer
+// of this table. NEVER inline TRON spender addresses in tool implementations.
+
+import { utils as tronUtilsContracts } from "tronweb";
+
+/**
+ * A curated row in the TRON known-spender table. The `address` is the TRON
+ * base58check (T-prefixed, 34 chars) contract that receives approval; the
+ * `label` is the verbatim text surfaced in preview_send's DECODED ARGS block;
+ * the `source` is a citation URL for the regression test cross-check.
+ *
+ * NOTE: Unlike `KnownSpender` (EVM), there is NO `getAddress()` checksumming —
+ * TRON addresses are base58check, not EIP-55. Addresses validated at module
+ * load via `tronUtilsContracts.address.isAddress()`.
+ */
+export interface KnownSpenderTron {
+  /** TRON base58check address (T-prefixed, 34 chars). */
+  address: string;
+  /** Human-readable label surfaced in preview_send DECODED ARGS. */
+  label: string;
+  /** Citation URL for regression test cross-check. */
+  source: string;
+}
+
+/**
+ * Curated TRON known-spender table. Phase 19 Plan 19-01 — 5 entries.
+ * Entry[0]: SunSwap V2 Router (the canonical TRON DEX for Phase 20+ LiFi flows).
+ * Entries[1..4]: 4 canonical TRC-20 stablecoin token contracts — the same
+ * 4-entry set that `canonical-dispatch-tron.ts` allowlists for Phase 18 transfers.
+ *
+ * LiFi TRON facet: deferred to Phase 20 per Task 0 checkpoint:decision.
+ */
+export const KNOWN_SPENDERS_TRON: readonly KnownSpenderTron[] = [
+  {
+    address: "TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax",
+    label: "SunSwap V2 Router",
+    source: "https://docs.sun.io",
+  },
+  {
+    address: "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+    label: "USDT-TRC20 (Tether USD)",
+    source: "https://tronscan.org/#/token20/TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+  },
+  {
+    address: "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8",
+    label: "USDC-TRC20 (USD Coin)",
+    source: "https://tronscan.org/#/token20/TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8",
+  },
+  {
+    address: "TPYmHEhy5n8TCEfYGqW2rPxsghSfzghPDn",
+    label: "USDD (Decentralized USD)",
+    source: "https://tronscan.org/#/token20/TPYmHEhy5n8TCEfYGqW2rPxsghSfzghPDn",
+  },
+  {
+    address: "TUpMhErZL2fhh4sVNULAbNKLokS4GjC1F4",
+    label: "TUSD-TRC20 (TrueUSD)",
+    source: "https://tronscan.org/#/token20/TUpMhErZL2fhh4sVNULAbNKLokS4GjC1F4",
+  },
+];
+
+// DOA validation at module load — mirrors tron-top-25.ts validateEntry pattern.
+// Catches typos / corrupted snapshots at server startup rather than at runtime.
+for (const entry of KNOWN_SPENDERS_TRON) {
+  if (!tronUtilsContracts.address.isAddress(entry.address)) {
+    throw new Error(
+      `[contracts.ts] KNOWN_SPENDERS_TRON: invalid TRON base58check address: "${entry.address}" (label: "${entry.label}"). ` +
+        "Fix the address or remove the entry.",
+    );
+  }
+}
+
+/**
+ * Exact-match TRON known-spender lookup by base58check address.
+ * TRON base58check addresses are case-sensitive (unlike EIP-55 EVM addresses).
+ * NO `getAddress()`-style normalization — `"TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax".toLowerCase()`
+ * is NOT in the table, so callers MUST pass the exact base58check form.
+ *
+ * Returns the matched `KnownSpenderTron` row or `undefined` for unknown
+ * spenders — the caller renders the `(unknown spender — no prior interaction
+ * recorded)` fallback.
+ */
+export function lookupTronSpender(spender: string): KnownSpenderTron | undefined {
+  return KNOWN_SPENDERS_TRON.find((s) => s.address === spender);
+}
+
+/**
+ * ESM spy-affordance per CLAUDE.md "ESM spy-affordance indirection" convention.
+ * `prepare_tron_token_approve.ts` (Plan 19-01) imports `_contractsTron` and
+ * calls `_contractsTron.lookupTronSpender(...)` so tests can
+ * `vi.spyOn(_contractsTron, "lookupTronSpender")` to intercept the lookup
+ * without monkey-patching the production import path.
+ */
+export const _contractsTron = { lookupTronSpender };
