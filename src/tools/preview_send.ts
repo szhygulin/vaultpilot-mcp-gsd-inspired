@@ -55,6 +55,7 @@ import { Message, Transaction } from "@solana/web3.js";
 import { _compoundChains } from "../chains/compound-v3.js";
 import { getChainClient } from "../chains/registry.js";
 import { _solanaRegistry } from "../chains/solana/registry.js";
+import { _tronRegistry } from "../chains/tron/registry.js";
 import { lookupSelector } from "../clients/fourbyte.js";
 import {
   chainIdFromName,
@@ -79,6 +80,7 @@ import { _solanaSystem } from "../protocols/solana-system.js";
 import { WETH9_SELECTORS } from "../protocols/weth9.js";
 import { _canonicalDispatch } from "../security/canonical-dispatch.js";
 import { _canonicalDispatchSolana } from "../security/canonical-dispatch-solana.js";
+import { _canonicalDispatchTron } from "../security/canonical-dispatch-tron.js";
 import {
   AGENT_TASK_TEMPLATE,
   CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE,
@@ -102,6 +104,15 @@ import {
   VERIFY_BEFORE_SIGNING_SOLANA_TEMPLATE,
 } from "../signing/blocks-solana.js";
 import {
+  LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE,
+  LEDGER_NOTICE_TRON_TEMPLATE,
+  NO_SIMULATION_AVAILABLE_TRON_TEMPLATE,
+  PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE,
+  PREPARE_RECEIPT_TRON_TRC20_TEMPLATE,
+  SIMULATION_BLOCK_TRON_TEMPLATE,
+  VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
+} from "../signing/blocks-tron.js";
+import {
   type ErrorCode,
   type StructuredError,
   makeStructuredError,
@@ -111,11 +122,14 @@ import {
   transitionToPreviewed,
   type HandleRecord,
   type PreparedTxSolana,
+  type PreparedTxTron,
   type SolanaInstructionSummary,
 } from "../signing/handle-store.js";
+import { _tronPresign } from "../signing/presign-hash-tron.js";
 import { _solanaPresign } from "../signing/presign-hash-solana.js";
 import { computePresignHash } from "../signing/presign-hash.js";
 import { _simulationSolana } from "../signing/simulation-solana.js";
+import { _simulationTron, type TronSimulationResult } from "../signing/simulation-tron.js";
 import { _simulation } from "../signing/simulation.js";
 import { loadTokenRegistry } from "../tokens/registry.js";
 import { getStatus } from "../wallet/session-manager.js";
@@ -197,6 +211,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     const txType = record.tx.txType ?? "evm";
     if (txType === "solana") {
       return await previewSendSolanaBranch(record);
+    }
+    if (txType === "tron") {
+      return await previewSendTronBranch(record as HandleRecord & { tx: PreparedTxTron });
     }
 
     // Phase 9 — Plan 09-04. Layer 0.5 outer dispatch-target allowlist
@@ -1157,3 +1174,249 @@ async function previewSendSolanaBranch(record: HandleRecord) {
 // the import-warn rule sees them as unused).
 void _solanaSystem;
 void _solanaSpl;
+
+// ===========================================================================
+// Phase 18 — Plan 18-04 — TRON branch (additive; lives OUTSIDE the FROZEN
+// three-gate region above). Dispatcher in the main handler reads
+// `record.tx.txType` and routes here for `"tron"` handles. The EVM + Solana
+// branches above stay byte-frozen.
+//
+// TRON branch layers (per CONTEXT D-03 + D-11):
+//   Layer 0.5 — canonical-dispatch-tron (TRC-20 only; native skips)
+//   Layer 0.7 — TRC-20 mandatory `triggerconstantcontract` refusal
+//              native: emitNoSimulationAvailable() advisory (NOT refusal)
+//   Layer 1   — handle lookup (done at dispatcher; passed in as `record`)
+//   Layer 3   — fingerprint drift caught at `send_transaction.ts` PAYLOAD_FINGERPRINT_DRIFT gate
+// ===========================================================================
+
+/**
+ * Chunk a 32-byte hex digest into 16 groups of 4 hex chars for readable
+ * on-device comparison. Mirrors `chunkSolanaHash` from the Solana branch.
+ * Stays inline here to keep `blocks-tron.ts` byte-frozen.
+ */
+function chunkTronHash(hashFull64Hex: string): string {
+  const raw = hashFull64Hex.startsWith("0x") ? hashFull64Hex.slice(2) : hashFull64Hex;
+  const groups: string[] = [];
+  for (let i = 0; i < raw.length; i += 4) {
+    groups.push(raw.slice(i, i + 4));
+  }
+  return groups.join(" ");
+}
+
+/**
+ * Phase 18 — LEDGER_NOTICE_TRON_TEMPLATE emit predicate.
+ * Phase 18 set (USDT/USDC/USDD/TUSD + native TRX) is fully bundled-registry
+ * covered, so this predicate returns `emit: false` for all Phase 18 cases.
+ * Phase 19+ extends the predicate:
+ *   - TRC-20 approve (`approve(spender, amount)`) — distinct ABI from
+ *     `transfer`, NOT in bundled registry → `emit: true`.
+ *   - Stake 2.0 (FreezeBalanceV2Contract / VoteWitnessContract / etc.) —
+ *     distinct Protobuf shape from TriggerSmartContract, blind-sign only
+ *     → `emit: true`.
+ *   - SunSwap router calls (Phase 20) — TriggerSmartContract to non-
+ *     allowlist contracts → `emit: true`.
+ */
+function shouldEmitTronLedgerNotice(tx: PreparedTxTron):
+  | { emit: false; reason: string }
+  | { emit: true; instructionName: string; reason: string } {
+  if (tx.kind === "native") {
+    return { emit: false, reason: "native TransferContract clear-signs unconditionally on TRX app v0.5+" };
+  }
+  // tx.kind === "trc20" — all Phase 18 stablecoins in bundled registry
+  return { emit: false, reason: "Phase 18 TRC-20 set in TRX app v0.5+ bundled registry" };
+  // Phase 19+ widens: switch on `tx.kind` for approve/stake/swap variants
+}
+
+/**
+ * Preview a TRON-typed handle. EVM + Solana bodies (above) stay byte-identical;
+ * this branch is the additive Plan 18-04 surface. Performs:
+ *
+ *   1. Layer 0.5 canonical-dispatch-tron refusal on non-allowlisted TRC-20
+ *      contracts (`DISPATCH_TARGET_REFUSED`). Native TRX skips.
+ *   2. Layer 0.7 MANDATORY simulation gate for TRC-20 via
+ *      `_simulationTron.runTronPreviewSimulation` — refuses
+ *      (`SIMULATION_REFUSED`) on any `status !== "ok"`.
+ *      Native TRX: `emitNoSimulationAvailable()` advisory (NOT refusal).
+ *   3. Recompute `presignHash` (SHA-256 of rawDataBytes) via
+ *      `_tronPresign.computeTronPresignHash`.
+ *   4. Mint a fresh `previewToken` UUID.
+ *   5. Pin via `transitionToPreviewed(handle, { ...sentinel-zeros,
+ *      previewToken, presignHash })`.
+ *   6. Render text response: PREPARE RECEIPT + LEDGER NOTICE (conditional) +
+ *      LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE + CHECKS PERFORMED + VERIFY BEFORE SIGNING.
+ */
+async function previewSendTronBranch(
+  record: HandleRecord & { tx: PreparedTxTron },
+): Promise<{
+  isError?: boolean;
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent?: Record<string, unknown>;
+}> {
+  const tronTx = record.tx;
+
+  // ---- Layer 0.5 — canonical-dispatch-tron (TRC-20 only) ---------------
+  if (tronTx.kind === "trc20") {
+    const result = _canonicalDispatchTron.checkTronDispatchTarget([
+      tronTx.contractAddress!,
+    ]);
+    if (result.kind === "refused") {
+      const message = `TRC-20 contract ${tronTx.contractAddress} is not in the canonical-dispatch-tron allowlist (4-entry stablecoin set per Phase 18 / TRON-PREP-02). Use one of: ${result.allowlist.join(", ")}. Non-allowlist tokens land at Phase 19+.`;
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${message}` }],
+        structuredContent: errEnvelope(
+          "DISPATCH_TARGET_REFUSED",
+          message,
+        ) as Record<string, unknown>,
+      };
+    }
+  }
+  // Native TRX skips Layer 0.5 per CONTEXT D-11a.
+
+  // ---- Layer 0.7 — TRC-20 mandatory simulation gate; native advisory -----
+  let simulationResult: TronSimulationResult;
+  if (tronTx.kind === "trc20") {
+    const tronWeb = _tronRegistry.getTronWeb();
+    const summary = tronTx.instructionSummary![0];
+    if (!summary || summary.kind !== "trc20-transfer") {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "error: Handle's instructionSummary kind mismatch — expected 'trc20-transfer'" }],
+        structuredContent: errEnvelope(
+          "INTERNAL_ERROR",
+          "Handle's instructionSummary kind mismatch — expected 'trc20-transfer'",
+        ) as Record<string, unknown>,
+      };
+    }
+    simulationResult = await _simulationTron.runTronPreviewSimulation({
+      tronWeb,
+      contractAddress: tronTx.contractAddress!,
+      functionSelector: "transfer(address,uint256)",
+      parameters: [
+        { type: "address", value: summary.to },
+        { type: "uint256", value: summary.amount.toString() },
+      ],
+      ownerAddress: summary.from,
+    });
+    if (simulationResult.status !== "ok") {
+      const causeStr = simulationResult.revertReason
+        ? ` (reason: ${simulationResult.revertReason})`
+        : simulationResult.rpcError
+          ? ` (rpcError: ${simulationResult.rpcError})`
+          : "";
+      const message = `TRC-20 preview simulation refused: ${simulationResult.status}${causeStr}`;
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${message}` }],
+        structuredContent: {
+          ...(errEnvelope("SIMULATION_REFUSED", message) as Record<string, unknown>),
+          simulation: simulationResult,
+        },
+      };
+    }
+  } else {
+    simulationResult = _simulationTron.emitNoSimulationAvailable();
+    // status: "not-applicable" — NOT a refusal. Per CONTEXT D-03b.
+  }
+
+  // ---- Recompute presignHash for LEDGER BLIND-SIGN HASH block -----------
+  const rawDataBytes = Buffer.from(tronTx.rawDataHex, "hex");
+  const { presignHash } = _tronPresign.computeTronPresignHash({
+    rawDataBytes: new Uint8Array(rawDataBytes),
+  });
+
+  // ---- Mint previewToken + pin -------------------------------------------
+  const previewToken = crypto.randomUUID();
+  const trans = transitionToPreviewed(record.handle, {
+    nonce: 0,             // sentinel (TRON has no EVM nonce)
+    gas: 0n,              // sentinel
+    maxFeePerGas: 0n,     // sentinel
+    maxPriorityFeePerGas: 0n, // sentinel
+    previewToken,
+    presignHash,
+    selector: tronTx.kind === "trc20" ? "0xa9059cbb" : null,
+  });
+  if (!trans.ok) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `error: handle state changed during preview (${trans.errorCode})`,
+        },
+      ],
+      structuredContent: errEnvelope(
+        trans.errorCode,
+        `handle transition failed: ${trans.errorCode}`,
+      ) as Record<string, unknown>,
+    };
+  }
+
+  // ---- Render text blocks ------------------------------------------------
+  const prepareReceipt = tronTx.kind === "native"
+    ? PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE
+        .replace("{TO}", record.args.to)
+        .replace("{SUN}", record.args.sun!)
+        .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+        .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+        .replace("{EXPIRATION}", String(tronTx.expiration))
+    : PREPARE_RECEIPT_TRON_TRC20_TEMPLATE
+        .replace("{TO}", record.args.to)
+        .replace("{TOKEN_ADDRESS}", record.args.tokenAddress!)
+        .replace("{AMOUNT}", record.args.amount!)
+        .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+        .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+        .replace("{EXPIRATION}", String(tronTx.expiration));
+
+  const blindSignHashBlock = LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE
+    .replace("{HASH_FULL_64HEX}", presignHash)
+    .replace("{HASH_CHUNKED_4_CHAR_GROUPS}", chunkTronHash(presignHash));
+
+  const simulationBlock = tronTx.kind === "trc20"
+    ? SIMULATION_BLOCK_TRON_TEMPLATE
+        .replace("{STATUS}", simulationResult.status)
+        .replace("{REVERT_REASON}", simulationResult.revertReason ?? "n/a")
+        .replace("{ENERGY_USED}", simulationResult.energyUsed?.toString() ?? "n/a")
+        .replace("{CONSTANT_RESULT_PREVIEW}", simulationResult.constantResult.slice(0, 1).join("") || "n/a")
+    : NO_SIMULATION_AVAILABLE_TRON_TEMPLATE;
+
+  const noticeDecision = shouldEmitTronLedgerNotice(tronTx);
+  const ledgerNoticeBlock = noticeDecision.emit
+    ? LEDGER_NOTICE_TRON_TEMPLATE
+        .replace("{INSTRUCTION_NAME}", noticeDecision.instructionName)
+        .replace("{REGISTRY_STATUS}", noticeDecision.reason)
+    : "";
+
+  const responseTextParts = [
+    prepareReceipt,
+    ...(ledgerNoticeBlock ? [ledgerNoticeBlock] : []),
+    blindSignHashBlock,
+    simulationBlock,
+    VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
+    `\nPreview token: ${previewToken}`,
+    `\nNext step: send_transaction({ handle: "${record.handle}", previewToken: "${previewToken}", userDecision: "send" })`,
+  ];
+  const responseText = responseTextParts.filter(Boolean).join("\n\n");
+
+  return {
+    content: [{ type: "text", text: responseText }],
+    structuredContent: {
+      handle: record.handle,
+      chain: "tron",
+      kind: tronTx.kind,
+      previewToken,
+      presignHash,
+      simulation: simulationResult,
+      payloadFingerprint: record.payloadFingerprint,
+      decodedArgs: tronTx.instructionSummary,
+      blockHeader: {
+        refBlockBytes: tronTx.refBlockBytes,
+        refBlockHash: tronTx.refBlockHash,
+        expiration: tronTx.expiration,
+      },
+      rawDataHex: tronTx.rawDataHex,
+      // Phase 18 — no WC session topic for TRON (USB-HID bypasses WC).
+      sessionTopicLast8: null,
+    },
+  };
+}

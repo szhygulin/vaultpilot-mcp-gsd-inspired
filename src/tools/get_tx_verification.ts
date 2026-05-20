@@ -40,10 +40,12 @@ import { type ChainId } from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
 import { lookupSelector } from "../clients/fourbyte.js";
 import { _canonicalDispatch } from "../security/canonical-dispatch.js";
+import { _canonicalDispatchTron } from "../security/canonical-dispatch-tron.js";
 import {
   lookup,
   type HandleRecord,
   type PreparedTxSolana,
+  type PreparedTxTron,
 } from "../signing/handle-store.js";
 import {
   AGENT_TASK_TEMPLATE,
@@ -59,6 +61,12 @@ import {
   PREPARE_RECEIPT_SOLANA_SPL_TEMPLATE,
   VERIFY_BEFORE_SIGNING_SOLANA_TEMPLATE,
 } from "../signing/blocks-solana.js";
+import {
+  LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE,
+  PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE,
+  PREPARE_RECEIPT_TRON_TRC20_TEMPLATE,
+  VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
+} from "../signing/blocks-tron.js";
 import { getStatus } from "../wallet/session-manager.js";
 import { registerTool, type ToolHandlerResult } from "./index.js";
 
@@ -124,6 +132,9 @@ registerTool("get_tx_verification", DESCRIPTION, INPUT_SCHEMA, async (args) => {
   const txType = record.tx.txType ?? "evm";
   if (txType === "solana") {
     return getTxVerificationSolanaBranch(record, handleArg);
+  }
+  if (txType === "tron") {
+    return getTxVerificationTronBranch(record as HandleRecord & { tx: PreparedTxTron }, handleArg);
   }
   // ===== EVM branch (UNCHANGED — Plan 09-05 v1.3 txJson re-emit) =====
 
@@ -510,6 +521,165 @@ function getTxVerificationSolanaBranch(
             txSignature: record.txHash,
             broadcastedAt: broadcastedAtIso,
           }
+        : {}),
+      ...(record.status === "cancelled" ? { cancelledAt: cancelledAtIso } : {}),
+    },
+  };
+}
+
+// ===========================================================================
+// Phase 18 — Plan 18-04 — TRON re-emit branch (additive). EVM + Solana bodies
+// above stay byte-untouched. TRON handles re-emit the TRON-shape PREPARE
+// RECEIPT (dispatcher on `kind`) + LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE + status-
+// aware footer + `blockHeader` + `rawDataHex` + `dispatchCheckResult`.
+// ===========================================================================
+
+/**
+ * Chunk a SHA-256 64-hex digest into 4-char groups (mirror of preview_send
+ * TRON branch's `chunkTronHash`). Stays inline here to preserve
+ * `blocks-tron.ts` byte-frozen status.
+ */
+function chunkTronHashVerify(hashFull64Hex: string): string {
+  const raw = hashFull64Hex.startsWith("0x") ? hashFull64Hex.slice(2) : hashFull64Hex;
+  const groups: string[] = [];
+  for (let i = 0; i < raw.length; i += 4) {
+    groups.push(raw.slice(i, i + 4));
+  }
+  return groups.join(" ");
+}
+
+/**
+ * Re-emit the verification artifacts for a TRON-typed handle. Status-aware —
+ * `prepared` emits PREPARE RECEIPT only; `previewed` adds the LEDGER
+ * BLIND-SIGN HASH (TRON) block; `sent` appends BROADCAST CONFIRMATION;
+ * `cancelled` appends CANCELLED. Surfaces `blockHeader`, `rawDataHex`,
+ * and `dispatchCheckResult` in structuredContent.
+ */
+function getTxVerificationTronBranch(
+  record: HandleRecord & { tx: PreparedTxTron },
+  handleArg: string,
+): ToolHandlerResult {
+  const tronTx = record.tx;
+
+  // Build prepare receipt based on kind
+  const prepareReceiptBlock = tronTx.kind === "native"
+    ? PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE
+        .replace("{TO}", record.args.to)
+        .replace("{SUN}", record.args.sun ?? "")
+        .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+        .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+        .replace("{EXPIRATION}", String(tronTx.expiration))
+    : PREPARE_RECEIPT_TRON_TRC20_TEMPLATE
+        .replace("{TO}", record.args.to)
+        .replace("{TOKEN_ADDRESS}", record.args.tokenAddress ?? "")
+        .replace("{AMOUNT}", record.args.amount ?? "")
+        .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+        .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+        .replace("{EXPIRATION}", String(tronTx.expiration));
+
+  // dispatchCheckResult per kind (native = not-applicable; TRC-20 = re-run allowlist)
+  const dispatchCheckResult = tronTx.kind === "trc20"
+    ? _canonicalDispatchTron.checkTronDispatchTarget([tronTx.contractAddress!])
+    : ({ kind: "not-applicable" as const });
+
+  if (record.status === "prepared") {
+    const text = [
+      prepareReceiptBlock,
+      "",
+      "(preview has not run yet; call preview_send to get the TRON blind-sign hash block)",
+    ].join("\n");
+    return {
+      content: [{ type: "text" as const, text }],
+      structuredContent: {
+        status: "prepared" as const,
+        handle: handleArg,
+        txType: "tron" as const,
+        kind: tronTx.kind,
+        payloadFingerprint: record.payloadFingerprint,
+        blockHeader: {
+          refBlockBytes: tronTx.refBlockBytes,
+          refBlockHash: tronTx.refBlockHash,
+          expiration: tronTx.expiration,
+        },
+        rawDataHex: tronTx.rawDataHex,
+        dispatchCheckResult,
+        txJson: null, // TRON uses rawDataHex, not EVM txJson
+      },
+    };
+  }
+
+  if (!record.pinned) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text: `error: handle in status ${record.status} but pinned is missing (state corruption)`,
+        },
+      ],
+      structuredContent: { errorCode: "INTERNAL_ERROR" as const },
+    };
+  }
+
+  const pinned = record.pinned;
+  const presignHash = pinned.presignHash;
+  const ledgerBlock = LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE
+    .replace("{HASH_FULL_64HEX}", presignHash)
+    .replace("{HASH_CHUNKED_4_CHAR_GROUPS}", chunkTronHashVerify(presignHash));
+
+  const sections: string[] = [
+    prepareReceiptBlock,
+    "",
+    ledgerBlock,
+    "",
+    VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
+  ];
+
+  let broadcastedAtIso: string | undefined;
+  let cancelledAtIso: string | undefined;
+
+  if (record.status === "sent") {
+    const sentAt = record.sentAt ?? Date.now();
+    const txHash = record.txHash ?? "";
+    broadcastedAtIso = new Date(sentAt).toISOString();
+    sections.push(
+      "",
+      "BROADCAST CONFIRMATION",
+      `  txID:          ${txHash}`,
+      `  broadcastedAt: ${broadcastedAtIso}`,
+    );
+  } else if (record.status === "cancelled") {
+    const cancelledAt = record.cancelledAt ?? Date.now();
+    cancelledAtIso = new Date(cancelledAt).toISOString();
+    sections.push(
+      "",
+      "CANCELLED",
+      `  cancelledAt: ${cancelledAtIso}`,
+    );
+  }
+
+  const text = sections.join("\n");
+
+  return {
+    content: [{ type: "text" as const, text }],
+    structuredContent: {
+      status: record.status,
+      handle: handleArg,
+      txType: "tron" as const,
+      kind: tronTx.kind,
+      payloadFingerprint: record.payloadFingerprint,
+      previewToken: pinned.previewToken,
+      presignHash: pinned.presignHash,
+      blockHeader: {
+        refBlockBytes: tronTx.refBlockBytes,
+        refBlockHash: tronTx.refBlockHash,
+        expiration: tronTx.expiration,
+      },
+      rawDataHex: tronTx.rawDataHex,
+      dispatchCheckResult,
+      txJson: null, // TRON uses rawDataHex, not EVM txJson
+      ...(record.status === "sent" && record.txHash !== undefined
+        ? { txHash: record.txHash, txID: record.txHash, broadcastedAt: broadcastedAtIso }
         : {}),
       ...(record.status === "cancelled" ? { cancelledAt: cancelledAtIso } : {}),
     },
