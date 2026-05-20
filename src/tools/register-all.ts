@@ -29,6 +29,7 @@ import "./prepare_native_send.js";
 import "./prepare_token_send.js";
 import "./prepare_solana_native_send.js"; // Phase 12 Plan 12-02 (SOL-W-01) — Solana native send
 import "./prepare_solana_spl_send.js"; // Phase 12 Plan 12-03 (SOL-W-02) — Solana SPL TransferChecked send
+import "./prepare_tron_native_send.js"; // Phase 18 Plan 18-02 (TRON-W-01) — TRON native transfer
 import "./prepare_token_approve.js";
 import "./prepare_revoke_approval.js";
 import "./prepare_weth_unwrap.js";
