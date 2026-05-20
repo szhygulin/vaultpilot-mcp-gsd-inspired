@@ -80,6 +80,21 @@ export function getSolanaRpcUrl(): string | null {
   return read("SOLANA_RPC_URL") ?? null;
 }
 
+// Phase 17 Plan 17-01 — TRON RPC URL reader. Mirrors `getSolanaRpcUrl()`
+// shape via the in-tree `read(name)` helper (trims whitespace, returns
+// `undefined` for empty/missing). The resolution priority lives in
+// `src/chains/tron/registry.ts::resolveTronRpcUrl()`:
+//   (1) `TRON_RPC_URL` env override wins
+//   (2) Public RPC fallback (`https://api.trongrid.io`) with once-per-
+//       process stderr warn
+// No `RPC_PROVIDER` shorthand fan-out — TRON is URL-config-only in v2.1
+// (TronGrid / GetBlock / NowNodes are URL-only per research § Topic 5
+// lock). Public-fallback URL deliberately requires no API key; operators
+// with rate-limit pressure set `TRON_RPC_URL` to override.
+export function getTronRpcUrl(): string | null {
+  return read("TRON_RPC_URL") ?? null;
+}
+
 // Plan 08-05 — multi-chain WalletConnect pairing.
 //
 // Returns the list of EVM chains this v1.2 build supports. Drives
