@@ -76,6 +76,12 @@ export interface PrepareArgs {
   /** Phase 18 — pinned ref-block fields (server-derived at prepare time; surfaced in PREPARE RECEIPT). */
   refBlockBytes?: string;
   refBlockHash?: string;
+  /** Phase 20 — SunSwap V2 swap input token TRC-20 address (raw agent string; surfaced in PREPARE RECEIPT). */
+  inputToken?: string;
+  /** Phase 20 — SunSwap V2 swap output token TRC-20 address (raw agent string; surfaced in PREPARE RECEIPT). */
+  outputToken?: string;
+  /** Phase 20 — SunSwap V2 slippage tolerance in basis points as decimal string (e.g. "50"). */
+  slippageBps?: string;
 }
 
 /**
@@ -255,6 +261,34 @@ export type TronInstructionSummary =
        * D-06c: null is valid and never blocks the prepare flow.
        */
       estimatedRewardSun: bigint | null;
+    }
+  | {
+      // Phase 20 Plan 20-01 — SunSwap V2 swap (TriggerSmartContract).
+      // selector: 0x38ed1739 (swapExactTokensForTokens(uint256,uint256,address[],address,uint256)).
+      // sandwich-MEV gate (D-03b): enforced at prepare time; preview emits advisory only.
+      // `priceImpactBps` + `slippageBps` are integers (bps bounded by 10000, not bigint).
+      // `inAmount` + `outAmount` + `amountOutMin` are bigint per CLAUDE.md decimal-aware arithmetic.
+      kind: "sunswap-swap";
+      /** Sender base58check address. */
+      from: string;
+      /** Input TRC-20 contract base58check address. */
+      inputToken: string;
+      /** Output TRC-20 contract base58check address (or WTRX). */
+      outputToken: string;
+      /** Raw input amount (bigint), scaled per input token decimals. */
+      inAmount: bigint;
+      /** Raw output amount from quote (bigint), scaled per output token decimals. */
+      outAmount: bigint;
+      /** Minimum output amount after slippage (bigint). amountOutMin = outAmount * (10000 - slippageBps) / 10000. */
+      amountOutMin: bigint;
+      /** Route taken — full address array (e.g. [USDT, WTRX] or [USDT, WTRX, JST]). */
+      path: string[];
+      /** Price impact in basis points (integer, 0–10000). 200 = 2% sandwich-MEV gate threshold. */
+      priceImpactBps: number;
+      /** Slippage tolerance in basis points (integer). */
+      slippageBps: number;
+      /** Swap deadline as unix-seconds integer. deadline = now + 600 (10 minutes). */
+      deadline: number;
     };
 
 /**
@@ -442,7 +476,7 @@ export interface PreparedTxTron {
    * doesn't need the version suffix; the instruction summary uses it to
    * disambiguate Stake 1.0 should it ever appear in decoded payloads.
    */
-  kind: "native" | "trc20" | "stake-freeze" | "stake-unfreeze" | "stake-withdraw-expire" | "stake-vote" | "stake-claim-rewards";
+  kind: "native" | "trc20" | "stake-freeze" | "stake-unfreeze" | "stake-withdraw-expire" | "stake-vote" | "stake-claim-rewards" | "sunswap-swap";
   /**
    * TRC-20 only — base58check token contract address. Consumed by
    * `canonical-dispatch-tron` allowlist (Plan 18-04 Layer 0.5 gate).

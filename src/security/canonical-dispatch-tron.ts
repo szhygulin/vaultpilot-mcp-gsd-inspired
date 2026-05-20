@@ -37,8 +37,14 @@
 //
 // Future phases widen:
 //
-//   - Phase 20 — LiFi + Across bridging contract addresses.
-//   - Phase 21 — SunSwap DEX contract addresses.
+//   - Phase 20 — SunSwap V2 Router added via sibling TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST
+//               (existing 4-stablecoin allowlist + checkTronDispatchTarget BYTE-IDENTICAL).
+//               Open Question #2 design decision: option (a) — sibling set + sibling function.
+//               The router is not a token symbol (cannot be filtered from tron-top-25.json);
+//               widening the existing TRC-20 allowlist would be semantically wrong AND
+//               would change the existing test assertions (size === 4 → 5).
+//               Phase 21 LiFi TRON facet (per D-04b deferral): appends to TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST.
+//   - Phase 21 — LiFi + Across bridging contract addresses (DEFERRED from Phase 20 per D-04b).
 //
 // **SOURCE OF TRUTH**: addresses loaded from `src/tokens/tron-top-25.json`
 // (Phase 17 curated list) filtered by symbol. This avoids hardcoding literals
@@ -150,5 +156,83 @@ export function checkTronDispatchTarget(
  * no-ops for cross-export internal calls (ESM bindings are immutable).
  * Production callers (`src/tools/preview_send.ts` TRON branch — Plan 18-04)
  * call through this object so the spy applies to them.
+ *
+ * Plan 20-01: widened additively to expose `checkTronSmartContractDispatchTarget`
+ * (existing `checkTronDispatchTarget` entry BYTE-IDENTICAL).
  */
-export const _canonicalDispatchTron = { checkTronDispatchTarget };
+export const _canonicalDispatchTron = { checkTronDispatchTarget, checkTronSmartContractDispatchTarget };
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phase 20 — SunSwap V2 smartcontract dispatch allowlist (sibling set)
+//
+// Open Question #2 design rationale (option (a) — sibling set + sibling function):
+//   (a) NEW sibling `ReadonlySet<string>` (this constant) + NEW `checkTronSmartContractDispatchTarget`
+//       function. The SunSwap V2 Router is NOT a token symbol — cannot be filtered from
+//       tron-top-25.json via `ALLOWED_SYMBOLS`. The 4-stablecoin `TRON_TRC20_DISPATCH_ALLOWLIST`
+//       stays BYTE-IDENTICAL; test assertions (`TRON_TRC20_DISPATCH_ALLOWLIST.size === 4`)
+//       are unchanged.
+//   (b) REJECTED: widening `TRON_TRC20_DISPATCH_ALLOWLIST` to include the router —
+//       semantically wrong (mixes token contracts with DEX router addresses) AND changes
+//       existing test assertions.
+//   (c) REJECTED: extending `checkTronDispatchTarget` to accept a second set parameter —
+//       changes the function signature (not BYTE-IDENTICAL).
+//
+// Caller-side routing: `preview_send.ts` TRON branch discriminates via
+// `summary0.kind === "sunswap-swap"` → calls `checkTronSmartContractDispatchTarget`
+// instead of `checkTronDispatchTarget`. Mirrors Phase 19 stake caller-side skip pattern.
+//
+// T-SOT-DRIFT-1: `SUNSWAP_V2_ROUTER_TRON_ADDRESS` MUST equal
+// `KNOWN_SPENDERS_TRON[0].address` (both are the same canonical SunSwap V2 Router).
+// Cross-import assertion in `test/security-canonical-dispatch-tron.test.ts`.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * SunSwap V2 Router address on TRON mainnet.
+ *
+ * Provenance: Phase 19 `KNOWN_SPENDERS_TRON[0].address` in `src/config/contracts.ts`.
+ * T-SOT-DRIFT-1: asserted in `test/security-canonical-dispatch-tron.test.ts` to be
+ * byte-identical to `KNOWN_SPENDERS_TRON[0].address`.
+ *
+ * Format-fanout-sentinel: NEVER inline this address in tool files. Consume via this
+ * constant (security gate SOT) or via `KNOWN_SPENDERS_TRON[0].address` (user-facing SOT).
+ */
+export const SUNSWAP_V2_ROUTER_TRON_ADDRESS = "TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax";
+
+/**
+ * TRON smartcontract dispatch allowlist for Phase 20 SunSwap scope.
+ *
+ * One entry (hardcoded — router is not a token in tron-top-25.json):
+ *   1. SunSwap V2 Router (TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax)
+ *
+ * Phase 21 LiFi TRON facet address will be appended here when TRON-W-10 reschedules.
+ * At that point: `new Set([SUNSWAP_V2_ROUTER_TRON_ADDRESS, LIFI_TRON_FACET_ADDRESS])`.
+ * The `checkTronSmartContractDispatchTarget` function body stays BYTE-IDENTICAL.
+ */
+export const TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST: ReadonlySet<string> = new Set([
+  SUNSWAP_V2_ROUTER_TRON_ADDRESS,
+]);
+
+/**
+ * Phase 20 Layer 0.5 (TRON arm) smartcontract dispatch check.
+ * Mirrors `checkTronDispatchTarget` shape but checks against
+ * `TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST` (SunSwap router) instead of
+ * `TRON_TRC20_DISPATCH_ALLOWLIST` (stablecoins).
+ *
+ * Called from `preview_send.ts` TRON branch for `sunswap-swap` handles AFTER
+ * handle lookup. Returns `allowed` only when EVERY contract address in the
+ * input array is in `TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST`. Mixed inputs
+ * (some allowed, some not) refuse — the allowed entries do NOT rescue the refusal.
+ */
+export function checkTronSmartContractDispatchTarget(
+  contractAddresses: string[],
+): TronDispatchCheckResult {
+  const offenders = contractAddresses.filter(
+    (addr) => !TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST.has(addr),
+  );
+  if (offenders.length === 0) return { kind: "allowed" };
+  return {
+    kind: "refused",
+    offenders,
+    allowlist: [...TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST],
+  };
+}

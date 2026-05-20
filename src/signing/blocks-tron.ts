@@ -563,3 +563,78 @@ export const REWARD_ESTIMATE_TRON_TEMPLATE: string = [
   "  D-06c advisory: actual reward may differ from estimate (updates every ~3s).",
   "  This advisory does NOT block the prepare flow. Claim proceeds regardless.",
 ].join("\n");
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phase 20 Plan 20-01 — SunSwap V2 swap templates (APPEND-ONLY below Phase 19)
+//
+// Existing 10 templates (7 Phase 18 + 3 Phase 19) above are BYTE-IDENTICAL.
+// Format-fanout-sentinel: PREPARE_RECEIPT_TRON_SUNSWAP_TEMPLATE header text
+// appears EXACTLY ONCE in src/ (here, NOT inlined in any tool or test file).
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * PREPARE RECEIPT — TRON SunSwap V2 swap (TriggerSmartContract).
+ * Plan 20-01 — verbatim agent args, NO normalization. Twelve slots:
+ *   - `{CHAIN}`           — always "TRON mainnet" (slot kept for structural symmetry).
+ *   - `{INPUT_TOKEN}`     — input TRC-20 contract base58check address.
+ *   - `{OUTPUT_TOKEN}`    — output TRC-20 contract base58check address (or WTRX).
+ *   - `{IN_AMOUNT}`       — decimal-string verbatim from agent args (resolved from amountIn).
+ *   - `{OUT_AMOUNT}`      — decimal-string of quote.outAmount (expected output).
+ *   - `{PRICE_IMPACT_BPS}` — price impact in basis points (integer).
+ *   - `{SLIPPAGE_BPS}`    — slippage tolerance in basis points (integer).
+ *   - `{PATH}`            — verbatim full address array joined with " → " (T-PATH-WTRX-DRIFT defense).
+ *   - `{DEADLINE}`        — swap deadline as unix-seconds integer.
+ *   - `{REF_BLOCK_BYTES}` — pinned at prepare time; surfaced verbatim.
+ *   - `{REF_BLOCK_HASH}`  — pinned at prepare time; surfaced verbatim.
+ *   - `{EXPIRATION}`      — expiration timestamp (ms); surfaced verbatim.
+ *
+ * T-PATH-WTRX-DRIFT defense: decode-and-display of full PATH ensures the agent
+ * can verify the route is what the server computed. Any tampering with the path
+ * (e.g. inserting an adversarial intermediate hop) is visible on-device via the
+ * Ledger blind-sign hash mismatch AND in this PREPARE RECEIPT block.
+ *
+ * Mirrors the Plan 19-01 PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE shape.
+ */
+export const PREPARE_RECEIPT_TRON_SUNSWAP_TEMPLATE: string = [
+  "PREPARE RECEIPT (TRON — SunSwap V2 swap)",
+  "  chain:          {CHAIN}",
+  "  inputToken:     {INPUT_TOKEN}",
+  "  outputToken:    {OUTPUT_TOKEN}",
+  "  inAmount:       {IN_AMOUNT}",
+  "  outAmount:      {OUT_AMOUNT}",
+  "  priceImpactBps: {PRICE_IMPACT_BPS}",
+  "  slippageBps:    {SLIPPAGE_BPS}",
+  "  path:           {PATH}",
+  "  deadline:       {DEADLINE}",
+  "  refBlockBytes:  {REF_BLOCK_BYTES}",
+  "  refBlockHash:   {REF_BLOCK_HASH}",
+  "  expiration:     {EXPIRATION}",
+].join("\n");
+
+/**
+ * SANDWICH-MEV DEFENSE (TRON) — prepare-time refusal envelope for D-03b gate.
+ * Rendered ONLY in the prepare-tool refusal path when `priceImpactBps > 200`
+ * AND the agent did NOT explicitly supply `slippageBps` (per D-03b + D-03c).
+ * NOT emitted at preview time — the sandwich-MEV gate is enforced at prepare time;
+ * preview uses NO_SIMULATION_AVAILABLE_TRON_TEMPLATE advisory instead.
+ *
+ * Two slots:
+ *   - `{PRICE_IMPACT_BPS}` — detected price impact in basis points (e.g. "350" = 3.5%).
+ *   - `{THRESHOLD_BPS}`    — hardcoded gate threshold (always "200" = 2%).
+ *
+ * Structured envelope: `INVALID_INPUT + hintTool: "get_sunswap_quote"`.
+ * The 21-code error union in `src/signing/error-codes.ts` is FROZEN (D-03b uses
+ * the existing `INVALID_INPUT` code with `hintTool` per the Phase 14 Jupiter precedent).
+ */
+export const SANDWICH_MEV_REFUSAL_TRON_TEMPLATE: string = [
+  "⚠ SANDWICH-MEV DEFENSE (TRON)",
+  "  priceImpactBps: {PRICE_IMPACT_BPS}",
+  "  threshold:      {THRESHOLD_BPS} (2% — sandwich extraction threshold per D-03b)",
+  "",
+  "  The swap's estimated price impact ({PRICE_IMPACT_BPS} bps) exceeds the {THRESHOLD_BPS} bps",
+  "  sandwich-MEV defense threshold. This swap may be vulnerable to front-running.",
+  "",
+  "  To proceed: call get_sunswap_quote to review the route and expected output,",
+  "  then call prepare_sunswap_swap again with slippageBps set explicitly (any value).",
+  "  Explicitly supplying slippageBps signals that you acknowledge the high price impact.",
+].join("\n");

@@ -295,3 +295,33 @@ Phase 19 locks against this regression at three layers:
 | T-FROZEN | Tampering | CRITICAL | `git diff origin/main -- <frozen-paths>` empty at Plan 19-04 commit; D-11a integration test assertion |
 
 Existing content (header, threat model intro, invariants 1-14, Solana section, Phase 18 TRON section) BYTE-FROZEN — only new content appended above.
+
+## TRON v2.1 Phase 20 (SunSwap V2 — get_sunswap_quote + prepare_sunswap_swap)
+
+Phase 20 adds two MCP tools: `get_sunswap_quote` (read-only, on-chain `getAmountsOut`) and `prepare_sunswap_swap` (TriggerSmartContract to the SunSwap V2 router). All Phase 18/19 primitives (payload-fingerprint-tron, presign-hash, handle-store, blocks-tron) are consumed unchanged. No new cryptographic-binding primitives ship.
+
+### 1. Sandwich-MEV defense (D-03b)
+
+`prepare_sunswap_swap` enforces a prepare-time gate: if `priceImpactBps > 200` (2%) AND the agent did NOT explicitly supply `slippageBps`, the tool refuses with `INVALID_INPUT + hintTool: "get_sunswap_quote"`. Detection uses a pre-Zod raw-args presence check (`"slippageBps" in rawArgs && rawArgs.slippageBps !== undefined`) so Zod's `.default(50)` cannot mask the distinction. Explicit-slippage passes unconditionally (D-03c): the gate is "did the agent confirm awareness?", not "is the slippage value low enough?". Matches the Phase 14 Jupiter precedent.
+
+### 2. TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST — sibling to the Phase 18 stablecoin set
+
+A new 1-entry `TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST` (SunSwap V2 router — `TKzxdSv2FZKQrEqkKVgp5DcwEXBEKMg2Ax`) is enforced at both `prepare_sunswap_swap` (Step 5 cheap gate before RPC calls) and `preview_send` TRON branch (Phase 20 sunswap-swap arm). This is explicitly SEPARATE from the Phase 18 `TRON_TRC20_DISPATCH_ALLOWLIST` (4-stablecoin set); `checkTronSmartContractDispatchTarget` uses the router set, `checkTronDispatchTarget` uses the stablecoin set — neither aliases the other. T-SOT-DRIFT-1: a cross-import assertion in `test/security-canonical-dispatch-tron.test.ts` verifies `SUNSWAP_V2_ROUTER_TRON_ADDRESS === KNOWN_SPENDERS_TRON[0].address` so the two canonical address references cannot drift.
+
+### 3. Path computation server-side (D-10 — T-PATH-WTRX-DRIFT defense)
+
+The swap path (`[inputToken, outputToken]` for direct WTRX pairs; `[inputToken, WTRX, outputToken]` for non-WTRX pairs) is computed by the server from the live `get_sunswap_quote` route — never accepted as an agent-supplied parameter. The path appears verbatim in the PREPARE RECEIPT block so the user can verify it character-for-character against what the server computed. Any tampering with the intermediate hop is visible both in the PREPARE RECEIPT and as a Ledger blind-sign hash mismatch (the path bytes are part of the `swapExactTokensForTokens` ABI-encoded calldata committed to by `payloadFingerprint`).
+
+### 4. LiFi bridging deferred (D-04b — residual risk documented)
+
+Cross-chain bridging (TRC-20/TRON → EVM via LiFi router) is deferred. The Phase 20 scope is TRON-only SunSwap V2 intra-chain swaps. A `20-02-DEFERRED.md` stub on main documents the deferral rationale. Accepted residual: agents cannot bridge TRON assets to EVM chains via this MCP server in v2.1. LiFi integration requires a separate dispatch gate for the LiFi contract address and a distinct PREPARE RECEIPT template.
+
+### Phase 20 threat register summary
+
+| Threat ID | STRIDE | Severity | Mitigation |
+|-----------|--------|----------|------------|
+| T-MEV-SANDWICH | Tampering | HIGH | D-03b gate: priceImpactBps > 200 + no explicit slippage → INVALID_INPUT + hintTool |
+| T-PATH-WTRX-DRIFT | Tampering | HIGH | D-10: path server-computed from quote.route; displayed verbatim in PREPARE RECEIPT |
+| T-ROUTER-SUB | Tampering | CRITICAL | TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST (1-entry); T-SOT-DRIFT-1 cross-import assert |
+| T-AMOUNT-ZERO | Tampering | HIGH | slippageBps ≥ 10000 refused; amountOutMin = outAmount × (10000 − bps) / 10000 ≥ 1 |
+| T-FROZEN-20 | Tampering | CRITICAL | git diff origin/main -- <frozen-paths> empty at Task 3 commit |

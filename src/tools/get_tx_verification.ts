@@ -40,7 +40,7 @@ import { type ChainId } from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
 import { lookupSelector } from "../clients/fourbyte.js";
 import { _canonicalDispatch } from "../security/canonical-dispatch.js";
-import { _canonicalDispatchTron } from "../security/canonical-dispatch-tron.js";
+import { SUNSWAP_V2_ROUTER_TRON_ADDRESS, _canonicalDispatchTron } from "../security/canonical-dispatch-tron.js";
 import {
   lookup,
   type HandleRecord,
@@ -67,6 +67,7 @@ import {
   PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE,
   PREPARE_RECEIPT_TRON_STAKE_FREEZE_TEMPLATE,
   PREPARE_RECEIPT_TRON_STAKE_UNFREEZE_TEMPLATE,
+  PREPARE_RECEIPT_TRON_SUNSWAP_TEMPLATE,
   PREPARE_RECEIPT_TRON_VOTE_TEMPLATE,
   PREPARE_RECEIPT_TRON_WITHDRAW_EXPIRE_TEMPLATE,
   PREPARE_RECEIPT_TRON_TRC20_TEMPLATE,
@@ -623,18 +624,38 @@ function getTxVerificationTronBranch(
                   .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
                   .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
                   .replace("{EXPIRATION}", String(tronTx.expiration))
-              : PREPARE_RECEIPT_TRON_TRC20_TEMPLATE
-              .replace("{TO}", record.args.to)
-              .replace("{TOKEN_ADDRESS}", record.args.tokenAddress ?? "")
-              .replace("{AMOUNT}", record.args.amount ?? "")
-              .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
-              .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
-              .replace("{EXPIRATION}", String(tronTx.expiration));
+              : tronTx.kind === "sunswap-swap"
+                ? (() => {
+                    const swapSummary = summary0Tron;
+                    return PREPARE_RECEIPT_TRON_SUNSWAP_TEMPLATE
+                      .replace("{CHAIN}", "TRON mainnet")
+                      .replace("{INPUT_TOKEN}", record.args.inputToken ?? "")
+                      .replace("{OUTPUT_TOKEN}", record.args.outputToken ?? "")
+                      .replace("{IN_AMOUNT}", record.args.amount ?? "")
+                      .replace("{OUT_AMOUNT}", swapSummary && "outAmount" in swapSummary ? String(swapSummary.outAmount) : "")
+                      .replace("{PRICE_IMPACT_BPS}", swapSummary && "priceImpactBps" in swapSummary ? String(swapSummary.priceImpactBps) : "")
+                      .replace("{SLIPPAGE_BPS}", record.args.slippageBps ?? "")
+                      .replace("{PATH}", swapSummary && "path" in swapSummary ? (swapSummary.path as string[]).join(" → ") : "")
+                      .replace("{DEADLINE}", swapSummary && "deadline" in swapSummary ? String(swapSummary.deadline) : "")
+                      .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+                      .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+                      .replace("{EXPIRATION}", String(tronTx.expiration));
+                  })()
+                : PREPARE_RECEIPT_TRON_TRC20_TEMPLATE
+                .replace("{TO}", record.args.to)
+                .replace("{TOKEN_ADDRESS}", record.args.tokenAddress ?? "")
+                .replace("{AMOUNT}", record.args.amount ?? "")
+                .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+                .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+                .replace("{EXPIRATION}", String(tronTx.expiration));
 
-  // dispatchCheckResult per kind (native = not-applicable; TRC-20 = re-run allowlist)
+  // dispatchCheckResult per kind (native = not-applicable; TRC-20 = stablecoin allowlist;
+  // sunswap-swap = router allowlist via checkTronSmartContractDispatchTarget)
   const dispatchCheckResult = tronTx.kind === "trc20"
     ? _canonicalDispatchTron.checkTronDispatchTarget([tronTx.contractAddress!])
-    : ({ kind: "not-applicable" as const });
+    : tronTx.kind === "sunswap-swap"
+      ? _canonicalDispatchTron.checkTronSmartContractDispatchTarget([tronTx.contractAddress ?? SUNSWAP_V2_ROUTER_TRON_ADDRESS])
+      : ({ kind: "not-applicable" as const });
 
   if (record.status === "prepared") {
     const text = [
