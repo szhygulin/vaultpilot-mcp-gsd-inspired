@@ -180,6 +180,101 @@ export async function getPrices(
   return result;
 }
 
+/**
+ * Phase 11 — Plan 11-05. Sibling Solana-only pricing path. DefiLlama keys
+ * Solana coins as `solana:<base58-mint>` (research § Topic 7 — verified
+ * against the live DefiLlama API). The existing {@link getPrices} signature
+ * is EVM-locked (`PriceCoin.chain: ChainName` literal-union excludes
+ * `"solana"`; `address: Address` is the 0x-prefixed hex brand); rather than
+ * widening that surface (which would force `address.toLowerCase()` calls
+ * and the `getAddress` checksum guard onto Solana base58 strings), the
+ * Solana path lives here as a sibling.
+ *
+ * Returns a `Map<mint, PriceQuote>` keyed by the input base58 mint
+ * (case-preserved — Solana base58 is case-sensitive, unlike EVM hex).
+ * Consumers (`get_solana_token_balance`, `get_portfolio_summary` Solana
+ * leg) iterate the input mints and look up via the returned Map.
+ *
+ * Cache is SHARED with the EVM `getPrices` cache via the same module-level
+ * `cache` Map, keyed by `solana:<mint>` (distinct namespace from EVM's
+ * `<chain>:<address>` keys — no collision since EVM `chain` literal-union
+ * excludes `"solana"`).
+ *
+ * Native SOL pricing: pass the wSOL mint
+ * `So11111111111111111111111111111111111111112` — DefiLlama prices it
+ * identically to native SOL (research § Topic 7).
+ */
+export async function getSolanaPrices(
+  mints: readonly string[],
+): Promise<Map<string, PriceQuote>> {
+  const result = new Map<string, PriceQuote>();
+  if (mints.length === 0) return result;
+
+  const now = Date.now();
+  const toFetch: string[] = [];
+  const seen = new Set<string>();
+  for (const mint of mints) {
+    if (typeof mint !== "string" || mint.length === 0) {
+      // Skip — surface as priceUnknown on the empty / non-string input.
+      continue;
+    }
+    if (seen.has(mint)) continue;
+    seen.add(mint);
+    const key = `solana:${mint}`;
+    const cached = cache.get(key);
+    if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
+      result.set(mint, cached.quote);
+    } else {
+      toFetch.push(mint);
+    }
+  }
+
+  if (toFetch.length === 0) return result;
+
+  // DefiLlama Solana keying: `solana:<base58-mint>`, comma-joined. Base58
+  // is case-sensitive — DO NOT lowercase (would silently miss).
+  const coins = toFetch.map((m) => `solana:${m}`).join(",");
+  const url = `${DEFILLAMA_BASE_URL}/prices/current/${coins}`;
+
+  let payload: DefiLlamaResponse | undefined;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    payload = (await response.json()) as DefiLlamaResponse;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(
+      "warn",
+      `defillama: solana price fetch failed (${message}); ${toFetch.length} mints marked priceUnknown for ${CACHE_TTL_MS / 1000}s`,
+    );
+    for (const mint of toFetch) {
+      const quote: PriceQuote = { priceUnknown: true };
+      cache.set(`solana:${mint}`, { quote, fetchedAt: now });
+      result.set(mint, quote);
+    }
+    return result;
+  }
+
+  const coinsMap = (payload.coins ?? {}) as Record<string, { price?: unknown }>;
+  for (const mint of toFetch) {
+    const wireKey = `solana:${mint}`;
+    const entry = coinsMap[wireKey];
+    let quote: PriceQuote;
+    const price = entry?.price;
+    if (typeof price === "number" && Number.isFinite(price) && price >= 0) {
+      quote = { priceUsd: price };
+    } else {
+      quote = { priceUnknown: true };
+    }
+    cache.set(wireKey, { quote, fetchedAt: now });
+    result.set(mint, quote);
+  }
+
+  return result;
+}
+
 /** Test-only: clears the in-memory price cache so the next call refetches. */
 export function _resetPriceCacheForTesting(): void {
   cache.clear();

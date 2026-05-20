@@ -1,0 +1,254 @@
+[
+  {
+    "mint": "So11111111111111111111111111111111111111112",
+    "symbol": "wSOL",
+    "decimals": 9,
+    "displayName": "Wrapped SOL"
+  },
+  {
+    "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    "symbol": "USDC",
+    "decimals": 6,
+    "displayName": "USD Coin"
+  },
+  {
+    "mint": "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+    "symbol": "USDT",
+    "decimals": 6,
+    "displayName": "Tether USD"
+  },
+  {
+    "mint": "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",
+    "symbol": "mSOL",
+    "decimals": 9,
+    "displayName": "Marinade staked SOL"
+  },
+  {
+    "mint": "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",
+    "symbol": "JitoSOL",
+    "decimals": 9,
+    "displayName": "Jito Staked SOL"
+  },
+  {
+    "mint": "bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1",
+    "symbol": "bSOL",
+    "decimals": 9,
+    "displayName": "BlazeStake Staked SOL"
+  },
+  {
+    "mint": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+    "symbol": "JUP",
+    "decimals": 6,
+    "displayName": "Jupiter"
+  },
+  {
+    "mint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+    "symbol": "BONK",
+    "decimals": 5,
+    "displayName": "Bonk"
+  },
+  {
+    "mint": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+    "symbol": "WIF",
+    "decimals": 6,
+    "displayName": "dogwifhat"
+  },
+  {
+    "mint": "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
+    "symbol": "PYTH",
+    "decimals": 6,
+    "displayName": "Pyth Network"
+  },
+  {
+    "mint": "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL",
+    "symbol": "JTO",
+    "decimals": 9,
+    "displayName": "Jito"
+  },
+  {
+    "mint": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+    "symbol": "RAY",
+    "decimals": 6,
+    "displayName": "Raydium"
+  },
+  {
+    "mint": "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",
+    "symbol": "ORCA",
+    "decimals": 6,
+    "displayName": "Orca"
+  },
+  {
+    "mint": "SRMuApVNdxXokk5GT7XD5cUUgXMBCoAz2LHeuAoKWRt",
+    "symbol": "SRM",
+    "decimals": 6,
+    "displayName": "Serum"
+  },
+  {
+    "mint": "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",
+    "symbol": "PYUSD",
+    "decimals": 6,
+    "displayName": "PayPal USD"
+  },
+  {
+    "mint": "USDSwr9ApdHk5bvJKMjzff41FfuX8bSxdKcR81vTwcA",
+    "symbol": "USDS",
+    "decimals": 6,
+    "displayName": "USDS"
+  },
+  {
+    "mint": "EzfgjvkSwthhgHaceR3LnKXUoRkP6NUhfghdaHAj1tUv",
+    "symbol": "FIDA",
+    "decimals": 6,
+    "displayName": "Bonfida"
+  },
+  {
+    "mint": "MangoCzJ36AjZyKwVj3VnYU4GTonjfVEnJmvvWaxLac",
+    "symbol": "MNGO",
+    "decimals": 6,
+    "displayName": "Mango"
+  },
+  {
+    "mint": "rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof",
+    "symbol": "RENDER",
+    "decimals": 8,
+    "displayName": "Render Token"
+  },
+  {
+    "mint": "kinXdEcpDQeHPEuQnqmUgtYykqKGVFq6CeVX5iAHJq6",
+    "symbol": "KIN",
+    "decimals": 5,
+    "displayName": "Kin"
+  },
+  {
+    "mint": "AFbX8oGjGpmVFywbVouvhQSRmiW2aR1mohfahi4Y2AdB",
+    "symbol": "GST",
+    "decimals": 9,
+    "displayName": "Green Satoshi Token"
+  },
+  {
+    "mint": "AaSZHGdAJiyJtNk4ZFsxznLkLVNwn7TyTpz74yfFqp1c",
+    "symbol": "WSOL-USDC-LP",
+    "decimals": 6,
+    "displayName": "Raydium SOL-USDC LP"
+  },
+  {
+    "mint": "MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5",
+    "symbol": "MEW",
+    "decimals": 5,
+    "displayName": "cat in a dogs world"
+  },
+  {
+    "mint": "ATLASXmbPQxBUYbxPsV97usA3fPQYEqzQBUHgiFCUsXx",
+    "symbol": "ATLAS",
+    "decimals": 8,
+    "displayName": "Star Atlas"
+  },
+  {
+    "mint": "poLisWXnNRwC6oBu1vHiuKQzFjGL4XDSu4g9qjz9qVk",
+    "symbol": "POLIS",
+    "decimals": 8,
+    "displayName": "Star Atlas DAO"
+  },
+  {
+    "mint": "SLNDpmoWTVADgEdndyvWzroNL7zSi1dF9PC3xHGtPwp",
+    "symbol": "SLND",
+    "decimals": 6,
+    "displayName": "Solend"
+  },
+  {
+    "mint": "EchesyfXePKdLtoiZSL8pBe8Myagyy8ZRqsACNCFGnvp",
+    "symbol": "FIDA-USDC",
+    "decimals": 6,
+    "displayName": "FIDA-USDC LP"
+  },
+  {
+    "mint": "DUSTawucrTsGU8hcqRdHDCbuYhCPADMLM2VcCb8VnFnQ",
+    "symbol": "DUST",
+    "decimals": 9,
+    "displayName": "DUST Protocol"
+  },
+  {
+    "mint": "AGFEad2et2ZJif9jaGpdMixQqvW5i81aBdvKe7PHNfz3",
+    "symbol": "FTT",
+    "decimals": 6,
+    "displayName": "FTX Token (Wormhole)"
+  },
+  {
+    "mint": "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs",
+    "symbol": "ETH",
+    "decimals": 8,
+    "displayName": "Ether (Wormhole)"
+  },
+  {
+    "mint": "3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh",
+    "symbol": "WBTC",
+    "decimals": 8,
+    "displayName": "Wrapped Bitcoin (Wormhole)"
+  },
+  {
+    "mint": "9n4nbM75f5Ui33ZbPYXn59EwSgE8CGsHtAeTH5YFeJ9E",
+    "symbol": "BTC",
+    "decimals": 6,
+    "displayName": "Bitcoin (Wormhole)"
+  },
+  {
+    "mint": "USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX",
+    "symbol": "USDH",
+    "decimals": 6,
+    "displayName": "USDH Hubble Stablecoin"
+  },
+  {
+    "mint": "HBB111SCo9jkCejsZfz8Ec8nH7T6THF8KEKSnvwT6XK6",
+    "symbol": "HBB",
+    "decimals": 6,
+    "displayName": "Hubble Protocol"
+  },
+  {
+    "mint": "5oVNBeEEQvYi1cX3ir8Dx5n1P7pdxydbGF2X4TxVusJm",
+    "symbol": "scnSOL",
+    "decimals": 9,
+    "displayName": "Socean staked SOL"
+  },
+  {
+    "mint": "7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj",
+    "symbol": "stSOL",
+    "decimals": 9,
+    "displayName": "Lido Staked SOL"
+  },
+  {
+    "mint": "5LSFpvLDkcdV2a3Kiyzmg5YmJsj2XDLySaXvnfP1cgLT",
+    "symbol": "Dogelana",
+    "decimals": 9,
+    "displayName": "Dogelana"
+  },
+  {
+    "mint": "A9mUU4qviSctJVPJdBJWkb28deg915LYJKrzQ19ji3FM",
+    "symbol": "USDCet",
+    "decimals": 6,
+    "displayName": "USD Coin (Wormhole from Ethereum)"
+  },
+  {
+    "mint": "Dn4noZ5jgGfkntzcQSUZ8czkreiZ1ForXYoV2H8Dm7S1",
+    "symbol": "USDTet",
+    "decimals": 6,
+    "displayName": "Tether USD (Wormhole from Ethereum)"
+  },
+  {
+    "mint": "GFX1ZjR2P15tmrSwow6FjyDYcEkoFb4p4gJCpLBjaxHD",
+    "symbol": "GOFX",
+    "decimals": 9,
+    "displayName": "GooseFX"
+  },
+  {
+    "mint": "BLZEEuZUBVqFhj8adcCFPJvPVCiCyVmh3hkJMrU8KuJA",
+    "symbol": "BLZE",
+    "decimals": 9,
+    "displayName": "Blaze"
+  },
+  {
+    "mint": "9zNQRsGLjNKwCUU5Gq5LR8beUCPzQMVMqKAi3SSZh54u",
+    "symbol": "IO",
+    "decimals": 8,
+    "displayName": "io.net"
+  }
+]

@@ -7,12 +7,45 @@ import {
   type TokenBalance,
 } from "../chains/erc20-scanner.js";
 import {
+  getNativeBalance as getSolanaNativeBalance,
+  getMintDecimals as getSolanaMintDecimals,
+  getSplTokenAccounts,
+} from "../chains/solana/sol-rpc-client.js";
+import { isDemoMode } from "../config/env.js";
+import { getActiveSolanaPersona } from "../demo/state.js";
+import {
   chainIdFromName,
   type ChainId,
   type ChainName,
 } from "../config/contracts.js";
-import { getPrices, type PriceCoin, type PriceQuote } from "../pricing/defillama.js";
+import { getPrices, getSolanaPrices, type PriceCoin, type PriceQuote } from "../pricing/defillama.js";
+import { findByMint as findSolanaTokenByMint } from "../tokens/solana-top-50.js";
+import { listAccounts } from "../wallet/non-evm-account-store.js";
 import { registerTool } from "./index.js";
+
+/**
+ * Phase 11 Plan 11-05 — discriminated-union widening (research § Topic 9).
+ *
+ * `PortfolioChainName` is the widened domain for cross-chain rows: the
+ * 5-EVM `ChainName` union + `"solana"`. The narrower `ChainName` stays the
+ * SOT for EVM-only call sites (per-chain client factory, registry, contracts
+ * SOT); the wider type lives here as a tool-local widening so we don't
+ * pollute `src/config/contracts.ts` with non-EVM rows.
+ *
+ * Solana rows carry `chain: "solana"` + base58 `tokenAddress` (mint).
+ * EVM rows continue carrying `chain: ChainName` + hex `tokenAddress`. The
+ * `chain` discriminator is load-bearing for the agent's flatten-and-aggregate
+ * (Phase 8 retro).
+ */
+export type PortfolioChainName = ChainName | "solana";
+
+/**
+ * Wrapped SOL mint — DefiLlama's canonical native-SOL pricing proxy. Prices
+ * identically to native SOL on the DefiLlama API (research § Topic 7). The
+ * `NATIVE_PRICING_PROXY` table below maps `"solana" → WRAPPED_SOL_MINT`
+ * for symmetry with the WETH-per-chain entries.
+ */
+const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
 
 const NATIVE_DECIMALS = 18;
 const DEFAULT_DUST_THRESHOLD_USD = 0.01;
@@ -40,12 +73,13 @@ const CHAIN_ENUM: readonly string[] = [...ALL_CHAINS];
  *    typed slot for Polygon in `src/config/contracts.ts` is the BRIDGED WETH
  *    address, which is the wrong pricing proxy for MATIC).
  */
-const NATIVE_PRICING_PROXY: Record<ChainName, Address> = {
+const NATIVE_PRICING_PROXY: Record<PortfolioChainName, string> = {
   ethereum: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH9
   arbitrum: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1", // WETH on Arbitrum
   polygon: "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270", // WMATIC (native MATIC proxy)
   base: "0x4200000000000000000000000000000000000006", // OP-Stack WETH predeploy
   optimism: "0x4200000000000000000000000000000000000006", // OP-Stack WETH predeploy
+  solana: WRAPPED_SOL_MINT, // wSOL — DefiLlama prices identically to native SOL (research § Topic 7)
 };
 
 const DESCRIPTION = [
@@ -78,13 +112,17 @@ const INPUT_SCHEMA = {
       description: "Minimum USD value per row to include in the response. Default 0.01. Pass 0 to disable. priceUnknown rows are always included regardless of threshold.",
       minimum: 0,
     },
+    includeSolana: {
+      type: "boolean",
+      description: "OPTIONAL. Phase 11 — Solana leg in the cross-chain fan-out. Default `true` when a Solana address is resolvable (paired record from `pair_solana_ledger`, OR active Solana demo persona). Set `false` to request EVM-only fan-out (back-compat). The Solana leg uses the resolved base58 address, NOT the agent's EVM `wallet` arg.",
+    },
   },
   required: ["wallet"],
   additionalProperties: false,
 };
 
 interface NativeBalanceRow {
-  chain: ChainName;
+  chain: PortfolioChainName;
   balance: string;
   balanceUsd?: string;
   priceUnknown?: true;
@@ -101,17 +139,64 @@ interface Erc20BalanceRow {
   error?: string;
 }
 
+/**
+ * Phase 11 Plan 11-05 — discriminated-union row shape (research § Topic 9).
+ *
+ * Replaces the EVM-locked `Erc20BalanceRow` for cross-chain consumers:
+ *
+ *   - `chain: ChainName` — `tokenAddress` is a 0x-prefixed `Address`
+ *     (EVM ERC-20 contract).
+ *   - `chain: "solana"` — `tokenAddress` is a base58 SPL mint string.
+ *     `symbolUnknown: true` surfaces for mints outside the curated top-50
+ *     SPL registry.
+ *
+ * EVM `ChainPortfolio` rows emit BOTH `erc20Balances` (deprecated alias,
+ * byte-identical to v1.x shape) AND `fungibleBalances` (new wider field) for
+ * one phase — agent consumers that flatten cross-chain rows migrate to the
+ * wider field; v1.x agent consumers continue working unchanged. Phase 13's
+ * verify-phase deletes the deprecated alias.
+ *
+ * Solana `ChainPortfolio` rows emit ONLY `fungibleBalances` (no
+ * `erc20Balances` — the name would mislead on a non-EVM chain).
+ */
+interface FungibleBalanceRow {
+  chain: PortfolioChainName;
+  /** EVM: 0x-prefixed hex Address. Solana: base58 SPL mint string. */
+  tokenAddress: string;
+  symbol: string;
+  decimals: number;
+  balance: string;
+  balanceUsd?: string;
+  priceUnknown?: true;
+  /** Solana mints outside the curated top-50 registry. */
+  symbolUnknown?: true;
+  error?: string;
+}
+
 interface ChainPortfolio {
   chain: ChainName;
   nativeBalance: NativeBalanceRow;
+  /** DEPRECATED: kept for v1.x agent back-compat (Phase 13 verify-phase deletes). Use `fungibleBalances`. */
   erc20Balances: Erc20BalanceRow[];
+  /** Cross-chain row shape (Phase 11). Byte-identical content to `erc20Balances` on EVM chains. */
+  fungibleBalances: FungibleBalanceRow[];
   totalUsd: string;
   rpcDegraded?: boolean;
 }
 
+interface SolanaChainPortfolio {
+  chain: "solana";
+  nativeBalance: NativeBalanceRow;
+  fungibleBalances: FungibleBalanceRow[];
+  totalUsd: string;
+  rpcDegraded?: boolean;
+}
+
+type AnyChainPortfolio = ChainPortfolio | SolanaChainPortfolio;
+
 interface CrossChainPortfolioResult {
-  perChain: Partial<Record<ChainName, ChainPortfolio>>;
-  chainErrors: Array<{ chain: ChainName; reason: string }>;
+  perChain: Partial<Record<PortfolioChainName, AnyChainPortfolio>>;
+  chainErrors: Array<{ chain: PortfolioChainName; reason: string }>;
   totalUsd: string;
 }
 
@@ -178,22 +263,46 @@ registerTool("get_portfolio_summary", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     }
   }
 
-  // CROSS-CHAIN branch: chain OMITTED. Fan out across all 5 chains via
+  // includeSolana validation — defense in depth for non-MCP-dispatch callers.
+  const includeSolanaRaw = args.includeSolana;
+  let includeSolana = true;
+  if (includeSolanaRaw !== undefined) {
+    if (typeof includeSolanaRaw !== "boolean") {
+      return {
+        content: [{ type: "text", text: "error: `includeSolana` must be a boolean" }],
+        isError: true,
+      };
+    }
+    includeSolana = includeSolanaRaw;
+  }
+
+  // CROSS-CHAIN branch: chain OMITTED. Fan out across all 5 EVM chains via
   // Promise.allSettled — each leg succeeds or fails independently; one
   // chain's RPC flake never poisons the whole response. The per-chain 10s
   // timeout (A9 mitigation) bounds total response latency to ~10s + the
   // parallel-execution overhead.
-  const results = await Promise.allSettled(
+  //
+  // Phase 11 Plan 11-05: + Solana leg, gated on `includeSolana` arg AND
+  // `resolveSolanaWalletForFanOut()` returning non-null (paired record
+  // first; demo persona second per 11-PLAN-CHECK § FLAG-3). Silent skip
+  // when no Solana address resolves — matches "no chain configured" EVM
+  // behavior; does NOT surface in `chainErrors`.
+  const solanaWallet = includeSolana ? resolveSolanaWalletForFanOut() : null;
+
+  const evmResults = await Promise.allSettled(
     ALL_CHAINS.map((c) => readChainPortfolioWithTimeout(c, wallet, dustThreshold)),
   );
+  const solanaResult = solanaWallet
+    ? await Promise.allSettled([readSolanaPortfolioWithTimeout(solanaWallet, dustThreshold)])
+    : null;
 
-  const perChain: Partial<Record<ChainName, ChainPortfolio>> = {};
-  const chainErrors: Array<{ chain: ChainName; reason: string }> = [];
+  const perChain: Partial<Record<PortfolioChainName, AnyChainPortfolio>> = {};
+  const chainErrors: Array<{ chain: PortfolioChainName; reason: string }> = [];
   let totalUsdNum = 0;
 
-  for (let i = 0; i < results.length; i++) {
+  for (let i = 0; i < evmResults.length; i++) {
     const chain = ALL_CHAINS[i]!;
-    const r = results[i]!;
+    const r = evmResults[i]!;
     if (r.status === "fulfilled") {
       perChain[chain] = r.value;
       const legUsd = parseFloat(r.value.totalUsd);
@@ -201,6 +310,18 @@ registerTool("get_portfolio_summary", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     } else {
       const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
       chainErrors.push({ chain, reason });
+    }
+  }
+
+  if (solanaResult) {
+    const r = solanaResult[0]!;
+    if (r.status === "fulfilled") {
+      perChain.solana = r.value;
+      const legUsd = parseFloat(r.value.totalUsd);
+      if (Number.isFinite(legUsd)) totalUsdNum += legUsd;
+    } else {
+      const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      chainErrors.push({ chain: "solana", reason });
     }
   }
 
@@ -266,7 +387,7 @@ async function readChainPortfolio(
 ): Promise<ChainPortfolio> {
   const chainId: ChainId = chainIdFromName(chain);
   const client = getChainClient(chainId);
-  const nativeProxy: Address = NATIVE_PRICING_PROXY[chain];
+  const nativeProxy: Address = NATIVE_PRICING_PROXY[chain] as Address;
 
   const [nativeBalanceRaw, erc20Balances] = await Promise.all([
     client.getBalance({ address: wallet }),
@@ -358,14 +479,230 @@ async function readChainPortfolio(
     adjustedTotal -= nativeRow.usdValue;
   }
 
+  // Phase 11 — discriminated-union widening. EVM rows emit BOTH
+  // `erc20Balances` (DEPRECATED alias, byte-identical content) AND
+  // `fungibleBalances` (new wider field). Byte-identical means: same
+  // tokenAddress, symbol, decimals, balance, balanceUsd, priceUnknown,
+  // error — only the type widens from `Erc20BalanceRow` → `FungibleBalanceRow`.
+  // Phase 13 verify-phase deletes the deprecated alias.
+  const fungibleOut: FungibleBalanceRow[] = erc20Out.map((row) => {
+    const r: FungibleBalanceRow = {
+      chain: row.chain,
+      tokenAddress: row.tokenAddress,
+      symbol: row.symbol,
+      decimals: row.decimals,
+      balance: row.balance,
+    };
+    if (row.balanceUsd !== undefined) r.balanceUsd = row.balanceUsd;
+    if (row.priceUnknown) r.priceUnknown = true;
+    if (row.error !== undefined) r.error = row.error;
+    return r;
+  });
+
   const result: ChainPortfolio = {
     chain,
     nativeBalance: finalNative,
     erc20Balances: erc20Out,
+    fungibleBalances: fungibleOut,
     totalUsd: formatUsd(adjustedTotal),
   };
   if (isPublicNodeFallback(chainId)) result.rpcDegraded = true;
   return result;
+}
+
+/**
+ * Phase 11 Plan 11-05 — Solana fan-out address resolver (per 11-PLAN-CHECK
+ * § FLAG-3). Two-source resolution:
+ *
+ *   (1) REAL-MODE FIRST — paired Solana record from Plan 11-01's account
+ *       store (`listAccounts({ chainFilter: "solana" })[0]`). When the user
+ *       has paired a Ledger Solana account via `pair_solana_ledger`, the
+ *       fan-out targets that address.
+ *   (2) DEMO-MODE FALLBACK — `getActiveSolanaPersona()?.solanaAddress`
+ *       from Plan 11-06's persona registry. Only consulted when no paired
+ *       record exists AND `isDemoMode() === true`. Demo mode never has a
+ *       paired record (Plan 11-04's `pair_solana_ledger` refuses with
+ *       `DEMO_MODE_REFUSED`); without this fallback, the Solana leg would
+ *       silently skip in demo, breaking Phase 11 Plan 11-06's "demo-mode
+ *       Solana reads against real RPC" claim (CONTEXT.md `<decisions>`).
+ *
+ * Returns the resolved base58 address, or `null` if neither source applies
+ * (real mode + no pair → silent skip, matching the "no chain configured"
+ * EVM behavior).
+ *
+ * The resolver does NOT take the agent's `wallet` arg as input — the EVM
+ * `wallet` is 0x-prefixed hex, which is not a Solana address. The Solana
+ * leg fans out against a SEPARATE address sourced from the account store
+ * or persona registry.
+ */
+function resolveSolanaWalletForFanOut(): string | null {
+  // Real-mode first: paired record from Plan 11-01's store.
+  const paired = listAccounts({ chainFilter: "solana" });
+  if (paired.length > 0 && paired[0]) return paired[0].address;
+  // Demo-mode fallback: active Solana persona from Plan 11-06.
+  if (isDemoMode()) {
+    const persona = getActiveSolanaPersona();
+    if (persona) return persona.solanaAddress;
+  }
+  return null;
+}
+
+/**
+ * Phase 11 Plan 11-05 — Solana per-chain portfolio reader. Mirrors the
+ * EVM `readChainPortfolio` shape: native balance + fungible-token discovery +
+ * DefiLlama pricing + dust filter + row aggregation.
+ *
+ * **D-7 LOAD-BEARING (research § Topic 5):** SPL discovery via
+ * `getSplTokenAccounts` (UNPARSED `getTokenAccountsByOwner` under the hood
+ * — the parsed RPC method is rejected by `api.mainnet-beta.solana.com`).
+ *
+ * Symbol resolution: curated top-50 registry first; on-demand
+ * `getMintDecimals` fallback for off-list mints (symbol stays
+ * `symbolUnknown: true`).
+ *
+ * Pricing: `getSolanaPrices([mint, mint, ...])` — batched DefiLlama lookup
+ * via `solana:<mint>` keying. Native SOL prices via the wSOL proxy
+ * (`So111...1112`) — DefiLlama prices it identically to native SOL.
+ */
+async function readSolanaPortfolio(
+  solanaWallet: string,
+  dustThreshold: number,
+): Promise<SolanaChainPortfolio> {
+  // Native + SPL discovery in parallel.
+  const [nativeRes, accounts] = await Promise.all([
+    getSolanaNativeBalance(solanaWallet),
+    getSplTokenAccounts(solanaWallet),
+  ]);
+
+  // Filter to non-zero SPL accounts. Zero-balance accounts (closed but
+  // un-burned) are dropped to match the EVM `row.balance === 0n` filter.
+  const nonZero = accounts.filter((row) => row.amount > 0n);
+
+  // Resolve decimals + symbols per mint. Registry hits are free; off-list
+  // mints get an on-demand `getMintDecimals` call (parallelized).
+  type ResolvedRow = {
+    mint: string;
+    amount: bigint;
+    decimals: number;
+    symbol: string;
+    symbolUnknown: boolean;
+  };
+  const resolved: ResolvedRow[] = await Promise.all(
+    nonZero.map(async (row) => {
+      const entry = findSolanaTokenByMint(row.mint);
+      if (entry) {
+        return {
+          mint: row.mint,
+          amount: row.amount,
+          decimals: entry.decimals,
+          symbol: entry.symbol,
+          symbolUnknown: false,
+        };
+      }
+      // Off-list mint — on-demand decimals lookup. Symbol stays unknown
+      // (Metaplex Token Metadata is Phase 13+).
+      const decimals = await getSolanaMintDecimals(row.mint);
+      return {
+        mint: row.mint,
+        amount: row.amount,
+        decimals,
+        symbol: `${row.mint.slice(0, 4)}...${row.mint.slice(-4)}`,
+        symbolUnknown: true,
+      };
+    }),
+  );
+
+  // Batched price lookup — wSOL (native proxy) + every non-zero mint.
+  const allMints = [WRAPPED_SOL_MINT, ...resolved.map((r) => r.mint)];
+  const prices = await getSolanaPrices(allMints);
+
+  // Native row.
+  const solBalance = nativeRes.sol;
+  const wsolQuote = prices.get(WRAPPED_SOL_MINT);
+  const nativeRow = buildRow(nativeRes.lamports, 9, solBalance, wsolQuote);
+  const nativeOut: NativeBalanceRow = { chain: "solana", balance: nativeRow.balance };
+  if (nativeRow.balanceUsd !== undefined) nativeOut.balanceUsd = nativeRow.balanceUsd;
+  if (nativeRow.priceUnknown) nativeOut.priceUnknown = true;
+
+  // SPL rows.
+  const fungibleOut: FungibleBalanceRow[] = [];
+  let totalUsd = 0;
+  if (nativeRow.usdValue !== undefined) totalUsd += nativeRow.usdValue;
+
+  for (const row of resolved) {
+    const balanceStr = formatUnits(row.amount, row.decimals);
+    const quote = prices.get(row.mint);
+    const built = buildRow(row.amount, row.decimals, balanceStr, quote);
+
+    if (
+      dustThreshold > 0 &&
+      built.usdValue !== undefined &&
+      built.usdValue < dustThreshold
+    ) {
+      continue;
+    }
+
+    const out: FungibleBalanceRow = {
+      chain: "solana",
+      tokenAddress: row.mint,
+      symbol: row.symbol,
+      decimals: row.decimals,
+      balance: built.balance,
+    };
+    if (built.balanceUsd !== undefined) out.balanceUsd = built.balanceUsd;
+    if (built.priceUnknown) out.priceUnknown = true;
+    if (row.symbolUnknown) out.symbolUnknown = true;
+    fungibleOut.push(out);
+
+    if (built.usdValue !== undefined) totalUsd += built.usdValue;
+  }
+
+  // Native dust-filter — same symmetry as EVM path.
+  const includeNative =
+    nativeRes.lamports > 0n &&
+    !(
+      dustThreshold > 0 &&
+      nativeRow.usdValue !== undefined &&
+      nativeRow.usdValue < dustThreshold
+    );
+  const finalNative: NativeBalanceRow = includeNative
+    ? nativeOut
+    : { chain: "solana", balance: solBalance };
+  let adjustedTotal = totalUsd;
+  if (!includeNative && nativeRow.usdValue !== undefined) {
+    adjustedTotal -= nativeRow.usdValue;
+  }
+
+  return {
+    chain: "solana",
+    nativeBalance: finalNative,
+    fungibleBalances: fungibleOut,
+    totalUsd: formatUsd(adjustedTotal),
+  };
+}
+
+/**
+ * Solana-leg timeout wrapper. Mirrors {@link readChainPortfolioWithTimeout}
+ * — same 10s `PER_CHAIN_TIMEOUT_MS` AbortController + `Promise.race` shape.
+ */
+async function readSolanaPortfolioWithTimeout(
+  solanaWallet: string,
+  dustThreshold: number,
+): Promise<SolanaChainPortfolio> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), PER_CHAIN_TIMEOUT_MS);
+  try {
+    return await Promise.race<SolanaChainPortfolio>([
+      readSolanaPortfolio(solanaWallet, dustThreshold),
+      new Promise<SolanaChainPortfolio>((_, reject) => {
+        abort.signal.addEventListener("abort", () => {
+          reject(new Error(`timeout after ${PER_CHAIN_TIMEOUT_MS}ms`));
+        });
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -417,17 +754,26 @@ function renderCrossChainSummary(
   result: CrossChainPortfolioResult,
 ): string {
   const lines: string[] = [];
-  const succeeded = Object.keys(result.perChain) as ChainName[];
+  const succeeded = Object.keys(result.perChain);
   lines.push(
     `wallet ${wallet} across 5 chains: ~$${result.totalUsd} USD total (${succeeded.length} chain${succeeded.length === 1 ? "" : "s"} succeeded, ${result.chainErrors.length} failed)`,
   );
   for (const chain of ALL_CHAINS) {
-    const portfolio = result.perChain[chain];
+    const portfolio = result.perChain[chain] as ChainPortfolio | undefined;
     if (!portfolio) continue;
     const count = portfolio.erc20Balances.length;
     const degraded = portfolio.rpcDegraded ? " (rpcDegraded)" : "";
     lines.push(
       `  ${chain}: ${portfolio.nativeBalance.balance} (native) + ${count} ERC-20 row${count === 1 ? "" : "s"} = ~$${portfolio.totalUsd}${degraded}`,
+    );
+  }
+  // Solana row — uses `fungibleBalances` count instead of `erc20Balances`.
+  const solPortfolio = result.perChain.solana as SolanaChainPortfolio | undefined;
+  if (solPortfolio) {
+    const count = solPortfolio.fungibleBalances.length;
+    const degraded = solPortfolio.rpcDegraded ? " (rpcDegraded)" : "";
+    lines.push(
+      `  solana: ${solPortfolio.nativeBalance.balance} (native) + ${count} SPL row${count === 1 ? "" : "s"} = ~$${solPortfolio.totalUsd}${degraded}`,
     );
   }
   for (const { chain, reason } of result.chainErrors) {
