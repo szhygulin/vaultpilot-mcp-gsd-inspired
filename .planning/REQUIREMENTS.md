@@ -329,9 +329,32 @@ Each protocol is a phase with its own read tools, prepare tools, allowlist entri
 
 ### v2.4 EVM DEX + LP + escape hatch
 
-- **UNI-01..N**: Uniswap V3 — `prepare_uniswap_swap` (direct V3, same-chain, auto-fee-tier); full LP verb set (`_v3_mint` / `_increase_liquidity` / `_decrease_liquidity` / `_collect` / `_burn` / `_rebalance`); `get_lp_positions` with IL estimate
-- **CRV-01..N**: Curve — `get_curve_positions`, `prepare_curve_swap` (stETH/ETH legacy + stable_ng plain pools), `prepare_curve_add_liquidity` (Ethereum stable_ng plain pools); v0.2 follow-ups deferred per upstream issue #321
-- **CUSTOM-01**: `prepare_custom_call({ to, data, value, acknowledgeNonProtocolTarget: true })` — escape hatch for arbitrary verified-contract calls; bypasses the canonical-dispatch allowlist by design; `acknowledgeNonProtocolTarget: true` is the user-acknowledgment they're operating outside the protocol-aware safety net; pairs with `get_contract_abi` and `read_contract`
+Uniswap V3 swap + full LP verb set; Curve swap + add-liquidity (stETH/ETH legacy + stable_ng plain pools); `prepare_custom_call` escape hatch with companion `get_contract_abi` + `read_contract` tools. The escape hatch is intentionally outside the canonical-dispatch allowlist — `acknowledgeNonProtocolTarget: true` is the user-acknowledgment they're operating outside the protocol-aware safety net.
+
+#### Uniswap V3 (UNI-*)
+
+- [ ] **UNI-01**: `get_uniswap_quote({ chain, tokenIn, tokenOut, amount, slippageBps? })` returns the Uniswap V3 Quoter V2 quote envelope (out amount, fee tier, route plan, price impact)
+- [ ] **UNI-02**: `prepare_uniswap_swap({ chain, tokenIn, tokenOut, amount, slippageBps })` returns an unsigned SwapRouter02 transaction with auto-fee-tier selection (best price across 0.01% / 0.05% / 0.30% / 1.00% pools); multi-hop routing supported when single-hop has worse price
+- [ ] **UNI-03**: Sandwich-MEV defense — default slippage hint = 50 bps; refuses without explicit `slippageBps` when price impact > 2% (pre-loaded by v2.6 MEV-01 per-L2 thresholds)
+- [ ] **UNI-04**: `get_lp_positions({ wallet, chain? })` returns Uniswap V3 LP positions per NFT-id with current price + tick range + in-range/out-of-range flag + accrued fees + IL estimate (relative to a hodl baseline)
+- [ ] **UNI-05**: `prepare_uniswap_v3_mint({ chain, token0, token1, fee, tickLower, tickUpper, amount0, amount1 })` produces an unsigned NonfungiblePositionManager `mint` call
+- [ ] **UNI-06**: `prepare_uniswap_increase_liquidity` + `prepare_uniswap_decrease_liquidity` cover liquidity adjustments on existing positions (NFT-keyed)
+- [ ] **UNI-07**: `prepare_uniswap_collect` produces an unsigned `collect(tokenId, ...)` call to harvest accrued fees
+- [ ] **UNI-08**: `prepare_uniswap_burn` produces an unsigned `burn(tokenId)` call to close a fully-decreased position
+- [ ] **UNI-09**: `prepare_uniswap_v3_rebalance({ tokenId, newTickLower, newTickUpper })` is a composite tool that builds a multicall (decrease all + collect + mint at new range); preview surfaces the multi-step decoded view
+- [ ] **UNI-10**: Uniswap V3 SwapRouter02 + Quoter V2 + NonfungiblePositionManager addresses sourced from `src/config/contracts.ts` per-chain table; tick math + price↔tick conversions handled server-side in `src/signing/uniswap-tick.ts`; canonical-dispatch allowlist Uniswap arm wiring
+
+#### Curve (CRV-*)
+
+- [ ] **CRV-01**: `get_curve_positions({ wallet, chain? })` returns Curve LP token balances + pool composition (stETH/ETH legacy + stable_ng plain pools only at v2.4)
+- [ ] **CRV-02**: `prepare_curve_swap({ chain, poolAddress, inputToken, outputToken, amount, slippageBps })` produces an unsigned `exchange` call on the named pool
+- [ ] **CRV-03**: `prepare_curve_add_liquidity({ chain, poolAddress, amounts: [...], slippageBps })` produces an unsigned `add_liquidity` call for stable_ng plain pools (Ethereum first); Curve pool addresses sourced from `src/config/contracts.ts` curated registry (stETH/ETH legacy + top 10 stable_ng pools at planning time); v0.2 follow-ups (3-coin meta-pools, Curve metaregistry-driven discovery) deferred per upstream issue [#321](https://github.com/szhygulin/vaultpilot-mcp-gsd-inspired/issues/321) (or equivalent); canonical-dispatch allowlist Curve arm wiring
+
+#### Escape hatch (CUSTOM-*)
+
+- [ ] **CUSTOM-01**: `prepare_custom_call({ chain, to, data, value?, acknowledgeNonProtocolTarget: true })` produces an unsigned transaction that BYPASSES the canonical-dispatch allowlist by design; missing `acknowledgeNonProtocolTarget: true` → structured refusal naming the safety implication; preview surfaces a `[WARN — NON-PROTOCOL TARGET]` block above the standard preview blocks
+- [ ] **CUSTOM-02**: `get_contract_abi({ chain, address })` returns the verified ABI from Etherscan (or per-chain explorer); `not-verified` arm surfaced verbatim
+- [ ] **CUSTOM-03**: `read_contract({ chain, address, functionName, args })` calls a view function via `eth_call`; encodes/decodes via the verified ABI; per-call ABI-decode best-effort surfacing in CHECKS PERFORMED when `prepare_custom_call` follows a `get_contract_abi` call; blind-sign-only when ABI unavailable
 
 ### v2.5 Safe (Gnosis) multisig
 
