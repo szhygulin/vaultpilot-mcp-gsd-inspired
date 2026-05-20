@@ -29,6 +29,7 @@ import {
   type ToolInputSchema,
 } from "./tools/index.js";
 import { registerAllTools } from "./tools/register-all.js";
+import { eagerInitNonEvmStoreIfPersist } from "./wallet/non-evm-account-store.js";
 import { eagerInitWalletConnectIfPersist } from "./wallet/walletconnect-client.js";
 
 const SERVER_NAME = "vaultpilot-mcp";
@@ -209,6 +210,11 @@ export async function startServer(): Promise<void> {
   // `"memory"`; init failures log a warning but do NOT abort startup (the
   // server must still serve demo + RPC reads when WC backend is unreachable).
   await eagerInitWalletConnectIfPersist();
+  // Phase 11 (Plan 11-01): same eager-init discipline as PR #61's WC fix,
+  // applied to the non-EVM (Solana / TRON / BTC / LTC) account cache. The
+  // cache holds NO key material — failure here is non-fatal; silent skip
+  // when mode is `"memory"` or the file is absent (fresh install).
+  await eagerInitNonEvmStoreIfPersist();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log("info", `${SERVER_NAME} ${SERVER_VERSION} listening on stdio`);
