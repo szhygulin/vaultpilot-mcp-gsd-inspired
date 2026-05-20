@@ -413,13 +413,16 @@ Plans:
   5. Paired TRON account persists to `~/.vaultpilot-mcp/non-evm-accounts.json` under `chain: "tron"` record key (PAIR-NEV-* cache reuse — zero infrastructure change)
   6. On MCP restart, eager-loaded TRON account restores via `loadNonEvmAccounts()` before `server.connect(transport)`; `get_tron_status()` returns `paired: true` on first call without re-pair
   7. `get_vaultpilot_config_status` extends `pairedNonEvmChains` to include `"tron"` when present; `tronRpcConfigured` boolean surfaces alongside `solanaRpcConfigured`
-**Plans**: 4 plans (estimate)
+**Plans**: 5 plans
 
 Plans:
-- [ ] 17-01: `tronweb` (DF — researcher to scope-probe vs `@tronprotocol/sdk` at execute time per `rnd`) + `@ledgerhq/hw-app-trx` + USB-HID transport reuse from Phase 11; `src/chains/tron/` shelf (rpc-client + registry + types); `TRON_RPC_URL` env reader + TronGrid fallback
-- [ ] 17-02: `pair_tron_ledger` tool + USB-HID transport open + TRON app detection + ed25519-on-secp256k1 pubkey → base58check (T-prefixed) address derivation + `VERIFY-ON-DEVICE` block; PAIR-NEV-* cache reuse (no schema change — `chain: "tron"` is the only delta)
-- [ ] 17-03: `get_tron_balance` + `get_tron_block_tip` read tools + `get_tron_status` diagnostic; eager-init at `startServer()` via existing PR #61 + Phase 11 pattern (no new infrastructure)
-- [ ] 17-04: `get_vaultpilot_config_status` TRON surfacing (`tronRpcConfigured`, `pairedNonEvmChains` extension) + demo persona registry extension (TRON whale persona — known top-50 TRX holder)
+- [x] 17-01: TRON chain shelf + `tronweb@6.3.0` (research-locked over `@tronprotocol/sdk` — that name is a hallucination; no such npm package exists at scope-probe time) + `@ledgerhq/hw-app-trx@6.36.1` + `src/chains/tron/{rpc-client,registry,types}.ts` + `TRON_RPC_URL` env reader + TronGrid fallback + `tron-top-25.json` stub `[]` (filled in 17-04) + **5-level BIP-44 derivation path** `m/44'/195'/<n>'/0/0` (DIFFERENT from Solana's 3-level `44'/501'/<n>'`; load-bearing regression anchor — `accountIndex` extracts `segments[2]` not `segments[1]`) — PR #83
+- [x] 17-02: USB-HID Ledger TRON transport (`src/wallet/ledger-tron-transport.ts`) — `fetchTronAddress` returns the base58check (T-prefixed) string **DIRECTLY** from `@ledgerhq/hw-app-trx`'s `getAddress({ address: true })` call (NO `bs58.encode` step — load-bearing regression anchor defends against Solana-copy-paste; the TRX app returns the encoded string, Solana returns raw 32 bytes); lazy USB-HID singleton + `_transport` spy-affordance mirroring Solana shape — PR #84
+- [x] 17-03: 5 TRON MCP tools — `pair_tron_ledger` + `get_tron_status` + `get_tron_balance` + `get_tron_token_balance` + `get_tron_block_tip` + `tronRpcConfigured` diagnostic in `get_vaultpilot_config_status` + `pairedNonEvmChains` widening to include `"tron"`. **Originally landed as PR #87 but closed as superseded due to stale-branch register-all.ts regression** — `git rebase` at PR-write time would have silently deleted the `prepare_solana_spl_send` + `prepare_compound_supply` + `prepare_compound_withdraw` imports landed in concurrent PRs #85 + #82. Rebased + re-opened as PR #88; the **rebase-before-PR-open discipline** lesson surfaced from this experience (see Phase 17 retro) — PR #88
+- [x] 17-04: `tron-top-25.json` filled with **15 entries** (DefiLlama-coverage-locked — only TRC-20 tokens with `tron:<address>` DefiLlama prices included; padding to 25 would have introduced un-priced rows that the read tools couldn't render meaningfully); USDD-18 + WTRX-6 regression anchors lock against the per-entry-hardcoded decimals shape (USDD = 18 decimals, USDT/USDC/WTRX = 6; pattern-mapper surfacing — TRC-20 decimals are MORE divergent than ERC-20's mostly-6/18 bimodal distribution); DefiLlama `tron:<address>` keying + `NATIVE_PRICING_PROXY.tron = WTRX` (mirrors Polygon WMATIC + Solana wSOL pattern); `get_portfolio_summary` TRON branch via discriminated-union widening (per-row `chain: "tron"` discriminator — pattern from Phase 11). **TRON-READ-04 (`get_portfolio_summary` TRON leg) shipped here**, ahead of Phase 21's scope — Phase 21 narrows to setup-status diagnostics + remainder sub-features per plan-check FLAG-1 — PR #91
+- [x] 17-05: `TronPersona` sibling interface (NOT widening `Persona` — base58check T-prefix addresses don't satisfy viem's `Address`-branded hex literal-union; sibling pattern from Phase 11 `SolanaPersona`); `tron-whale` persona (`TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb` — OFAC-clean per 0xB10C registry, known top-25 TRX holder); `get_demo_wallet`/`set_demo_wallet` widening; persona slug enum expanded — PR #92
+
+**Status**: code-complete; v2.1 verify-phase pending (real-Ledger USB-HID TRON-app smoke against mainnet — small TRX transfer once Phase 18 trust pipeline ships; for now, pair + read-side smoke + portfolio fan-out smoke + demo-persona rehearsal). PAIR-NEV-* infrastructure (Phase 11) reused with zero schema change — `chain: "tron"` is the only delta. The TronPersona sibling-interface pattern + `tron-top-25.json` curation discipline + the **5-level BIP-44 path divergence regression anchor** are now load-bearing for v2.1 Phases 18-21 (TRON trust pipeline / TRC-20 approve + Stake 2.0 / SunSwap + LiFi / setup diagnostics). Originally planned as 4 plans (estimate); shipped as 5 — 17-05 demo-persona is a sibling-interface plan distinct from 17-04 reads (same Phase 11 split between 11-05 reads and 11-06 demo).
 
 #### Phase 18: TRON native + TRC-20 trust pipeline
 **Goal**: Full prepare → preview → send flow works for native TRX and TRC-20 transfers, with TRON-specific `payloadFingerprint` (over serialized Protobuf transaction bytes pre-signature), TRON-specific blind-sign hash recompute (SHA-256 over the Protobuf raw_data per TRON consensus), and Ledger TRX-app clear-sign coverage.
@@ -478,20 +481,19 @@ Plans:
 - [ ] 20-01: `src/clients/sunswap.ts` (HTTP client mirroring `jupiter.ts` shape; never-throws, LRU cache); `get_sunswap_quote` + `prepare_sunswap_swap`; sandwich-MEV >2% refusal; canonical-dispatch TRON arm wiring
 - [ ] 20-02: `prepare_tron_lifi_swap` + LiFi TRON-side decoder + Inv #6b `decodedFinalRecipient` assertion at preview; cross-chain `toChain` Zod enum widening (`"tron"` joins existing EVM + Solana enum). **Shared `src/clients/lifi.ts` shelf** (consumed by v2.0 SOL-W-21, v2.1 TRON-W-11, v2.2 BTC-LIFI-01) — refactor opportunity if not already factored at Phase 16.
 
-#### Phase 21: TRON diagnostics + multi-chain portfolio extension
-**Goal**: `get_tron_setup_status` probes TRX-app version + on-device address verify (analogous to v2.0 SOL-DIAG-01); `get_portfolio_summary` extends to include TRON when configured.
+#### Phase 21: TRON diagnostics + v2.1 milestone close-out
+**Goal**: `get_tron_setup_status` probes TRX-app version + on-device address verify + Stake 2.0 resource presence (analogous to v2.0 SOL-DIAG-01). **Scope narrowed** at Phase 17 close-out per plan-check FLAG-1 — TRON-READ-04 (`get_portfolio_summary` TRON leg + curated TRC-20 registry + DefiLlama pricing) already shipped in Plan 17-04, ahead of the original Phase 21 placement. Phase 21 now closes out the v2.1 milestone with the setup-diagnostic + SECURITY.md TRON threat-model finalization.
 **Depends on**: Phase 20
-**Requirements**: TRON-DIAG-01, TRON-READ-04
+**Requirements**: TRON-DIAG-01 (TRON-READ-04 already covered by Phase 17)
 **Success Criteria** (what must be TRUE):
   1. `get_tron_setup_status({ wallet })` returns `{ ledgerTrxAppVersion?, walletAddressOnDevice, resourceAccountPresent (Stake 2.0), frozenEnergyAmount, frozenBandwidthAmount }`
-  2. `get_portfolio_summary` fan-out adds TRON when configured; per-row `chain: "tron"` field follows the v1.2 multi-EVM + v2.0 Solana convention
-  3. TRON branch in `get_portfolio_summary` aggregates TRX + canonical TRC-20 stablecoin balances + USD totals; SPL-equivalent TRC-20 discovery via a curated top-30-by-volume TRC-20 mint registry at `src/tokens/tron-top-30.json` (smaller than EVM/Solana — TRON's relevant token surface is narrower)
-  4. SECURITY.md updated with TRON-side bridge facet-decode rationale + multi-chain portfolio scope extension
-**Plans**: 2 plans (estimate)
+  2. ~~`get_portfolio_summary` fan-out adds TRON~~ — **shipped in Plan 17-04**; Phase 21 SC retained for documentation traceability only
+  3. ~~Curated top-30 TRC-20 mint registry at `src/tokens/tron-top-30.json`~~ — **shipped in Plan 17-04** as `src/tokens/tron-top-25.json` (15 entries; DefiLlama-coverage-locked; pattern-mapper surfacing — TRON's relevant token surface is narrower than EVM/Solana)
+  4. SECURITY.md updated with TRON-side bridge facet-decode rationale + Stake 2.0 resource-account threat model + v2.1 verify-phase scope documented
+**Plans**: 1 plan (revised from 2 estimate; portfolio leg shipped in Phase 17)
 
 Plans:
-- [ ] 21-01: `get_tron_setup_status` diagnostic — Stake 2.0 resource probe + Ledger TRX app version probe + on-device pubkey verify
-- [ ] 21-02: `get_portfolio_summary` TRON branch + curated top-30 TRC-20 registry at `src/tokens/tron-top-30.json` + DefiLlama pricing (`tron:<address>` keying) + v2.1 milestone close-out (SECURITY.md TRON threat-model finalization)
+- [ ] 21-01: `get_tron_setup_status` diagnostic — Stake 2.0 resource probe (frozen ENERGY + BANDWIDTH amounts from TronGrid `/wallet/getaccount` `frozenV2` array) + Ledger TRX app version probe + on-device pubkey verify; v2.1 milestone close-out (SECURITY.md TRON threat-model finalization)
 
 **Status**: planning; v2.1 verify-phase requires a physical Ledger with TRON app installed + USB-HID connectivity + small TRX balance for return-able test broadcasts.
 
@@ -908,11 +910,11 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 14. Jupiter v6 swaps | v2.0 | 0/2 | Planning | - |
 | 15. Staking — Marinade + Jito + native SOL | v2.0 | 0/3 | Planning | - |
 | 16. LiFi-routed EVM↔Solana bridging + Solana diagnostics | v2.0 | 0/2 | Planning | - |
-| 17. TRON scaffolding — USB-HID + TRX reads + persistent TRON account | v2.1 | 0/4 | Not started | - |
+| 17. TRON scaffolding — USB-HID + TRX reads + persistent TRON account + portfolio fan-out | v2.1 | 5/5 | Complete (verify-phase open) | 2026-05-20 |
 | 18. TRON native + TRC-20 trust pipeline | v2.1 | 0/4 | Not started | - |
 | 19. TRC-20 approve + Stake 2.0 (freeze/unfreeze/withdraw-expire-unfreeze/vote/claim) | v2.1 | 0/4 | Not started | - |
 | 20. SunSwap + LiFi-routed TRON↔EVM bridging | v2.1 | 0/2 | Not started | - |
-| 21. TRON diagnostics + multi-chain portfolio extension | v2.1 | 0/2 | Not started | - |
+| 21. TRON diagnostics + v2.1 milestone close-out (portfolio leg shipped in Phase 17) | v2.1 | 0/1 | Not started | - |
 | 22. BTC scaffolding — Esplora reads + USB-HID + persistent BTC account | v2.2 | 0/4 | Not started | - |
 | 23. BTC native + segwit + taproot trust pipeline (PSBT-based) | v2.2 | 0/4 | Not started | - |
 | 24. BIP-125 RBF + BIP-137 message signing | v2.2 | 0/2 | Not started | - |
