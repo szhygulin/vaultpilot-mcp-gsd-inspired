@@ -31,8 +31,6 @@ import { type Address, type Hex, erc20Abi, getAddress } from "viem";
 
 import { getChainClient } from "../chains/registry.js";
 import { chainIdFromName, type ChainId, type ChainName } from "../config/contracts.js";
-import { isDemoMode } from "../config/env.js";
-import { getActivePersona } from "../demo/state.js";
 import { encodeErc20Transfer } from "../protocols/erc20.js";
 import { InvalidAmountError, parseAmountStrict } from "../signing/amount.js";
 import { ERC20_PREPARE_RECEIPT_TEMPLATE } from "../signing/blocks.js";
@@ -43,8 +41,8 @@ import {
 } from "../signing/error-codes.js";
 import { createHandle } from "../signing/handle-store.js";
 import { computePayloadFingerprint } from "../signing/payload-fingerprint.js";
+import { resolveFrom } from "../signing/resolve-from.js";
 import { loadTokenRegistry } from "../tokens/registry.js";
-import { getStatus } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
 
 function errEnvelope(
@@ -64,9 +62,10 @@ const DESCRIPTION = [
   "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism. No default-pick; omitting refuses at the dispatch boundary.",
   "`amount` is a DECIMAL STRING in human units (e.g. \"100.5\" for 100.5 USDC, NOT \"100500000\"). The server resolves the token's decimals via the on-chain decimals() call (or the cached registry for top-50 tokens) and parses amount strictly — off-by-decimal errors refuse at prepare time, never silently round.",
   "`to` is the RECIPIENT address (0x-prefixed 20-byte hex). `tokenAddress` is the ERC-20 contract address — NOT a wallet address.",
+  "Pass `from` when the user wants to act from a non-default approved account (visible in `get_ledger_status.accountsByChain[chainId]`); otherwise omit and the active account is used. PREPARE RECEIPT surfaces `From:` only when caller-supplied.",
   "Requires a paired Ledger (call pair_ledger_live first if get_ledger_status shows paired: false). In demo mode, succeeds against the active persona's address as `from`; send_transaction returns a simulation envelope instead of broadcasting.",
   "Returns `{ handle, chain, chainId, from, to, tokenAddress, amount, amountWei, payloadFingerprint }` plus a PREPARE RECEIPT text block surfacing the verbatim args.",
-  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set, INVALID_INPUT if chain/to/tokenAddress/amount malformed (including fractional-overflow vs token decimals).",
+  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set OR if `from` doesn't match the active persona, INVALID_INPUT if chain/to/tokenAddress/amount/from malformed (including fractional-overflow vs token decimals), INVALID_ACCOUNT if `from` is not in the per-chain approved set.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -91,6 +90,12 @@ const INPUT_SCHEMA = {
     amount: {
       type: "string",
       description: "Decimal string in human units (e.g. \"100.5\"). The server resolves decimals via the token contract. Do NOT pass wei.",
+    },
+    from: {
+      type: "string",
+      pattern: "^0x[0-9a-fA-F]{40}$",
+      description:
+        "Optional sender address — must be one of the per-chain approved accounts in `get_ledger_status.accountsByChain[chainId]`. Omit to use the active account. In demo mode, must match the active persona's address.",
     },
   },
   required: ["chain", "to", "tokenAddress", "amount"],
@@ -168,51 +173,17 @@ registerTool("prepare_token_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // does the deep validation.
     const rawAmount = typeof args.amount === "string" ? args.amount : "";
 
-    // SENDER resolution (Plan 05-02 / Q-CONTRADICTION-PREP Option B):
-    // In demo mode, the active persona's address is `from`; in real mode,
-    // the paired Ledger's active account is `from`. The demo branch SKIPS
-    // `getStatus()` (no WC pairing exists in demo) so the spy observes zero
-    // calls in the demo arm — same invariant as prepare_native_send.
-    let fromAddress: Address;
-    if (isDemoMode()) {
-      const persona = getActivePersona();
-      if (persona === null) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text:
-                "error: demo mode is active but no persona set. Call `set_demo_wallet({ persona: \"whale\" | \"defi-degen\" | \"stable-saver\" | \"staking-maxi\" })` first.",
-            },
-          ],
-          structuredContent: errEnvelope(
-            "WRONG_MODE",
-            "demo mode active but no persona set; call set_demo_wallet first",
-          ),
-        };
-      }
-      fromAddress = persona.address;
-    } else {
-      const status = await getStatus();
-      if (status === null) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text:
-                "error: no live Ledger session. Call `pair_ledger_live` to pair a Ledger via WalletConnect, then retry.",
-            },
-          ],
-          structuredContent: errEnvelope(
-            "WALLET_NOT_PAIRED",
-            "no live Ledger session",
-          ),
-        };
-      }
-      fromAddress = status.activeAccount;
+    // SENDER resolution (Plan 05-02 + Issue #62): delegated to the shared
+    // `resolveFrom` helper. See prepare_native_send.ts for the full routing.
+    // Real mode + omitted falls back to status.activeAccount (byte-identical
+    // to pre-#62); supplied validates against accountsByChain[chainId].
+    const rawFrom = typeof args.from === "string" ? args.from : undefined;
+    const fromResolution = await resolveFrom({ rawFrom, chainId });
+    if (fromResolution.kind === "error") {
+      return fromResolution.result;
     }
+    const fromAddress: Address = fromResolution.fromAddress;
+    const fromCallerSupplied = fromResolution.callerSupplied;
 
     // Checksum the addresses for server-internal correctness. NEVER surfaced
     // in the receipt (PREP-02 / T-PREP-RCPT-1) — receipt reads from `rawTo`
@@ -303,11 +274,16 @@ registerTool("prepare_token_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     });
 
     // Phase 8 — Plan 08-02: `{CHAIN}` slot widening in PREPARE RECEIPT body.
-    const receipt = ERC20_PREPARE_RECEIPT_TEMPLATE
+    // Issue #62: append a `from:` line ONLY when caller-supplied — byte-
+    // identical to today when omitted.
+    const baseReceipt = ERC20_PREPARE_RECEIPT_TEMPLATE
       .replace("{CHAIN}", `${chainName} (chainId ${chainId})`)
       .replace("{TOKEN_ADDRESS}", rawTokenAddress)
       .replace("{TO}", rawTo)
       .replace("{AMOUNT}", rawAmount);
+    const receipt = fromCallerSupplied
+      ? `${baseReceipt}\n  from:         ${rawFrom}`
+      : baseReceipt;
 
     return {
       content: [{ type: "text", text: receipt }],

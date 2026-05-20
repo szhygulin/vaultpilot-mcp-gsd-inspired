@@ -82,6 +82,7 @@ const PAIRED_STATUS = {
   address: PRIMARY_ADDRESS,
   chainId: 1,
   sessionTopicLast8: "deadbeef",
+  accountsByChain: { 1: [PRIMARY_ADDRESS] } as Record<number, `0x${string}`[]>,
 };
 
 // USDC top-50 registry hit (decimals=6, symbol="USDC").
@@ -427,5 +428,149 @@ describe("prepare_token_approve — register-all wiring (smoke)", () => {
     const target = path.resolve(here, "..", "src", "tools", "register-all.ts");
     const source = await fs.readFile(target, "utf8");
     expect(source).toContain('import "./prepare_token_approve.js";');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #62 — optional `from` parameter. Validates against
+// `status.accountsByChain[chainId]`. Mirrors prepare-native-send + prepare-
+// token-send shape (the resolveFrom helper is the canonical implementation;
+// drift across tools is impossible if these tests stay in sync).
+// ---------------------------------------------------------------------------
+describe("prepare_token_approve — optional `from` param (Issue #62)", () => {
+  const NON_DEFAULT = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`;
+  const NOT_IN_SESSION = "0xabcDEF0123456789aBCdef0123456789AbCdEF01" as `0x${string}`;
+  const MULTI_ACCOUNT_STATUS = {
+    ...PAIRED_STATUS,
+    accounts: [PRIMARY_ADDRESS, NON_DEFAULT],
+    accountsByChain: { 1: [PRIMARY_ADDRESS, NON_DEFAULT] } as Record<number, `0x${string}`[]>,
+  };
+
+  it("supplied + in approved set → uses it; PREPARE RECEIPT includes `from:` line; fingerprint anchors to Fixture E", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callTool({
+      tokenAddress: WETH_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+      amount: "max",
+      from: NON_DEFAULT,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { from: string; payloadFingerprint: string };
+    expect(sc.from).toBe(NON_DEFAULT);
+    expect(sc.payloadFingerprint).toBe(FIXTURE_E_FINGERPRINT);
+    expect(result.content[0]?.text ?? "").toContain(`from:         ${NON_DEFAULT}`);
+  });
+
+  it("supplied + NOT in approved set → INVALID_ACCOUNT with in-session list", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callTool({
+      tokenAddress: WETH_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+      amount: "max",
+      from: NOT_IN_SESSION,
+    });
+
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as { errorCode: string; message: string };
+    expect(sc.errorCode).toBe("INVALID_ACCOUNT");
+    expect(sc.message).toContain(PRIMARY_ADDRESS);
+    expect(sc.message).toContain(NON_DEFAULT);
+    expect(createHandleSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("supplied + malformed → INVALID_INPUT; createHandle NEVER called", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callTool({
+      tokenAddress: WETH_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+      amount: "max",
+      from: "0xZZZ",
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "INVALID_INPUT",
+    );
+    expect(createHandleSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("omitted → byte-identical to today; PREPARE RECEIPT does NOT include `from:` line", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callTool({
+      tokenAddress: WETH_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+      amount: "max",
+    });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+    expect(text).not.toMatch(/^\s*from:/im);
+    const expected = APPROVE_PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", "ethereum (chainId 1)")
+      .replace("{TOKEN_ADDRESS}", WETH_CHECKSUMMED)
+      .replace("{SPENDER}", UNI_V3_CHECKSUMMED)
+      .replace("{AMOUNT}", "max");
+    expect(text).toBe(expected);
+  });
+
+  it("fixture re-anchor: payloadFingerprint with `from` == without for same {token, spender, amount, chain}", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const withFrom = await callTool({
+      tokenAddress: WETH_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+      amount: "max",
+      from: NON_DEFAULT,
+    });
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const withoutFrom = await callTool({
+      tokenAddress: WETH_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+      amount: "max",
+    });
+
+    const fpA = (withFrom.structuredContent as { payloadFingerprint: string })
+      .payloadFingerprint;
+    const fpB = (withoutFrom.structuredContent as { payloadFingerprint: string })
+      .payloadFingerprint;
+    expect(fpA).toBe(fpB);
+    expect(fpA).toBe(FIXTURE_E_FINGERPRINT);
+  });
+
+  it("demo + `from` matches persona → succeeds; getStatus NEVER called", async () => {
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    setActivePersona("whale");
+    const WHALE_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+
+    const result = await callTool({
+      tokenAddress: WETH_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+      amount: "max",
+      from: WHALE_ADDRESS,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(getStatusSpy).toHaveBeenCalledTimes(0);
+    expect(result.content[0]?.text ?? "").toContain(`from:         ${WHALE_ADDRESS}`);
+  });
+
+  it("demo + `from` does NOT match persona → WRONG_MODE", async () => {
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    setActivePersona("whale");
+
+    const result = await callTool({
+      tokenAddress: WETH_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+      amount: "max",
+      from: NON_DEFAULT,
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "WRONG_MODE",
+    );
+    expect(createHandleSpy).toHaveBeenCalledTimes(0);
   });
 });
