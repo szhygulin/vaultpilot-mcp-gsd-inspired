@@ -104,6 +104,28 @@ export const _transport = {
   open: (path: string | null): Promise<unknown> => TransportNodeHid.open(path),
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   buildSolanaApp: (t: unknown): any => new SolanaApp(t),
+  // Phase 12 / Plan 12-04 — additive widening. `app.signTransaction` is the
+  // load-bearing APDU exchange that triggers the on-device approval flow.
+  // Routed through the indirection so tests can spy at the per-call seam
+  // (`vi.spyOn(_transport, "signTransactionViaApp")` intercepts the
+  // production callsite from `signSolanaTransaction` below). Direct spies
+  // on `SolanaApp.prototype.signTransaction` would tie into the SDK shim
+  // and silently no-op past the `(Module as any).default ?? Module` shape
+  // selection.
+  //
+  // The third arg `userInputType` is `"sol"` by default per Phase 12
+  // RESEARCH § Topic 5 + LedgerHQ/ledger-live PR #12199 — the Ledger
+  // clear-sign UI shows the user-entered wallet address (NOT the server-
+  // derived ATA) when this flag is `"sol"`. v1.x prepare tools never pass
+  // `"ata"`; the surface is left open for forward-compat.
+  signTransactionViaApp: (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    app: any,
+    derivationPath: string,
+    messageBuffer: Buffer,
+    userInputType: "ata" | "sol",
+  ): Promise<{ signature: Buffer }> =>
+    app.signTransaction(derivationPath, messageBuffer, userInputType),
 };
 
 interface TransportLike {
@@ -165,6 +187,132 @@ export async function fetchSolanaAddress(
     const { address: rawPubkey } = await app.getAddress(derivationPath);
     const address = bs58.encode(rawPubkey);
     return { address, rawPubkey, appVersion: cfg.version ?? "unknown" };
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log("warn", `transport.close() failed during cleanup: ${message}`);
+    }
+  }
+}
+
+/**
+ * Phase 12 / Plan 12-04 — thrown when the user rejects an on-device
+ * approval prompt during `signTransaction`. Mirrors the EVM `isUserRejectedError`
+ * heuristic from `src/wallet/wc-errors.ts`: matches APDU code `0x6985`
+ * (CONDITIONS_OF_USE_NOT_SATISFIED — the standard Ledger rejection code)
+ * OR a `"User rejected"` substring in the error message.
+ *
+ * Surfaced verbatim by the Plan 12-05 `send_transaction` Solana branch as
+ * the `LEDGER_REJECTED` errorCode + cause. The user re-issues
+ * `send_transaction` with `userDecision: "cancel"` to release the handle.
+ */
+export class LedgerSolanaUserRejectedError extends Error {
+  constructor(cause?: string) {
+    super(
+      cause === undefined
+        ? "User rejected the on-device approval (APDU 0x6985)."
+        : `User rejected the on-device approval (APDU 0x6985): ${cause}`,
+    );
+    this.name = "LedgerSolanaUserRejectedError";
+  }
+}
+
+/**
+ * Match a user-rejected error by message-substring shape (mirror of
+ * `isUserRejectedError` in `src/wallet/wc-errors.ts` — same defense-in-depth
+ * across the WC + USB-HID surfaces). The Ledger SDK does not export a
+ * dedicated error class for `0x6985`; the rejection surfaces as a plain
+ * `Error` whose message contains the APDU code OR the literal "User rejected"
+ * phrase. Both shapes are matched.
+ */
+function isUserRejectedSignError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const message = err.message;
+  return message.includes("0x6985") || /user rejected/i.test(message);
+}
+
+/**
+ * Sign a Solana transaction on the Ledger device.
+ *
+ * Per-call USB-HID transport: opens fresh, signs, closes in `finally`. The
+ * same singleton-avoidance discipline as `fetchSolanaAddress` — holding a
+ * transport across calls makes the next `openTransport()` fail with
+ * "device busy" (Phase 11 invariant).
+ *
+ * **CRITICAL — `messageBytes` is the SERIALIZED MESSAGE**: NOT the full
+ * `Transaction.serialize({ requireAllSignatures: false })` output (which
+ * includes zero-filled signature slots pre-signing). The Ledger SOL app's
+ * `G_command.message` field is the canonical message preimage — same bytes
+ * the fingerprint (DF-1) and presign-hash (DF-2) consume at prepare/preview
+ * time. Plan 12-04 / 12-05 pass `record.tx.messageBytes` straight through.
+ *
+ * **`userInputType: "sol"` default** per RESEARCH § Topic 5 +
+ * LedgerHQ/ledger-live PR #12199 — the Ledger clear-sign UI shows the
+ * user-entered wallet address (NOT the server-derived ATA). v1.x callers
+ * never pass `"ata"`; the surface is forward-compat.
+ *
+ * Error mapping:
+ *   - `LedgerDeviceNotConnectedError` — thrown from `openTransport` when the
+ *     platform lacks node-hid OR no devices are enumerated. The Plan 12-05
+ *     `send_transaction` Solana branch catches this class verbatim and
+ *     emits the `LEDGER_NOT_CONNECTED` errorCode.
+ *   - `LedgerSolanaAppNotOpenError` — thrown when `getAppConfiguration`
+ *     rejects (the active app is not Solana). Plan 12-05 maps to
+ *     `SOLANA_APP_NOT_OPEN`.
+ *   - `LedgerSolanaUserRejectedError` — wrapping the SDK's APDU `0x6985`
+ *     rejection. Plan 12-05 maps to `LEDGER_REJECTED`.
+ *   - Other errors — propagated verbatim; Plan 12-05 wraps as
+ *     `INTERNAL_ERROR` with `cause` populated.
+ *
+ * The `try/finally` invariant: `transport.close()` runs unconditionally on
+ * every path (happy + every error class). No transport handle leaks.
+ */
+export async function signSolanaTransaction(input: {
+  messageBytes: Uint8Array;
+  derivationPath?: string;
+  userInputType?: "ata" | "sol";
+}): Promise<{ signature: Uint8Array }> {
+  const derivationPath = input.derivationPath ?? DEFAULT_SOLANA_DERIVATION_PATH;
+  const userInputType = input.userInputType ?? "sol";
+  // Coerce to Node `Buffer` for the SDK call — `Buffer.from(Uint8Array)`
+  // is a zero-copy slice view of the same underlying ArrayBuffer.
+  const messageBuffer = Buffer.from(input.messageBytes);
+
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildSolanaApp(transport);
+    // First APDU exchange — confirms the active app is Solana. If
+    // `getAppConfiguration` rejects, the active app is something else; map
+    // verbatim per Phase 11 precedent in `fetchSolanaAddress`.
+    try {
+      await app.getAppConfiguration();
+    } catch {
+      throw new LedgerSolanaAppNotOpenError();
+    }
+    // Sign — this is the load-bearing on-device approval prompt. The user
+    // sees the clear-sign UI (for native + SPL transfers on SOL app v1.4+)
+    // OR the blind-sign UI (for shapes the app does NOT cover — Plan 12-04
+    // emits the `LEDGER NOTICE (Solana)` block in those cases).
+    let signResult: { signature: Buffer };
+    try {
+      signResult = await _transport.signTransactionViaApp(
+        app,
+        derivationPath,
+        messageBuffer,
+        userInputType,
+      );
+    } catch (err) {
+      if (isUserRejectedSignError(err)) {
+        const cause = err instanceof Error ? err.message : String(err);
+        throw new LedgerSolanaUserRejectedError(cause);
+      }
+      // Any other error class propagates verbatim — Plan 12-05 catches at
+      // the call site and wraps as `INTERNAL_ERROR` with `cause`.
+      throw err;
+    }
+    return { signature: new Uint8Array(signResult.signature) };
   } finally {
     try {
       await transport.close();
