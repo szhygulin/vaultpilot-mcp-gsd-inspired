@@ -37,8 +37,27 @@ export interface SolanaPersona {
   readonly description?: string;
 }
 
+/**
+ * Phase 17 — Plan 17-04 carve. The full `TronPersona` interface +
+ * registry ship in Plan 17-05 (`src/demo/tron-persona.ts`); Plan 17-04
+ * defines the minimal shape here so the `get_portfolio_summary` TRON
+ * leg's demo-mode address resolver compiles against a stable contract
+ * before 17-05 lands. Mirror of the 11-05 → 11-06 Solana split:
+ * 11-05 added the minimal `SolanaPersona` shape + `activeSolanaPersona`
+ * state to this file so the Solana resolver compiled before 11-06's
+ * registry. Plan 17-05 widens the slug literal-union via its own
+ * `setActiveTronPersona`/`setActiveTronPersonaBySlug` setters (additive).
+ */
+export interface TronPersona {
+  readonly slug: string;
+  /** Base58check-encoded TRON wallet address (T-prefixed, 34 chars). */
+  readonly tronAddress: string;
+  readonly description?: string;
+}
+
 let activePersona: Persona | null = null;
 let activeSolanaPersona: SolanaPersona | null = null;
+let activeTronPersona: TronPersona | null = null;
 
 /**
  * Returns the currently active persona, or `null` if none has been set.
@@ -117,6 +136,38 @@ export function setActiveSolanaPersonaBySlug(slug: string): SolanaPersona {
 }
 
 /**
+ * Returns the currently active TRON persona, or `null` if none has been
+ * set. Phase 17 Plan 17-04 surface; Plan 17-05 wires the registry +
+ * `set_demo_wallet` setter. Consumed by `get_portfolio_summary`'s
+ * `resolveTronWalletForFanOut` (demo-mode fallback when no paired TRON
+ * record exists in the account store).
+ */
+export function getActiveTronPersona(): TronPersona | null {
+  return activeTronPersona;
+}
+
+/**
+ * Activate a TRON persona. Phase 17 Plan 17-05 surface — the setter is
+ * exposed here so Plan 17-04's resolver can compile against a stable
+ * `getActiveTronPersona()` contract before Plan 17-05 lands the full
+ * `tron-persona.ts` registry + `set_demo_wallet` widening.
+ *
+ * Defense-in-depth shape: throws if `persona` is falsy or missing the
+ * `tronAddress` field. The persona registry validation lives in
+ * `src/demo/tron-persona.ts` (Plan 17-05); this function is the
+ * registry-agnostic state setter.
+ */
+export function setActiveTronPersona(persona: TronPersona): TronPersona {
+  if (!persona || typeof persona.tronAddress !== "string") {
+    throw new Error(
+      "setActiveTronPersona: persona must have a tronAddress",
+    );
+  }
+  activeTronPersona = persona;
+  return persona;
+}
+
+/**
  * Test-only helper. Production code MUST NOT call this — the active
  * persona is process-local and intentionally non-resettable in normal
  * operation. Tests use this to restore isolation between cases.
@@ -124,4 +175,5 @@ export function setActiveSolanaPersonaBySlug(slug: string): SolanaPersona {
 export function _resetActivePersonaForTesting(): void {
   activePersona = null;
   activeSolanaPersona = null;
+  activeTronPersona = null;
 }

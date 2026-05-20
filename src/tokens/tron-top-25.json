@@ -1,1 +1,92 @@
-[]
+[
+  {
+    "contractAddress": "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t",
+    "symbol": "USDT",
+    "decimals": 6,
+    "displayName": "Tether USD (TRC-20)"
+  },
+  {
+    "contractAddress": "TEkxiTehnzSmSe2XqrBj4w32RUN966rdz8",
+    "symbol": "USDC",
+    "decimals": 6,
+    "displayName": "USD Coin (TRC-20)"
+  },
+  {
+    "contractAddress": "TPYmHEhy5n8TCEfYGqW2rPxsghSfzghPDn",
+    "symbol": "USDD",
+    "decimals": 18,
+    "displayName": "Decentralized USD"
+  },
+  {
+    "contractAddress": "TUpMhErZL2fhh4sVNULAbNKLokS4GjC1F4",
+    "symbol": "TUSD",
+    "decimals": 18,
+    "displayName": "TrueUSD (TRC-20)"
+  },
+  {
+    "contractAddress": "TMwFHYXLJaRUPeW6421aqXL4ZEzPRFGkGT",
+    "symbol": "USDJ",
+    "decimals": 18,
+    "displayName": "JUST Stablecoin"
+  },
+  {
+    "contractAddress": "TGkxzkDKyMeq2T7edKnyjZoFypyzjkkssq",
+    "symbol": "wstUSDT",
+    "decimals": 18,
+    "displayName": "Wrapped Staked USDT"
+  },
+  {
+    "contractAddress": "TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR",
+    "symbol": "WTRX",
+    "decimals": 6,
+    "displayName": "Wrapped TRX"
+  },
+  {
+    "contractAddress": "TAFjULxiVgT4qWk6UZwjqwZXTSaGaqnVp4",
+    "symbol": "BTT",
+    "decimals": 18,
+    "displayName": "BitTorrent Token (new)"
+  },
+  {
+    "contractAddress": "TCFLL5dx5ZJdKnWuesXxi1VPwjLVmWZZy9",
+    "symbol": "JST",
+    "decimals": 18,
+    "displayName": "JUST Governance"
+  },
+  {
+    "contractAddress": "TSSMHYeV2uE9qYH95DqyoCuNCzEL1NvU3S",
+    "symbol": "SUN",
+    "decimals": 18,
+    "displayName": "SUN (new)"
+  },
+  {
+    "contractAddress": "TKkeiboTkxXKJpbmVFbv4a8ov5rAfRDMf9",
+    "symbol": "SUN_OLD",
+    "decimals": 18,
+    "displayName": "SUN (legacy)"
+  },
+  {
+    "contractAddress": "TLa2f6VPqDgRE67v1736s7bJ8Ray5wYjU7",
+    "symbol": "WIN",
+    "decimals": 6,
+    "displayName": "WINkLink"
+  },
+  {
+    "contractAddress": "TFczxzPhnThNSqr5by8tvxsdCFRRz6cPNq",
+    "symbol": "NFT",
+    "decimals": 6,
+    "displayName": "APENFT"
+  },
+  {
+    "contractAddress": "TXL6rJbvmjD46zeN1JssfgxvSo99qC8MRT",
+    "symbol": "SUNDOG",
+    "decimals": 18,
+    "displayName": "Sundog"
+  },
+  {
+    "contractAddress": "THb4CqiFdwNHsWsQCs4JhzwjMWys4aqCbF",
+    "symbol": "ETH",
+    "decimals": 18,
+    "displayName": "Ether (TRC-20 bridged)"
+  }
+]
