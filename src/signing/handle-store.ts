@@ -223,6 +223,38 @@ export type TronInstructionSummary =
       kind: "stake-withdraw-expire";
       /** Sender / owner base58check address. */
       from: string;
+    }
+  | {
+      // Phase 19 Plan 19-03 — TRON Stake 2.0 vote (VoteWitnessContract).
+      // Array→map conversion is MANDATORY (T-VOTE-MAP). The vote() builder
+      // requires { [srAddress: string]: number } NOT an array.
+      // SR labels are ADVISORY per D-05c — the on-device vote_address is the
+      // trust anchor. `srSource` is surfaced in CHECKS PERFORMED per D-05b.
+      kind: "stake-vote";
+      /** Voter base58check address. */
+      from: string;
+      /** Total vote power allocated across all SRs. */
+      totalCount: number;
+      /** Individual vote entries — srAddress, count, and advisory label. */
+      votes: Array<{
+        srAddress: string;
+        count: number;
+        label: string;
+      }>;
+    }
+  | {
+      // Phase 19 Plan 19-03 — TRON Stake 2.0 claim rewards (WithdrawBalanceContract).
+      // Zero-arg. D-06c: NO intent-vs-reality gate at preview time.
+      // `estimatedRewardSun` is advisory — null means not fetched / not applicable.
+      // The tool layer MAY populate this from `tronWeb.trx.getReward(from)`.
+      kind: "stake-claim-rewards";
+      /** Sender base58check address. */
+      from: string;
+      /**
+       * Advisory estimated reward in SUN (bigint), or null if not fetched.
+       * D-06c: null is valid and never blocks the prepare flow.
+       */
+      estimatedRewardSun: bigint | null;
     };
 
 /**
@@ -410,7 +442,7 @@ export interface PreparedTxTron {
    * doesn't need the version suffix; the instruction summary uses it to
    * disambiguate Stake 1.0 should it ever appear in decoded payloads.
    */
-  kind: "native" | "trc20" | "stake-freeze" | "stake-unfreeze" | "stake-withdraw-expire";
+  kind: "native" | "trc20" | "stake-freeze" | "stake-unfreeze" | "stake-withdraw-expire" | "stake-vote" | "stake-claim-rewards";
   /**
    * TRC-20 only — base58check token contract address. Consumed by
    * `canonical-dispatch-tron` allowlist (Plan 18-04 Layer 0.5 gate).

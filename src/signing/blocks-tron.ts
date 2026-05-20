@@ -476,3 +476,90 @@ export const WITHDRAWABLE_BALANCE_TRON_TEMPLATE: string = [
   "  D-04b Layer 0.7 PASS: at least one unfreeze record has expired and",
   "  is eligible for withdrawal. Proceed to on-device signing.",
 ].join("\n");
+
+// ---------------------------------------------------------------------------
+// Phase 19 Plan 19-03 — APPEND-ONLY templates for TRON Stake 2.0 vote + claim rewards.
+// DO NOT modify the 16 templates above — they are BYTE-FROZEN (Phase 18 + Plans 19-01 + 19-02).
+// ---------------------------------------------------------------------------
+
+/**
+ * PREPARE RECEIPT — TRON Stake 2.0 vote (VoteWitnessContract).
+ * Plan 19-03 — verbatim agent args, NO normalization. Three slots + per-SR rows:
+ *   - `{TOTAL_COUNT}`     — total vote power allocated across all SRs (decimal string).
+ *   - `{REF_BLOCK_BYTES}` — pinned at prepare time; surfaced verbatim.
+ *   - `{REF_BLOCK_HASH}`  — pinned at prepare time; surfaced verbatim.
+ *   - `{EXPIRATION}`      — expiration timestamp (ms); surfaced verbatim.
+ *   - `{VOTE_ROWS}`       — one `SR_LABEL_TRON_TEMPLATE` block per SR (expanded inline).
+ *
+ * SR labels are ADVISORY per D-05c — on-device `vote_address` (base58check)
+ * is the trust anchor. `{SR_SOURCE}` surfaces `"live"` or `"snapshot-fallback"`
+ * so the user knows whether labels came from live data or the bundled snapshot.
+ *
+ * Mirrors the Plan 19-02 PREPARE_RECEIPT_TRON_STAKE_FREEZE_TEMPLATE shape.
+ */
+export const PREPARE_RECEIPT_TRON_VOTE_TEMPLATE: string = [
+  "PREPARE RECEIPT (TRON — Stake 2.0 vote)",
+  "  chain:          TRON mainnet",
+  "  totalCount:     {TOTAL_COUNT}",
+  "  srSource:       {SR_SOURCE}",
+  "  refBlockBytes:  {REF_BLOCK_BYTES}",
+  "  refBlockHash:   {REF_BLOCK_HASH}",
+  "  expiration:     {EXPIRATION}",
+  "{VOTE_ROWS}",
+].join("\n");
+
+/**
+ * SR LABEL (TRON vote) — one entry per SR in the vote. Repeated N times and
+ * joined inline into `{VOTE_ROWS}` in `PREPARE_RECEIPT_TRON_VOTE_TEMPLATE`.
+ * Three slots:
+ *   - `{SR_RANK}`    — vote rank or "unknown" for SRs not in the registry.
+ *   - `{SR_ADDRESS}` — SR base58check address. Trust anchor on-device.
+ *   - `{SR_LABEL}`   — advisory SR label from D-05c:
+ *                       "(SR: <name> — vote rank <N>)" for known SRs, or
+ *                       "(unverified SR — confirm address)" for unknown SRs.
+ *   - `{SR_COUNT}`   — vote power allocated to this SR (decimal string).
+ *
+ * Advisory label only — the on-device `vote_address` is the trust anchor per D-05c.
+ */
+export const SR_LABEL_TRON_TEMPLATE: string = [
+  "  vote[{SR_RANK}]:  {SR_ADDRESS}  {SR_LABEL}  count: {SR_COUNT}",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT — TRON Stake 2.0 claim rewards (WithdrawBalanceContract).
+ * Plan 19-03 — zero-arg contract (no resource, no sun). Three slots:
+ *   - `{REF_BLOCK_BYTES}` — pinned at prepare time; surfaced verbatim.
+ *   - `{REF_BLOCK_HASH}`  — pinned at prepare time; surfaced verbatim.
+ *   - `{EXPIRATION}`      — expiration timestamp (ms); surfaced verbatim.
+ *
+ * D-06c: NO intent-vs-reality gate on claim rewards. The calldata is zero-arg;
+ * `estimatedRewardSun` is advisory — the REWARD_ESTIMATE_TRON_TEMPLATE block
+ * is emitted separately (not in this template) when estimate is available.
+ *
+ * Mirrors the Plan 19-02 PREPARE_RECEIPT_TRON_WITHDRAW_EXPIRE_TEMPLATE shape.
+ */
+export const PREPARE_RECEIPT_TRON_CLAIM_REWARDS_TEMPLATE: string = [
+  "PREPARE RECEIPT (TRON — Stake 2.0 claim rewards)",
+  "  chain:          TRON mainnet",
+  "  refBlockBytes:  {REF_BLOCK_BYTES}",
+  "  refBlockHash:   {REF_BLOCK_HASH}",
+  "  expiration:     {EXPIRATION}",
+].join("\n");
+
+/**
+ * CHECKS PERFORMED (TRON — estimated reward) — emitted by prepare_tron_stake_claim_rewards
+ * CONDITIONALLY when `getReward(from)` returns a non-null result. One slot:
+ *   - `{ESTIMATED_REWARD_SUN}` — estimated reward in SUN (decimal string).
+ *
+ * D-06c: advisory only — null is valid; this block is OMITTED when fetch fails
+ * or returns zero. NOT a refusal gate. The user is asked to approve regardless.
+ * The estimate is best-effort and may differ from the actual on-chain reward at
+ * execution time (TRON block rewards update every 3 seconds).
+ */
+export const REWARD_ESTIMATE_TRON_TEMPLATE: string = [
+  "CHECKS PERFORMED (TRON — estimated reward)",
+  "  estimatedRewardSun: {ESTIMATED_REWARD_SUN}",
+  "",
+  "  D-06c advisory: actual reward may differ from estimate (updates every ~3s).",
+  "  This advisory does NOT block the prepare flow. Claim proceeds regardless.",
+].join("\n");
