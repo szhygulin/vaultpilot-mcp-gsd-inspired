@@ -884,3 +884,66 @@ export const DISPATCH_TARGET_REFUSAL_TEMPLATE: string = [
   "  Native sends (data === \"0x\") bypass this allowlist — any `to` is valid for",
   "  a value transfer.",
 ].join("\n");
+
+// -----------------------------------------------------------------------------
+// Phase 28 — Plan 28-02 additive extensions (APPEND-ONLY). All Phase 4 / 6 /
+// 7 / 8 / 9 templates above stay byte-identical (FROZEN). Two new PREPARE
+// RECEIPT templates back the `prepare_compound_supply` + `prepare_compound_
+// withdraw` tools.
+//
+// Slots: {CHAIN} (uniform with Phase 8 Plan 08-02 widening), {COMET} (per-tool
+// new — surfaces the canonical Comet address the user must cross-check against
+// the Compound deployments registry), {ASSET}, {AMOUNT}. The `{AMOUNT}`
+// placeholder receives the VERBATIM agent-passed string (e.g. "100.5" or
+// "max" for the withdraw tool) per CLAUDE.md PREPARE RECEIPT convention.
+//
+// Plan 28-03 appends 2 more templates (COMPOUND_BORROW + COMPOUND_REPAY); Plan
+// 28-04 appends LEDGER_NOTICE_COMPOUND_TEMPLATE + 2 DECODED ARGS templates.
+// Each plan touches a distinct end-of-file region — no source-line collision.
+// -----------------------------------------------------------------------------
+
+/**
+ * Compound V3 supply PREPARE RECEIPT (PREP-02 — verbatim agent args).
+ *
+ * Four slots: chain + comet + asset + amount. The `comet:` field is the
+ * canonical Compound V3 Comet contract address (one of the 6 v2.3 Ethereum
+ * mainnet Comets: cUSDCv3 / cUSDTv3 / cWETHv3 / cUSDSv3 / cwstETHv3 /
+ * cWBTCv3). The agent passes it explicitly — no implicit default — so the
+ * receipt surfaces it for the user to cross-check.
+ *
+ * NO LEDGER NOTICE at prepare time. Compound calldata is NOT covered by the
+ * Ledger ERC-7730 clear-sign registry — the device will blind-sign — but the
+ * NOTICE block emits at preview time (Plan 28-04), not prepare time.
+ *
+ * Substituted by `prepare_compound_supply.ts`. Format-fanout-sentinel: one
+ * block, one home.
+ */
+export const COMPOUND_SUPPLY_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Compound V3 supply",
+  "  chain:        {CHAIN}",
+  "  comet:        {COMET}",
+  "  asset:        {ASSET}",
+  "  amount:       {AMOUNT}",
+].join("\n");
+
+/**
+ * Compound V3 withdraw PREPARE RECEIPT (PREP-02 — verbatim agent args).
+ *
+ * Four slots: chain + comet + asset + amount. The `{AMOUNT}` slot carries the
+ * verbatim agent-passed string — when the agent passes `"max"` (the
+ * MAX_UINT256 full-position-close sentinel), the receipt shows `amount:
+ * max` (NOT the resolved hex). The DECODED ARGS block at preview time (Plan
+ * 28-04) surfaces the resolved hex for cross-check.
+ *
+ * Substituted by `prepare_compound_withdraw.ts`. Format-fanout-sentinel: one
+ * block, one home.
+ */
+export const COMPOUND_WITHDRAW_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Compound V3 withdraw",
+  "  chain:        {CHAIN}",
+  "  comet:        {COMET}",
+  "  asset:        {ASSET}",
+  "  amount:       {AMOUNT}",
+].join("\n");
