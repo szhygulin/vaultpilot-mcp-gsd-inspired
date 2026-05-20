@@ -479,12 +479,31 @@ Updated during roadmap creation.
 | SOL-W-11..13 | Phase 14 (v2.0) | Pending |
 | SOL-W-14..20 | Phase 15 (v2.0) | Pending |
 | SOL-W-21, SOL-DIAG-01 | Phase 16 (v2.0) | Pending |
-| TRON-* (will reuse PAIR-NEV-*) | v2.1 (post-v2.0) | Backlog |
-| BTC-*, BTC-FORENSIC-*, LTC-*, BTC-INC-* | v2.2 (post-v2.1) | Backlog |
-| CMP-*, MOR-*, LIDO-*, EIG-*, RP-* | v2.3 (post-v2.2) | Backlog |
-| UNI-*, CRV-*, CUSTOM-* | v2.4 (post-v2.3) | Backlog |
-| SAFE-* | v2.5 (post-v2.4) | Backlog |
-| BRIDGE-T1-*, BRIDGE-T2-*, MEV-* | v2.6 (post-v2.5) | Backlog |
+| TRON-PAIR-01/02, TRON-READ-01..03 | Phase 17 (v2.1) | Pending |
+| TRON-PREP-01..04, TRON-W-01/02 | Phase 18 (v2.1) | Pending |
+| TRON-PREP-05, TRON-W-03..08 | Phase 19 (v2.1) | Pending |
+| TRON-W-09..12 | Phase 20 (v2.1) | Pending |
+| TRON-READ-04, TRON-DIAG-01 | Phase 21 (v2.1) | Pending |
+| BTC-PAIR-01/02, BTC-READ-01..05, LTC-PAIR-01, LTC-READ-01/02 | Phase 22 (v2.2) | Pending |
+| BTC-PREP-01..03, BTC-PSBT-01/02, BTC-W-01 | Phase 23 (v2.2) | Pending |
+| BTC-W-02, BTC-W-03 | Phase 24 (v2.2) | Pending |
+| BTC-PSBT-03..07, BTC-W-04 | Phase 25 (v2.2) | Pending |
+| LTC-W-01/02, BTC-LIFI-01 | Phase 26 (v2.2) | Pending |
+| BTC-FORENSIC-01..05, LTC-FORENSIC-01, BTC-INC-01 | Phase 27 (v2.2) | Pending |
+| CMP-01..06 | Phase 28 (v2.3) | Pending |
+| MOR-01..05 | Phase 29 (v2.3) | Pending |
+| LIDO-01..05 | Phase 30 (v2.3) | Pending |
+| EIG-01/02, RP-01/02 | Phase 31 (v2.3) | Pending |
+| UNI-01..03, UNI-10 (swap-only) | Phase 32 (v2.4) | Pending |
+| UNI-04..09 (LP verb set) | Phase 33 (v2.4) | Pending |
+| CRV-01..03 | Phase 34 (v2.4) | Pending |
+| CUSTOM-01..03 | Phase 35 (v2.4) | Pending |
+| SAFE-01..04 | Phase 36 (v2.5) | Pending |
+| SAFE-05..08 | Phase 37 (v2.5) | Pending |
+| SAFE-09 (Inv #12.5) | Phase 38 (v2.5) | Pending |
+| BRIDGE-T1-01..06 | Phase 39 (v2.6) | Pending |
+| MEV-01 | Phase 40 (v2.6) | Pending |
+| BRIDGE-T2-* | v2.6.x+ (DEFERRED) | Backlog |
 | HOST-* | v3.0 (post-v2.6) | Backlog |
 | NFT-* | v3.1 (post-v3.0) | Backlog |
 | CONT-*, SHARE-*, STRAT-* | v3.2 | Backlog |
@@ -499,9 +518,17 @@ Updated during roadmap creation.
 - v1.3 requirements: 9 total → mapped to Phase 9 (was 7 — added `verify_tx_decode` + `get_tx_verification` re-emit)
 - v1.4 requirements: 4 total → mapped to Phase 10
 - v2.0 requirements: 39 total (7 PAIR-NEV + 5 SOL + 5 SOL-PREP + 21 SOL-W + 1 SOL-DIAG) → mapped to Phases 11-16
-- v2.1+ + v3.x: tracked in backlog; phase mapping deferred until each milestone enters planning
-- Unmapped within v1.x + v2.0: 0 ✓
+- v2.1 TRON requirements: 24 total (2 TRON-PAIR + 4 TRON-READ + 5 TRON-PREP + 12 TRON-W + 1 TRON-DIAG) → mapped to Phases 17-21
+- v2.2 BTC+LTC requirements: 35 total (2 BTC-PAIR + 5 BTC-READ + 1 LTC-PAIR + 2 LTC-READ + 3 BTC-PREP + 7 BTC-PSBT + 4 BTC-W + 2 LTC-W + 1 BTC-LIFI + 5 BTC-FORENSIC + 1 LTC-FORENSIC + 1 BTC-INC + 1 BTC-INC) → mapped to Phases 22-27
+- v2.3 EVM lending+staking requirements: 20 total (6 CMP + 5 MOR + 5 LIDO + 2 EIG + 2 RP) → mapped to Phases 28-31
+- v2.4 EVM DEX+LP+escape requirements: 16 total (10 UNI + 3 CRV + 3 CUSTOM) → mapped to Phases 32-35
+- v2.5 Safe requirements: 9 total (SAFE-01..09) → mapped to Phases 36-38
+- v2.6 Bridge+MEV requirements: 7 total (6 BRIDGE-T1 + 1 MEV) → mapped to Phases 39-40; BRIDGE-T2-* deferred
+- v3.x: tracked in backlog; phase mapping deferred until each milestone enters planning
+- Unmapped within v1.x + v2.0-v2.6: 0 ✓
+
+**Phase totals:** Phases 1-10 (v1.x) + 11-16 (v2.0) + 17-21 (v2.1) + 22-27 (v2.2) + 28-31 (v2.3) + 32-35 (v2.4) + 36-38 (v2.5) + 39-40 (v2.6) = **40 phases total** scaffolded.
 
 ---
 *Requirements defined: 2026-05-12*
-*Last updated: 2026-05-12 after upstream docs sync (PR #672 — tool surface ~80→~190, NFT reads in scope, BTC/LTC fully shipped, additional EVM protocols documented)*
+*Last updated: 2026-05-20 — v2.1-v2.6 milestone scaffolding landed (chore/v2-1-thru-6-scaffolding); promoted 6 one-line bullets to ~110 numbered requirements across 24 new phases (17-40)*
