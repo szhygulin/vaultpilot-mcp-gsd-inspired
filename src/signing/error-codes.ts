@@ -77,6 +77,15 @@
 //                              residual (friction-not-fortress; bypass
 //                              cost is restarting the MCP server and
 //                              losing the paired Ledger session-topic).
+//   SIMULATION_REFUSED       — Phase 12 Plan 12-04 — Solana preview_send Layer
+//                              0.7 mandatory simulation gate refusal. Fires
+//                              when `simulateTransaction.err !== null`
+//                              (DF-4 lock). EVM simulation stays advisory;
+//                              this code is Solana-specific. Reuse
+//                              `BROADCAST_FAILED` for the Solana
+//                              `connection.sendRawTransaction` failure
+//                              path (Plan 12-05) — generic enough per
+//                              RESEARCH OQ-3.
 
 export type ErrorCode =
   | "WALLET_NOT_PAIRED"
@@ -98,7 +107,8 @@ export type ErrorCode =
   | "SKILL_INTEGRITY_FAILURE"
   | "DISPATCH_TARGET_REFUSED"
   | "DECODE_DIVERGENCE"
-  | "RATE_LIMIT_EXCEEDED";
+  | "RATE_LIMIT_EXCEEDED"
+  | "SIMULATION_REFUSED";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

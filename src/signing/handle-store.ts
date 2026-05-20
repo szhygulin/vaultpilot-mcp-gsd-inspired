@@ -55,14 +55,64 @@ export interface PrepareArgs {
   amount?: string;
   /** Phase 6 — approve/revoke spender address (raw agent string). */
   spender?: string;
+  /** Phase 12 — SPL mint pubkey, base58 (raw agent string). Populated by `prepare_solana_spl_send` (Plan 12-03). */
+  mint?: string;
+  /** Phase 12 — native SOL amount as raw lamports decimal string. Populated by `prepare_solana_native_send` (Plan 12-02). */
+  lamports?: string;
+  /** Phase 12 — pinned recent blockhash, base58 (raw agent string when surfaced; server-derived at prepare time). */
+  recentBlockhash?: string;
 }
+
+/**
+ * Phase 12 — decoded SPL / native instruction summary surfaced in the
+ * DECODED ARGS block by preview_send Solana branch (Plan 12-04). Discriminated
+ * union mirrors the EVM `Erc20Decoded` / `AaveV3Decoded` shape — preview_send
+ * narrows via `kind`. Prepared by the Solana prepare tools (Plans 12-02 /
+ * 12-03) and pinned onto `PreparedTxSolana.instructionSummary`.
+ */
+export type SolanaInstructionSummary =
+  | {
+      kind: "native-transfer";
+      /** Source pubkey, base58. Server-derived from `feePayer` (always == sender for v1.x scope). */
+      from: string;
+      /** Destination pubkey, base58. */
+      to: string;
+      /** Raw lamports. */
+      lamports: bigint;
+    }
+  | {
+      kind: "spl-transfer-checked";
+      /** SPL mint pubkey, base58. */
+      mint: string;
+      /** Source token-account address (ATA), base58. */
+      sourceAta: string;
+      /** Destination token-account address (ATA), base58. */
+      destAta: string;
+      /** Destination OWNER pubkey (NOT the destAta), base58. */
+      destOwner: string;
+      /** Raw token amount. */
+      amount: bigint;
+      /** Mint decimals (TransferChecked encodes decimals in the instruction data). */
+      decimals: number;
+    };
 
 /**
  * Decoded/typed shape of the prepared transaction, plus the preview-time-
  * pinned fields once the handle transitions to `previewed`. The viem-typed
  * fields (`Address`, `bigint`, `Hex`) live here, NOT on `PrepareArgs`.
+ *
+ * Phase 12 — Plan 12-01 widening: `PreparedTx` becomes a discriminated union
+ * of `PreparedTxEvm` (default `txType?: "evm"` for back-compat with every
+ * Phase 4-11 handle that omits the field) + `PreparedTxSolana` (required
+ * `txType: "solana"`). The discriminator is the ONLY additive change —
+ * state machine + TTL + handle lifecycle BYTE-IDENTICAL. Every existing call
+ * site that builds an EVM `PreparedTx` stays byte-identical (the `txType?`
+ * field is optional with default `"evm"`; downstream consumers narrow via
+ * `record.tx.txType ?? "evm"`).
  */
-export interface PreparedTx {
+export interface PreparedTxEvm {
+  /** Optional discriminator — absent === "evm" (back-compat with every Phase 4-11 handle). */
+  txType?: "evm";
   chainId: number;
   to: Address;
   valueWei: bigint;
@@ -72,6 +122,81 @@ export interface PreparedTx {
   maxFeePerGas?: bigint;
   maxPriorityFeePerGas?: bigint;
 }
+
+/**
+ * Solana prepared-tx shape. The Solana-specific fields (`messageBytes`,
+ * `feePayer`, `recentBlockhash`, `programIds`) carry the cryptographic
+ * binding inputs; the EVM-shape fields (`chainId`, `to`, `valueWei`,
+ * `data`) are populated with SENTINEL ZEROS so the discriminated union
+ * stays accessible without narrowing at every existing EVM call site.
+ *
+ * [Rule 2 - Auto-fix critical functionality] The plan defines
+ * `PreparedTxSolana` with ONLY Solana-specific fields, which would force
+ * every EVM-side consumer (preview_send, send_transaction,
+ * get_tx_verification — all FROZEN per the success criteria) to add `if
+ * (record.tx.txType === "solana")` narrowing or fail typecheck. The
+ * plan's own `PreviewPinned` precedent already names the resolution:
+ * "Solana branch populates with sentinel zeros for the EVM-specific
+ * fields ... type-stability preserved" — the same pattern applies here.
+ * Without the sentinels, the FROZEN-area assertion is impossible. With
+ * the sentinels, EVM consumers see the union as a strict super-set of
+ * `PreparedTxEvm` and stay byte-identical.
+ *
+ * Sentinel values are chosen to be obviously-not-real (chainId 0, zero
+ * address, zero value, "0x" data) so any accidental EVM-side dispatch of
+ * a Solana handle fails at the Layer 0.5 dispatch-target check rather
+ * than silently degrading to a meaningless EVM call.
+ */
+export interface PreparedTxSolana {
+  /** Required discriminator — Solana shape carries no implicit default. */
+  txType: "solana";
+
+  // ---------------------------------------------------------------------
+  // EVM-shape sentinel fields (set to zero / empty values for Solana
+  // handles). Present to keep the discriminated union accessible by
+  // existing EVM-side consumers without forcing narrowing at every site.
+  // EVM call paths that reach a Solana handle will hit the Layer 0.5
+  // dispatch-target refusal before reading these — the sentinels are
+  // defensive, not load-bearing.
+  // ---------------------------------------------------------------------
+  /** Sentinel — Solana has no `chainId`. Always 0. */
+  chainId: number;
+  /** Sentinel — Solana addresses are base58, not 0x-prefixed. Always the zero address. */
+  to: Address;
+  /** Sentinel — Solana uses `lamports`, not `valueWei`. Always 0n. */
+  valueWei: bigint;
+  /** Sentinel — Solana has no calldata. Always `"0x"`. */
+  data: Hex;
+  /** Sentinel — Solana has no EVM nonce. Always undefined. */
+  nonce?: number;
+  gas?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+
+  // ---------------------------------------------------------------------
+  // Solana-specific cryptographic-binding fields. All populated by the
+  // Solana prepare tools (Plans 12-02 / 12-03); consumed by the Solana
+  // preview_send / send_transaction branches (Plans 12-04 / 12-05).
+  // ---------------------------------------------------------------------
+  /**
+   * `Transaction.serializeMessage()` output — the canonical Solana message
+   * bytes that flow into both `computeSolanaPayloadFingerprint` (DF-1
+   * binding) AND `computeSolanaPresignHash` (DF-2 device display). Same
+   * bytes for both — drift would break the on-device-hash-match trust
+   * anchor.
+   */
+  messageBytes: Uint8Array;
+  /** Fee-payer pubkey, base58. account_keys[0] of the serialized message — sender-dependent fingerprint by construction. */
+  feePayer: string;
+  /** Pinned recent blockhash, base58. Embedded in messageBytes; pinned separately for fast surface in receipts. */
+  recentBlockhash: string;
+  /** Program IDs touched, base58. Consumed by `canonical-dispatch-solana` (Plan 12-04 Layer 0.5 allowlist refusal). */
+  programIds: string[];
+  /** Optional decoded instruction summary — populated by Solana prepare tools, consumed by preview_send DECODED ARGS surface. */
+  instructionSummary?: SolanaInstructionSummary[];
+}
+
+export type PreparedTx = PreparedTxEvm | PreparedTxSolana;
 
 /**
  * Preview-pinned fields, persisted onto the record at `transitionToPreviewed`
