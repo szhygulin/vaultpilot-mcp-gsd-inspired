@@ -19,9 +19,11 @@ vi.mock("@walletconnect/sign-client", () => {
 
 import {
   MissingProjectIdError,
+  _env,
   _resetWalletConnectClientForTesting,
   _isWalletConnectClientInitialized,
   _wcStorage,
+  eagerInitWalletConnectIfPersist,
   getWalletConnectClient,
 } from "../src/wallet/walletconnect-client.js";
 import { parseEvmAccountId } from "../src/wallet/caip.js";
@@ -131,6 +133,110 @@ describe("getWalletConnectClient", () => {
     expect(initSpy).toHaveBeenCalledTimes(1);
     expect(first).toBe(second);
     expect(_isWalletConnectClientInitialized()).toBe(true);
+  });
+});
+
+describe("eagerInitWalletConnectIfPersist — boot-time eager-init contract", () => {
+  // Regression anchor for `.planning/debug/wc-session-persist-restart.md`.
+  // Without eager-init, the lazy-singleton + getStatus() short-circuit
+  // combination makes persisted sessions invisible to cold-boot status
+  // reads until something else (typically pair_ledger_live) triggers
+  // SignClient.init. These tests lock the eager-init contract end-to-end.
+
+  it("(skip-arm-1) skips when WALLETCONNECT_PROJECT_ID is unset — does NOT call SignClient.init", async () => {
+    // Default beforeEach already deletes the env var. No projectId → no
+    // eager init, no MissingProjectIdError surfaced at the boot path
+    // (lazy init still throws on the first pair_*; correct surface).
+    await eagerInitWalletConnectIfPersist();
+    expect(initSpy).not.toHaveBeenCalled();
+    expect(_isWalletConnectClientInitialized()).toBe(false);
+  });
+
+  it("(skip-arm-2) skips when storage mode is 'memory' — does NOT call SignClient.init", async () => {
+    process.env[ENV_KEY] = "test-project-id";
+    process.env[STORAGE_KEY] = "memory";
+    await eagerInitWalletConnectIfPersist();
+    expect(initSpy).not.toHaveBeenCalled();
+    expect(_isWalletConnectClientInitialized()).toBe(false);
+  });
+
+  it("(active) under persist mode with projectId set: calls SignClient.init eagerly", async () => {
+    process.env[ENV_KEY] = "test-project-id";
+    process.env[STORAGE_KEY] = "persist";
+    vi.spyOn(_wcStorage, "ensureStorageDirWithPerms").mockImplementation(() => {
+      /* no-op — keep the test off the user's home directory. */
+    });
+
+    await eagerInitWalletConnectIfPersist();
+
+    expect(initSpy).toHaveBeenCalledTimes(1);
+    // Critical regression assertion: after eager-init, the
+    // `_isWalletConnectClientInitialized()` gate returns true. This is the
+    // pre-state that makes getStatus()'s short-circuit fall through to a
+    // real findLiveSession lookup, exposing persisted sessions to cold-boot
+    // status reads. The `wallet-session-manager.eager-init.test.ts` file
+    // anchors the end-to-end flow.
+    expect(_isWalletConnectClientInitialized()).toBe(true);
+  });
+
+  it("(robustness) init failure during eager-init is caught — does NOT throw, logs warning", async () => {
+    process.env[ENV_KEY] = "test-project-id";
+    process.env[STORAGE_KEY] = "persist";
+    vi.spyOn(_wcStorage, "ensureStorageDirWithPerms").mockImplementation(() => {
+      /* no-op. */
+    });
+    initSpy = vi.fn(async () => {
+      throw new Error("relay unreachable");
+    });
+    const errSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    // MUST NOT throw — server startup must continue even when WC backend
+    // is unreachable. Lazy-init on first pair_* surfaces the real error.
+    await expect(eagerInitWalletConnectIfPersist()).resolves.toBeUndefined();
+
+    // Warning logged to stderr; the message names the failure mode so the
+    // operator can diagnose without re-running with verbose logging.
+    const stderrCalls = errSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    expect(stderrCalls).toMatch(/eager WalletConnect init failed/);
+    expect(stderrCalls).toMatch(/relay unreachable/);
+    expect(_isWalletConnectClientInitialized()).toBe(false);
+  });
+
+  it("(idempotent) safe to call multiple times — subsequent calls re-use cached client", async () => {
+    process.env[ENV_KEY] = "test-project-id";
+    process.env[STORAGE_KEY] = "persist";
+    vi.spyOn(_wcStorage, "ensureStorageDirWithPerms").mockImplementation(() => {
+      /* no-op. */
+    });
+
+    await eagerInitWalletConnectIfPersist();
+    await eagerInitWalletConnectIfPersist();
+    await eagerInitWalletConnectIfPersist();
+
+    expect(initSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("(env-indirection) projectId resolved via the _env indirection — spies work across the ESM module boundary", async () => {
+    // Lock the spy-affordance contract: production code reads projectId
+    // through `_env.getWalletConnectProjectId()` (NOT the raw import).
+    // Without this indirection, `vi.spyOn(_env, ...)` would be a no-op
+    // because the imported binding is immutable (the canonical ESM
+    // limitation — same shape as _wcStorage / _paths / _storage).
+    process.env[STORAGE_KEY] = "persist";
+    const envSpy = vi
+      .spyOn(_env, "getWalletConnectProjectId")
+      .mockReturnValue("spy-project-id");
+    vi.spyOn(_wcStorage, "ensureStorageDirWithPerms").mockImplementation(() => {
+      /* no-op. */
+    });
+
+    await eagerInitWalletConnectIfPersist();
+
+    expect(envSpy).toHaveBeenCalled();
+    expect(initSpy).toHaveBeenCalledTimes(1);
+    expect(initSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: "spy-project-id" }),
+    );
   });
 });
 
