@@ -35,6 +35,8 @@ import "./prepare_aave_supply.js";
 import "./prepare_aave_withdraw.js";
 import "./prepare_compound_supply.js";   // Phase 28 Plan 28-02 (CMP-03) — Compound V3 supply
 import "./prepare_compound_withdraw.js"; // Phase 28 Plan 28-02 (CMP-04) — Compound V3 withdraw
+import "./prepare_compound_borrow.js";   // Phase 28 Plan 28-03 (CMP-05) — Compound V3 borrow (reverse-intent sibling of withdraw)
+import "./prepare_compound_repay.js";    // Phase 28 Plan 28-03 (CMP-05) — Compound V3 repay (reverse-intent sibling of supply; MAX_UINT256 sentinel)
 import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";
