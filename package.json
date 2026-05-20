@@ -43,6 +43,7 @@
   "dependencies": {
     "@clack/prompts": "^1.4.0",
     "@ledgerhq/hw-app-solana": "^7.10.2",
+    "@ledgerhq/hw-app-trx": "^6.36.1",
     "@ledgerhq/hw-transport-node-hid": "^6.33.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@solana/spl-token": "^0.4.14",
@@ -50,6 +51,7 @@
     "@walletconnect/sign-client": "^2.23.9",
     "@walletconnect/utils": "^2.23.9",
     "bs58": "^5.0.0",
+    "tronweb": "^6.3.0",
     "viem": "^2.48.0",
     "zod": "^4.4.3"
   },
