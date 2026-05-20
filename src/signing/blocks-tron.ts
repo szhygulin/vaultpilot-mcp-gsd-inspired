@@ -262,3 +262,91 @@ export const VERIFY_BEFORE_SIGNING_TRON_TEMPLATE: string = [
   "    5. If they match → approve on the device.",
   "    6. If they differ → REJECT on the device. This is a tamper signal.",
 ].join("\n");
+
+// ---------------------------------------------------------------------------
+// Phase 19 Plan 19-01 — APPEND-ONLY templates for TRC-20 approve/revoke.
+// DO NOT modify the 7 templates above — they are BYTE-FROZEN (Phase 18).
+// ---------------------------------------------------------------------------
+
+/**
+ * PREPARE RECEIPT — TRON TRC-20 approve (Plan 19-01 — verbatim agent args,
+ * NO normalization). Substituted by `prepare_tron_token_approve.ts` (Plan
+ * 19-01) and re-rendered in `preview_send.ts` TRON approve arm. Seven slots:
+ *   - `{CHAIN}`           — always `"TRON mainnet"` (kept as slot for symmetry
+ *                           with native + TRC-20 transfer templates).
+ *   - `{TOKEN}`           — TRC-20 contract base58check address (raw agent string).
+ *   - `{SPENDER}`         — spender base58check address (raw agent string).
+ *   - `{AMOUNT}`          — VERBATIM agent input per D-02c — surfaces `"max"` not
+ *                           the expanded decimal; `"0"` for revoke.
+ *   - `{REF_BLOCK_BYTES}` — pinned at prepare time; surfaced verbatim.
+ *   - `{REF_BLOCK_HASH}`  — pinned at prepare time; surfaced verbatim.
+ *   - `{EXPIRATION}`      — expiration timestamp (ms); surfaced verbatim.
+ *
+ * The spender LABEL lives in the separate `KNOWN_SPENDER_LABEL_TRON_TEMPLATE`
+ * block, NOT here — keeps this template stable when the label table churns.
+ * Mirrors the Plan 18-03 `PREPARE_RECEIPT_TRON_TRC20_TEMPLATE` shape.
+ */
+export const PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE: string = [
+  "PREPARE RECEIPT (TRON — TRC-20 approve)",
+  "  chain:          {CHAIN}",
+  "  tokenAddress:   {TOKEN}",
+  "  spender:        {SPENDER}",
+  "  amount:         {AMOUNT}",
+  "  refBlockBytes:  {REF_BLOCK_BYTES}",
+  "  refBlockHash:   {REF_BLOCK_HASH}",
+  "  expiration:     {EXPIRATION}",
+].join("\n");
+
+/**
+ * UNLIMITED APPROVAL (TRON) — emitted CONDITIONALLY by preview_send TRON approve
+ * arm (Plan 19-01) ONLY when `summary.kind === "trc20-approve" && summary.amountIsMax === true`.
+ * NOT emitted for revoke (summary.kind === "trc20-revoke"). Two slots:
+ *   - `{TOKEN}`   — TRC-20 contract base58check address.
+ *   - `{SPENDER}` — spender base58check address.
+ *
+ * Mirrors the EVM `UNLIMITED_APPROVAL_TEMPLATE` from `blocks.ts` (Plan 06-03)
+ * but adapted for TRON base58check address disclosure and hints at the TRON
+ * revoke tool `prepare_tron_revoke_approval`.
+ *
+ * T-19-01-T-MAX-EXPLICIT mitigation: the `"max"` sentinel (lowercase strict
+ * equality per D-02b) always produces `amountIsMax: true` on the stored summary,
+ * so this block ALWAYS fires for unlimited approvals without needing the agent
+ * to explicitly request the warning.
+ */
+export const UNLIMITED_APPROVAL_TRON_TEMPLATE: string = [
+  "⚠ UNLIMITED APPROVAL (TRON)",
+  "  Token:   {TOKEN}",
+  "  Spender: {SPENDER}",
+  "",
+  "  You are approving an UNLIMITED allowance (MAX_UINT256) on this TRON token.",
+  "  This spender will be able to transfer any amount of this token at any time.",
+  "  TRON base58check addresses are the authoritative identifiers — verify the",
+  "  on-device display matches the SPENDER address above character-for-character.",
+  "",
+  "  To revoke this approval later, call:",
+  "    prepare_tron_revoke_approval({ tokenAddress: \"{TOKEN}\", spender: \"{SPENDER}\" })",
+  "",
+  "  Only approve if you trust the spender contract explicitly.",
+].join("\n");
+
+/**
+ * SPENDER LABEL (TRON) — emitted by preview_send TRON approve arm (Plan 19-01)
+ * to surface the `KNOWN_SPENDERS_TRON` lookup result for the spender address.
+ * Three slots:
+ *   - `{SPENDER}` — spender base58check address.
+ *   - `{LABEL}`   — resolved label from KNOWN_SPENDERS_TRON, or the literal
+ *                   `(unknown spender — no prior interaction recorded)` for
+ *                   spenders not in the table.
+ *   - `{SOURCE}`  — citation source for the label (e.g. the SOT URL).
+ *
+ * The label is ADVISORY ONLY — on-device spender address (base58check) is the
+ * trust anchor per T-19-01-T-SPENDER-LABEL. A stale label is degraded UX,
+ * not a safety failure. The regression test in `config-contracts.tron.test.ts`
+ * asserts the table SOT doesn't silently drift.
+ */
+export const KNOWN_SPENDER_LABEL_TRON_TEMPLATE: string = [
+  "SPENDER LABEL (TRON)",
+  "  Spender:   {SPENDER}",
+  "  Label:     {LABEL}",
+  "  Source:    {SOURCE}",
+].join("\n");

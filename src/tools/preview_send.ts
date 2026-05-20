@@ -104,12 +104,15 @@ import {
   VERIFY_BEFORE_SIGNING_SOLANA_TEMPLATE,
 } from "../signing/blocks-solana.js";
 import {
+  KNOWN_SPENDER_LABEL_TRON_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE,
   LEDGER_NOTICE_TRON_TEMPLATE,
   NO_SIMULATION_AVAILABLE_TRON_TEMPLATE,
+  PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE,
   PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE,
   PREPARE_RECEIPT_TRON_TRC20_TEMPLATE,
   SIMULATION_BLOCK_TRON_TEMPLATE,
+  UNLIMITED_APPROVAL_TRON_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
 } from "../signing/blocks-tron.js";
 import {
@@ -1223,8 +1226,25 @@ function shouldEmitTronLedgerNotice(tx: PreparedTxTron):
     return { emit: false, reason: "native TransferContract clear-signs unconditionally on TRX app v0.5+" };
   }
   // tx.kind === "trc20" — all Phase 18 stablecoins in bundled registry
-  return { emit: false, reason: "Phase 18 TRC-20 set in TRX app v0.5+ bundled registry" };
   // Phase 19+ widens: switch on `tx.kind` for approve/stake/swap variants
+  const summary0Kind = tx.instructionSummary?.[0]?.kind;
+  if (summary0Kind === "trc20-approve") {
+    // Phase 19: approve ABI is distinct from transfer; not in TRX-app bundled clear-sign registry.
+    return {
+      emit: true,
+      instructionName: "TRC-20 approve",
+      reason: "approve ABI distinct from transfer — not in TRX app v0.5+ bundled clear-sign registry",
+    };
+  }
+  if (summary0Kind === "trc20-revoke") {
+    // Phase 19: revoke is approve(spender, 0) — same ABI; not in bundled clear-sign registry.
+    return {
+      emit: true,
+      instructionName: "TRC-20 revoke",
+      reason: "approve ABI distinct from transfer — not in TRX app v0.5+ bundled clear-sign registry",
+    };
+  }
+  return { emit: false, reason: "Phase 18 TRC-20 set in TRX app v0.5+ bundled registry" };
 }
 
 /**
@@ -1253,6 +1273,136 @@ async function previewSendTronBranch(
   structuredContent?: Record<string, unknown>;
 }> {
   const tronTx = record.tx;
+
+  // ---- Phase 19 — approve/revoke arm (EARLY RETURN before Layer 0.5 + Layer 0.7) ----
+  // Placement is LOAD-BEARING: fires BEFORE the trc20-transfer-only Layer 0.5 stablecoin
+  // allowlist and BEFORE the Layer 0.7 `summary.kind !== "trc20-transfer"` guard.
+  // Approve/revoke handles bypass both guards and early-return with the correct PREPARE
+  // RECEIPT template + selector (0x095ea7b3) + LEDGER NOTICE + no simulation advisory.
+  // The existing trc20-transfer + native arms below are BYTE-IDENTICAL (skipped via this
+  // early-return; NOT modified). T-PREVIEW-APPROVE-MISROUTE mitigation per threat register.
+  const summary0 = tronTx.instructionSummary?.[0];
+  if (
+    tronTx.kind === "trc20" &&
+    (summary0?.kind === "trc20-approve" || summary0?.kind === "trc20-revoke")
+  ) {
+    // 1. Skip Layer 0.5 (stablecoin allowlist guards transfer counterparties, not approve).
+    // 2. Skip Layer 0.7 simulation (approve is intent-only; no on-chain balance to simulate).
+    const simulationResultApprove = _simulationTron.emitNoSimulationAvailable();
+
+    // 3. Recompute presignHash (SHA-256 of rawDataBytes) — identical to transfer arm.
+    const rawDataBytesApprove = Buffer.from(tronTx.rawDataHex, "hex");
+    const { presignHash: presignHashApprove } = _tronPresign.computeTronPresignHash({
+      rawDataBytes: new Uint8Array(rawDataBytesApprove),
+    });
+
+    // 4. Mint fresh previewToken.
+    const previewTokenApprove = crypto.randomUUID();
+
+    // 5. Pin via transitionToPreviewed — selector 0x095ea7b3 (LOAD-BEARING: approve, not transfer).
+    const transApprove = transitionToPreviewed(record.handle, {
+      nonce: 0,
+      gas: 0n,
+      maxFeePerGas: 0n,
+      maxPriorityFeePerGas: 0n,
+      previewToken: previewTokenApprove,
+      presignHash: presignHashApprove,
+      selector: "0x095ea7b3",
+    });
+    if (!transApprove.ok) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `error: handle state changed during preview (${transApprove.errorCode})`,
+          },
+        ],
+        structuredContent: errEnvelope(
+          transApprove.errorCode,
+          `handle transition failed: ${transApprove.errorCode}`,
+        ) as Record<string, unknown>,
+      };
+    }
+
+    // 6. Render PREPARE RECEIPT from approve template.
+    const prepareReceiptApprove = PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE
+      .replace("{CHAIN}", "TRON mainnet")
+      .replace("{TOKEN}", record.args.tokenAddress!)
+      .replace("{SPENDER}", record.args.spender!)
+      .replace("{AMOUNT}", record.args.amount!)
+      .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+      .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+      .replace("{EXPIRATION}", String(tronTx.expiration));
+
+    // 7. Render KNOWN_SPENDER_LABEL_TRON_TEMPLATE.
+    const spenderLabelBlockApprove = KNOWN_SPENDER_LABEL_TRON_TEMPLATE
+      .replace("{SPENDER}", record.args.spender!)
+      .replace("{LABEL}", (summary0 as { spenderLabel?: string }).spenderLabel ?? "(unknown)")
+      .replace("{SOURCE}", "KNOWN_SPENDERS_TRON sub-table (src/config/contracts.ts)");
+
+    // 8. Render LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE.
+    const blindSignHashBlockApprove = LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE
+      .replace("{HASH_FULL_64HEX}", presignHashApprove)
+      .replace("{HASH_CHUNKED_4_CHAR_GROUPS}", chunkTronHash(presignHashApprove));
+
+    // 9. NO_SIMULATION_AVAILABLE_TRON_TEMPLATE advisory (approve is intent-only; no simulation).
+    const simulationBlockApprove = NO_SIMULATION_AVAILABLE_TRON_TEMPLATE;
+
+    // 10. Conditionally render UNLIMITED_APPROVAL_TRON_TEMPLATE (only for approve + amountIsMax).
+    const unlimitedBlockApprove =
+      summary0.kind === "trc20-approve" && (summary0 as { amountIsMax?: boolean }).amountIsMax === true
+        ? UNLIMITED_APPROVAL_TRON_TEMPLATE
+            .replaceAll("{TOKEN}", record.args.tokenAddress!)
+            .replaceAll("{SPENDER}", record.args.spender!)
+        : "";
+
+    // 11. Render LEDGER_NOTICE_TRON_TEMPLATE UNCONDITIONALLY (approve/revoke blind-sign UX defense).
+    const noticeDecisionApprove = shouldEmitTronLedgerNotice(tronTx);
+    const ledgerNoticeBlockApprove = noticeDecisionApprove.emit
+      ? LEDGER_NOTICE_TRON_TEMPLATE
+          .replace("{INSTRUCTION_NAME}", noticeDecisionApprove.instructionName)
+          .replace("{REGISTRY_STATUS}", noticeDecisionApprove.reason)
+      : "";
+
+    // 12. Render VERIFY_BEFORE_SIGNING_TRON_TEMPLATE (constant prose).
+    // 13. Concatenate with "\n\n" separator.
+    const responseTextPartsApprove = [
+      prepareReceiptApprove,
+      spenderLabelBlockApprove,
+      ...(unlimitedBlockApprove ? [unlimitedBlockApprove] : []),
+      ...(ledgerNoticeBlockApprove ? [ledgerNoticeBlockApprove] : []),
+      blindSignHashBlockApprove,
+      simulationBlockApprove,
+      VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
+      `\nPreview token: ${previewTokenApprove}`,
+      `\nNext step: send_transaction({ handle: "${record.handle}", previewToken: "${previewTokenApprove}", userDecision: "send" })`,
+    ];
+    const responseTextApprove = responseTextPartsApprove.filter(Boolean).join("\n\n");
+
+    // 14. Return same structuredContent shape as the transfer arm.
+    return {
+      content: [{ type: "text", text: responseTextApprove }],
+      structuredContent: {
+        handle: record.handle,
+        chain: "tron",
+        kind: tronTx.kind,
+        previewToken: previewTokenApprove,
+        presignHash: presignHashApprove,
+        simulation: simulationResultApprove,
+        payloadFingerprint: record.payloadFingerprint,
+        decodedArgs: tronTx.instructionSummary,
+        blockHeader: {
+          refBlockBytes: tronTx.refBlockBytes,
+          refBlockHash: tronTx.refBlockHash,
+          expiration: tronTx.expiration,
+        },
+        rawDataHex: tronTx.rawDataHex,
+        sessionTopicLast8: null,
+      },
+    };
+  }
+  // End Phase 19 approve/revoke arm — fall through to Phase 18 trc20-transfer + native arms.
 
   // ---- Layer 0.5 — canonical-dispatch-tron (TRC-20 only) ---------------
   if (tronTx.kind === "trc20") {
