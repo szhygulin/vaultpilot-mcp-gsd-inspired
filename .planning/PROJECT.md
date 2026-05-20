@@ -22,23 +22,51 @@ Built fresh from product specs using GSD. Same product space as the upstream `va
 
 ### Active
 
-<!-- v1.0 MVP. Building toward these. -->
+<!-- v2.0 Solana. Building toward these. v1.x MVP requirements moved to Validated below (code-complete; verify-phases open). -->
 
-- [ ] User can install the MCP via `npx` and register it with Claude Code in one command
-- [ ] User can ask the agent for their Ethereum portfolio (native ETH balance + ERC-20 balances + USD totals) on a free public RPC, no API keys required
-- [ ] User can pair their Ledger via WalletConnect once per session and see the paired address surfaced verbatim
-- [ ] User can ask the agent to send native ETH; flow produces an unsigned tx, a `LEDGER BLIND-SIGN HASH` block, and a `payloadFingerprint` that survives the prepare→preview→send transition unchanged
-- [ ] User signs on the device after matching the on-screen hash against the agent-relayed hash; bytes substitution at any layer between MCP and the device produces a visible mismatch
-- [ ] On a fresh install with no config and no Ledger, the server boots into auto-demo (real RPC reads against curated personas; signing tools refuse) so first contact works without setup
+- [ ] User can pair a Ledger over USB-HID for Solana (no WalletConnect — Solana has no WC v2 bridge to Ledger) and the paired account persists across MCP restart
+- [ ] User can ask the agent for their Solana portfolio (SOL + SPL balances + USD totals) against a free public RPC
+- [ ] User can send SOL and SPL tokens; the prepare → preview → send trust pipeline reused from v1.x extends with Solana-specific `payloadFingerprint` over serialized-message bytes, mandatory `simulateTransaction` gate at preview, and per-wallet durable-nonce setup
+- [ ] User can supply / withdraw / borrow / repay on MarginFi and Kamino lending; positions readable via `get_marginfi_positions` and `get_kamino_positions`
+- [ ] User can swap on Jupiter v6 with explicit slippage hint; sandwich-MEV refusal at >2% price impact without explicit `slippageBps`
+- [ ] User can stake on Marinade (with immediate-unstake) and Jito (deposit-only; unstake-gap deferred), and run the native SOL delegate / deactivate / withdraw flow
+- [ ] User can bridge between EVM chains and Solana via LiFi (`prepare_solana_lifi_swap`) with server-side `decodedFinalRecipient` assertion at preview time
+- [ ] Persistent non-EVM account cache at `~/.vaultpilot-mcp/non-evm-accounts.json` mirrors the WC-session-persistence pattern (PR #61) — paired Solana / TRON / BTC / LTC accounts survive MCP restart; eager-init at `startServer()` before the transport connects
+
+### Validated
+
+<!-- v1.x — shipped code-complete; verify-phases (real-Ledger smoke) deferred per 2026-05-16 user directive. -->
+
+- [x] User can install the MCP via `npx` and register it with Claude Code in one command (v1.0 Phase 1)
+- [x] User can ask the agent for their Ethereum portfolio (native ETH balance + ERC-20 balances + USD totals) on a free public RPC, no API keys required (v1.0 Phase 2)
+- [x] User can pair their Ledger via WalletConnect once per session and see the paired address surfaced verbatim (v1.0 Phase 3)
+- [x] User can ask the agent to send native ETH; flow produces an unsigned tx, a `LEDGER BLIND-SIGN HASH` block, and a `payloadFingerprint` that survives the prepare→preview→send transition unchanged (v1.0 Phase 4)
+- [x] User signs on the device after matching the on-screen hash against the agent-relayed hash; bytes substitution at any layer between MCP and the device produces a visible mismatch (v1.0 Phase 4)
+- [x] On a fresh install with no config and no Ledger, the server boots into auto-demo (real RPC reads against curated personas; signing tools refuse) so first contact works without setup (v1.0 Phase 5)
+- [x] ERC-20 lifecycle (transfer + approve + revoke + WETH unwrap) (v1.1 Phase 6)
+- [x] Aave V3 supply / withdraw / health-factor simulation (v1.1 Phase 7)
+- [x] Multi-EVM fan-out (Arbitrum / Polygon / Base / Optimism + Ethereum) + `resolve_token` + `get_token_allowances` (v1.2 Phase 8)
+- [x] Companion `vaultpilot-preflight` skill + three verification tools (`get_verification_artifact` / `verify_tx_decode` / `get_tx_verification`) + canonical dispatch allowlist (v1.3 Phase 9)
+- [x] Per-platform binaries + install scripts + setup wizard + `request_capability` tool (v1.4 Phase 10)
+
+### Future Milestones
+
+<!-- In-scope eventually — each is its own milestone in ROADMAP.md. Not Out of Scope, not Active. -->
+
+- v2.1 TRON, v2.2 Bitcoin + Litecoin — each a separate milestone because the signing transport, address scheme, and Ledger-app behavior differ per chain. Reuses v2.0 Phase 11's persistent non-EVM account cache (PAIR-NEV-*).
+- v2.3 EVM lending+staking expansion (Compound V3 / Morpho Blue / Lido wrap / EigenLayer / Rocket Pool)
+- v2.4 EVM DEX + LP + escape hatch (Uniswap V3 swap+LP / Curve / `prepare_custom_call`)
+- v2.5 Safe (Gnosis) multisig three-step flow (propose → approve → execute)
+- v2.6 Bridge facet decoders + cross-chain hardening (Tier-1 Wormhole / Mayan / NEAR Intents / Across V3; Tier-2 deferred)
+- v3.0 Hosted MCP (HTTP/SSE + OAuth 2.1) — unblocks claude.ai web/desktop
+- v3.1 NFT reads, v3.2 contacts + read-only sharing, v3.3 device-trust attestation, v3.4 ergonomics surface, v3.5 multi-hardware-wallet (Trezor / Keystone / GridPlus Lattice)
 
 ### Out of Scope
 
-<!-- Explicit boundaries. v1.0 only — broader scope lives in ROADMAP.md milestones. -->
+<!-- Explicit boundaries. Not coming. Broader scope lives in ROADMAP.md milestones. -->
 
-- All non-EVM chains (Solana, TRON, Bitcoin, Litecoin) — deferred to v2.x; each chain is its own milestone because the signing transport differs (USB-HID vs WC) and the security defenses don't carry over.
-- All EVM chains except Ethereum mainnet — deferred to v1.2; mainnet is the validation target for the security pipeline before fan-out to L2s.
-- All DeFi protocols (Aave, Compound, Morpho, Uniswap, Curve, Lido, EigenLayer, Rocket Pool, Safe multisig, etc.) — deferred to v1.1+; native sends are the smallest signing flow and exercise the full trust pipeline.
-- Companion skill (`vaultpilot-preflight`) — deferred to v1.3 hardening milestone; until then the MCP-emitted `CHECKS PERFORMED` block is the only enforcement layer (documented residual risk).
+- All EVM chains except the v1.2 five (Ethereum + Arbitrum + Polygon + Base + Optimism) — deferred to v2.x+ as usage data justifies; never a hard blocker.
+- Companion skill (`vaultpilot-preflight`) shipped at v1.3 — closed.
 - Second-LLM verification, set-level enumeration, dispatch-target allowlist, bridge-facet decoders — all v1.3+ hardening.
 - Ergonomics surface (`get_pnl_summary`, `get_daily_briefing`, `get_portfolio_diff`, `compare_yields`, `explain_tx`) — deferred to v3.x; not load-bearing for the trust pipeline.
 - Contacts + read-only sharing (signed address-book, scoped read-only links) — deferred to v3.x.

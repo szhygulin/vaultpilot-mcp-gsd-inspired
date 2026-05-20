@@ -11,7 +11,7 @@ The journey: a working trust pipeline first (one chain, one signing flow, end-to
 - 🟡 **v1.2 Multi-EVM + token tooling** — Phase 8 **code-complete** (5 EVM chains + `resolve_token` + `get_token_allowances`); v1.2 verify-phase open
 - 🟡 **v1.3 Hardening + skill** — Phase 9 **code-complete** (companion skill in sister repo, three verification tools, dispatch allowlist); v1.3 verify-phase open
 - 🟡 **v1.4 Distribution** — Phase 10 **code-complete** (per-platform binaries + install scripts + setup wizard + `request_capability` tool); v1.4 verify-phase open; v1.4.1 follow-up for pkg ESM subpath-exports resolution
-- 📋 **v2.0** — Solana (MarginFi / Kamino / Jupiter / Marinade / Jito / native staking)
+- 📋 **v2.0 Solana** — Phases 11-16 planned (USB-HID transport + persistent non-EVM account cache / SOL + SPL trust pipeline / MarginFi + Kamino lending / Jupiter v6 swaps / Marinade + Jito + native staking / LiFi bridging + diagnostics)
 - 📋 **v2.1** — TRON (TRX / TRC-20 / Stake 2.0 / SunSwap / LiFi bridging)
 - 📋 **v2.2** — Bitcoin + Litecoin (Esplora reads / RBF / PSBT multisig / BIP-137 / LiFi BTC routing / optional Core RPC)
 - 📋 **v2.3** — EVM lending+staking expansion (Compound / Morpho / Lido wrap / EigenLayer / Rocket Pool)
@@ -265,12 +265,138 @@ Plans:
 
 ---
 
-### 📋 v2.0+ Future Milestones (Planned)
+### 📋 v2.0 Solana (Phases 11-16)
 
-Each is sized as one milestone (4-6 phases). All blocked on v1.4 distribution maturity.
+**Milestone Goal:** A user can install the MCP, pair a Ledger over USB-HID (no WalletConnect — Solana has no WC v2 bridge to Ledger), read SOL + SPL balances + MarginFi + Kamino positions, swap on Jupiter v6, stake on Marinade / Jito / native SOL validators, and bridge between EVM and Solana via LiFi. The full prepare → preview → send trust pipeline is reused, with Solana-specific primitives layered in: serialized-transaction-message `payloadFingerprint`, mandatory `simulateTransaction` gate at preview, per-wallet durable-nonce setup, and a new persistent non-EVM account cache that mirrors v1.x WC-session persistence (PR #61) so paired Solana / TRON / BTC / LTC accounts survive MCP restart.
 
-- **v2.0 Solana** — SOL/SPL balances, MarginFi + Kamino lending, Jupiter v6 swaps, Marinade / Jito (deposit only — unstake gap) / native staking, LiFi-routed EVM↔Solana bridging. USB-HID transport (no WC). Per-wallet durable-nonce account. Mandatory `simulateTransaction` gate at preview.
-- **v2.1 TRON** — TRX + canonical TRC-20 balances + transfers + Stake 2.0 + SunSwap (same-chain swap) + LiFi-routed TRON↔EVM bridging + TRC-20 approve. USB-HID transport. Ledger TRON app clear-signs every supported action.
+#### Phase 11: Solana scaffolding — USB-HID transport + SOL reads + persistent non-EVM account cache
+**Goal**: USB-HID Ledger pairing for Solana works; SOL + SPL balances readable via a free public RPC; paired non-EVM accounts persist to `~/.vaultpilot-mcp/non-evm-accounts.json` and restore on MCP restart (mirroring the v1.x WC-session-persistence pattern from PR #61). Demo mode extends with a curated Solana persona.
+**Depends on**: Phase 10 (v1.x distribution complete)
+**Requirements**: PAIR-NEV-01, PAIR-NEV-02, PAIR-NEV-03, PAIR-NEV-04, PAIR-NEV-05, SOL-01, SOL-02, SOL-03, SOL-04, SOL-05
+**Success Criteria** (what must be TRUE):
+  1. `pair_solana_ledger()` opens the Ledger Solana app over USB-HID via `@ledgerhq/hw-transport-node-hid` + `@ledgerhq/hw-app-solana`, returns the Solana base58 address verbatim plus a `VERIFY-ON-DEVICE` block instructing the user to confirm the address on the Ledger screen
+  2. `get_solana_status()` returns `{ paired: true, address, derivationPath, rpcEndpoint }` after a successful pair
+  3. `get_solana_balance({ wallet })` returns native SOL balance (lamports + SOL formatted) against a free public RPC (default `https://api.mainnet-beta.solana.com`; override via `SOLANA_RPC_URL`)
+  4. `get_solana_token_balance({ wallet, mint })` returns SPL token balance + decimals + USD value (DefiLlama prices, `solana:<mint>` keying)
+  5. `get_solana_portfolio_summary({ wallet })` aggregates SOL + SPL balances + USD totals; ERC-20-equivalent SPL discovery via a curated top-50-by-volume Solana-mainnet mint registry
+  6. Paired Solana account persists to `~/.vaultpilot-mcp/non-evm-accounts.json` (0o700 dir, 0o600 file) under a `chain: "solana"` record key
+  7. On MCP restart, `startServer()` eager-loads the persisted accounts via `loadNonEvmAccounts()` BEFORE `server.connect(transport)` (race-defense — mirrors PR #61's WC eager-init pattern); `get_solana_status()` returns `paired: true` on first call without requiring a re-pair
+  8. `VAULTPILOT_NON_EVM_STORAGE=memory` opt-out disables disk persistence (mirrors `VAULTPILOT_WC_STORAGE=memory` from quick task 260513-c8e)
+  9. `list_paired_non_evm_accounts()` returns the in-memory record set; `remove_paired_non_evm_account({ chain, address })` removes a single entry and rewrites the file atomically
+  10. Stale-session detection: on restore, accounts whose `pairedAt` timestamp is older than 30 days surface in `get_solana_status` with `staleAccountWarning: true`; user-action hint to re-pair
+  11. Multi-chain `get_portfolio_summary` extends to fan out across EVM (existing) + Solana (new) when both are configured; per-row `chain: "solana"` field
+  12. Demo mode adds a curated Solana persona (e.g. a known SOL whale); `set_demo_wallet({ persona })` accepts the new persona name and routes Solana reads to the persona's mainnet address
+  13. `get_vaultpilot_config_status` surfaces `solanaRpcConfigured` + `pairedNonEvmChains` (array of chain names; never raw addresses) + `nonEvmStoragePersistent` booleans/counts only
+**Plans**: 5 plans (estimate)
+
+Plans:
+- [ ] 11-01: `@solana/web3.js` (DF — researcher to scope-probe `@solana/kit` at execute time per RESEARCH § Topic 1) + `@ledgerhq/hw-app-solana` + `@ledgerhq/hw-transport-node-hid` SDK adoption; `src/chains/solana/` shelf (rpc-client + registry + types); `SOLANA_RPC_URL` env reader + PublicNode-equivalent fallback
+- [ ] 11-02: `src/wallet/non-evm-account-store.ts` — JSON-backed at `~/.vaultpilot-mcp/non-evm-accounts.json`; per-chain record schema (`chain`, `address`, `derivationPath`, `pairedAt`, `displayName?`); `_storage` spy-affordance indirection (mirrors `session-manager.ts`); `VAULTPILOT_NON_EVM_STORAGE=memory` opt-out; atomic-write via tempfile + rename
+- [ ] 11-03: `pair_solana_ledger` tool + USB-HID transport open + Solana app detection + Ed25519 pubkey → base58 address + `VERIFY-ON-DEVICE` block emission; eager-init at `startServer()` per PR #61 pattern; persistent-restore on cold boot
+- [ ] 11-04: `get_solana_balance` + `get_solana_token_balance` + `get_solana_portfolio_summary` read tools; curated top-50 SPL mint registry at `src/tokens/solana-top-50.json`; DefiLlama Solana pricing (`solana:<mint>` keying); multi-chain `get_portfolio_summary` Solana fan-out
+- [ ] 11-05: Demo persona registry extension (Solana whale persona) + `list_paired_non_evm_accounts` + `remove_paired_non_evm_account` + `get_solana_status` + `get_vaultpilot_config_status` Solana surfacing (`solanaRpcConfigured`, `pairedNonEvmChains`, `nonEvmStoragePersistent`)
+
+#### Phase 12: Solana native + SPL trust pipeline
+**Goal**: Full prepare → preview → send flow works for native SOL and SPL transfers, with Solana-specific `payloadFingerprint` (over serialized transaction message bytes pre-signature), per-wallet durable-nonce setup, mandatory `simulateTransaction` preview gate, and Ledger SOL-app blind-sign hash recompute. This is the load-bearing milestone for v2.0 — the Solana trust pipeline mirror of Phase 4's Ethereum one.
+**Depends on**: Phase 11
+**Requirements**: SOL-W-01, SOL-W-02, SOL-PREP-01, SOL-PREP-02, SOL-PREP-03, SOL-PREP-04, SOL-PREP-05
+**Success Criteria** (what must be TRUE):
+  1. `prepare_solana_native_send({ to, lamports })` returns `{ handle, to, lamports, recentBlockhash, payloadFingerprint, prepareReceipt }` with the Solana `payloadFingerprint` computed over the serialized message bytes (domain-tagged `"VaultPilot-soltx-v1:"`)
+  2. `prepare_solana_spl_send({ to, mint, amount })` produces an SPL Token Program `Transfer` instruction; decimal-string amount resolved via `get_solana_token_metadata` decimals lookup (mirrors v1.x `parseAmountStrict` pattern)
+  3. `preview_send` Solana branch runs mandatory `simulateTransaction` RPC gate — refuses with structured error if simulation surfaces program-error or insufficient-lamports; on success surfaces decoded args + Ledger SOL-app blind-sign hash recompute in `LEDGER BLIND-SIGN HASH` block
+  4. `send_transaction` Solana branch enforces `previewToken` + `userDecision: "send"` gates identically to the EVM path; rejects on `payloadFingerprint` drift between prepare and send
+  5. Ledger SOL app clear-signs the transaction (per Solana app v1.4+ default); user sees decoded `Recipient` + `Amount` on-device for both native SOL and SPL transfers
+  6. `prepare_solana_nonce_init` + `prepare_solana_nonce_close` produce per-wallet durable-nonce account setup/teardown txs (NonceAuthorized account ownership); enables long-duration prepare → sign flows past the 150-slot recent-blockhash window
+  7. Fixture I (native SOL transfer fingerprint) + Fixture J (SPL transfer fingerprint) hardcoded as `0x...` literals in `test/signing-fingerprint.test.ts`; cross-linked from `prepare-solana-*` consumer tests; persona-cycle integration test re-anchors byte-identity across persona swaps (sender-independent for native SOL; sender-dependent for SPL where the source token account is sender-derived — pattern matches Phase 7 Aave `T-INTEGRATION-FROM-DRIFT-2` shape)
+  8. SECURITY.md updated for Solana threat model — USB-HID transport trust shape vs WC v2 bridge, durable-nonce TTL extension as accepted-residual risk, `simulateTransaction` gate as Layer 0.7 defense (Layer 0.5 = canonical dispatch from v1.3; Layer 1 = preview; Layer 2 = chain-mismatch from v1.2; Layer 3 = fingerprint-drift)
+**Plans**: 5 plans (estimate)
+
+Plans:
+- [ ] 12-01: `src/signing/solana-fingerprint.ts` — `payloadFingerprint` over serialized message bytes (domain-tagged `"VaultPilot-soltx-v1:"`); Fixture I literal anchor in `test/signing-fingerprint.test.ts`; FROZEN-area discipline asserts the existing EVM-side fingerprint module is byte-untouched
+- [ ] 12-02: `prepare_solana_native_send` + Solana `PREPARE RECEIPT` template + `src/protocols/solana-system.ts` (System Program `Transfer` encoder); durable-nonce flag pre-wiring (consumed by 12-04)
+- [ ] 12-03: `prepare_solana_spl_send` + `src/protocols/solana-spl.ts` (SPL Token Program `Transfer` instruction); `parseSolanaAmountStrict` (mirrors `parseAmountStrict` from Plan 06-01); `get_solana_token_metadata` decimals lookup; Fixture J literal anchor
+- [ ] 12-04: `preview_send` Solana branch — mandatory `simulateTransaction` RPC gate (Layer 0.7 — sits between v1.3 canonical-dispatch Layer 0.5 and v1.2 chain-mismatch Layer 2); Ledger SOL-app blind-sign hash recompute; `prepare_solana_nonce_init` + `prepare_solana_nonce_close` tools; SECURITY.md Solana threat-model section
+- [ ] 12-05: `send_transaction` Solana branch — `previewToken` + `userDecision` gate reuse from v1.x; USB-HID Ledger SOL app sign call; `payloadFingerprint` drift refusal; full Solana trust-pipeline integration test (persona-cycle byte-identity for native + sender-dependent for SPL)
+
+#### Phase 13: Solana lending — MarginFi + Kamino
+**Goal**: User can read MarginFi + Kamino lending positions and supply/withdraw/borrow/repay assets on both protocols. Per-wallet lending-account PDA setup tools land here. Canonical dispatch allowlist extends to Solana programs (mirrors v1.3 SEC-35 EVM dispatch-target enforcement).
+**Depends on**: Phase 12
+**Requirements**: SOL-W-03, SOL-W-04, SOL-W-05, SOL-W-06, SOL-W-07, SOL-W-08, SOL-W-09, SOL-W-10
+**Success Criteria** (what must be TRUE):
+  1. `get_marginfi_positions({ wallet })` returns MarginFi-bank-keyed supplied + borrowed + health-factor-equivalent per position
+  2. `get_kamino_positions({ wallet })` returns Kamino-vault-keyed supplied + borrowed + per-vault health
+  3. `prepare_marginfi_supply` / `_withdraw` / `_borrow` / `_repay` produce unsigned MarginFi program instructions; `prepare_kamino_supply` / `_withdraw` / `_borrow` / `_repay` produce unsigned Kamino program instructions
+  4. Per-wallet lending-account PDAs (MarginFi: `MarginfiAccount`; Kamino: `Obligation`) set up via `prepare_marginfi_account_init` and `prepare_kamino_obligation_init` tools when not already present
+  5. Canonical dispatch allowlist (`src/security/canonical-dispatch.ts`) extends with MarginFi + Kamino program IDs per chain; mismatch refuses at preview time (Layer 0.5 — identical pattern to v1.3 SEC-35 EVM dispatch)
+  6. MarginFi + Kamino program addresses sourced from `src/config/contracts.ts` Solana table (new sub-table — `Record<"solana", SolanaContracts>` mirroring the v1.2 EVM `Record<ChainId, ContractsForChain>` shape)
+  7. Ledger clear-signs MarginFi/Kamino instructions when CAL coverage available; conditional LEDGER NOTICE block (mirrors Phase 6 WETH9.withdraw pattern) when the instruction is blind-sign-only
+**Plans**: 4 plans (estimate)
+
+Plans:
+- [ ] 13-01: `src/config/contracts.ts` Solana sub-table extension — MarginFi + Kamino program IDs + per-protocol PDA derivation helpers; canonical-dispatch allowlist Solana arm wiring
+- [ ] 13-02: MarginFi reads — `get_marginfi_positions` + `src/chains/solana/marginfi.ts` (account decoder via `@mrgnlabs/marginfi-client-v2` SDK, scope-probe at research time)
+- [ ] 13-03: Kamino reads — `get_kamino_positions` + `src/chains/solana/kamino.ts` (Kamino lend SDK adoption decision DF at research time)
+- [ ] 13-04: Prepare tools — `prepare_marginfi_supply/_withdraw/_borrow/_repay` + `prepare_kamino_supply/_withdraw/_borrow/_repay` + `prepare_marginfi_account_init` + `prepare_kamino_obligation_init`; mechanical-clone-of-12 pattern per `prepare_solana_spl_send`; conditional LEDGER NOTICE for blind-sign instructions
+
+#### Phase 14: Jupiter v6 swaps
+**Goal**: User can query a Jupiter v6 quote and swap on Solana with slippage-bounded execution. `prepare_jupiter_swap` consumes the Jupiter quote API and serializes the returned transaction; `get_jupiter_quote` is the read-only companion.
+**Depends on**: Phase 13
+**Requirements**: SOL-W-11, SOL-W-12, SOL-W-13
+**Success Criteria** (what must be TRUE):
+  1. `get_jupiter_quote({ inputMint, outputMint, amount, slippageBps? })` returns the Jupiter v6 quote envelope (out amount, route plan, price impact, slippage)
+  2. `prepare_jupiter_swap({ inputMint, outputMint, amount, slippageBps })` returns an unsigned serialized transaction the user signs via the standard Solana trust pipeline (Phase 12 primitives)
+  3. Default slippage hint = 50 bps; refuses without explicit `slippageBps` when price impact > 2% (sandwich-MEV defense — mirrors v2.6 MEV-01 EVM equivalent)
+  4. Decoded swap args (`From: X SYMBOL`, `To: Y SYMBOL`, `Price impact: Z%`) surface in `CHECKS PERFORMED` at preview time
+  5. Jupiter v6 program ID added to canonical-dispatch allowlist (Layer 0.5 Solana arm)
+**Plans**: 2 plans (estimate)
+
+Plans:
+- [ ] 14-01: `src/clients/jupiter.ts` — Jupiter v6 HTTP client (mirrors `fourbyte.ts` / `etherscan.ts` shape — never-throws, LRU cache, `_resetJupiter_ForTesting` hook); `get_jupiter_quote` tool
+- [ ] 14-02: `prepare_jupiter_swap` + Jupiter quote → serialized tx integration; sandwich-MEV slippage gate at >2% price impact; canonical-dispatch allowlist extension; Fixture K (Jupiter swap fingerprint) literal anchor
+
+#### Phase 15: Staking — Marinade + Jito + native SOL
+**Goal**: User can stake on Marinade (mSOL), Jito (jitoSOL stake pool), and via native SOL delegate/deactivate/withdraw flows. Marinade ships with immediate-unstake (incurs fee); Jito ships deposit-only per upstream note (unstake gap deferred).
+**Depends on**: Phase 14
+**Requirements**: SOL-W-14, SOL-W-15, SOL-W-16, SOL-W-17, SOL-W-18, SOL-W-19, SOL-W-20
+**Success Criteria** (what must be TRUE):
+  1. `prepare_marinade_stake({ lamports })` + `prepare_marinade_immediate_unstake({ msolAmount })` produce unsigned Marinade Finance instructions; immediate-unstake fee surfaced verbatim in `CHECKS PERFORMED`
+  2. `prepare_jito_stake_pool_deposit({ lamports })` produces an unsigned Jito stake-pool deposit instruction; explicit `[NOTICE — Jito stake-pool unstake not yet supported]` block emitted at preview (deferred per upstream)
+  3. `prepare_solana_delegate({ stakeAccount, voteAccount, lamports })` + `prepare_solana_deactivate({ stakeAccount })` + `prepare_solana_withdraw({ stakeAccount, to, lamports })` cover the native-SOL staking lifecycle
+  4. Stake account creation flow ships as a sub-helper invoked by `prepare_solana_delegate` when no stake account exists for the wallet
+  5. Marinade + Jito program IDs + native Stake Program added to canonical-dispatch allowlist
+  6. Ledger clear-signs each staking instruction (Solana app coverage) — conditional LEDGER NOTICE only when CAL coverage absent
+**Plans**: 3 plans (estimate)
+
+Plans:
+- [ ] 15-01: Marinade — `prepare_marinade_stake` + `prepare_marinade_immediate_unstake` + Marinade program ID in contracts SOT + fee-surfacing in CHECKS PERFORMED
+- [ ] 15-02: Jito — `prepare_jito_stake_pool_deposit` + Jito stake-pool program ID + `[NOTICE — unstake not yet supported]` block (deferred per upstream gap)
+- [ ] 15-03: Native SOL — `prepare_solana_delegate` + `prepare_solana_deactivate` + `prepare_solana_withdraw` + stake-account creation sub-helper + Stake Program allowlist entry
+
+#### Phase 16: LiFi-routed EVM↔Solana bridging + Solana diagnostics
+**Goal**: User can bridge between EVM chains and Solana via LiFi. Cross-chain destination decode lands here (Inv #6b — server-side mechanical assertion that the decoded `finalRecipient` matches the user-supplied `to`). `get_solana_setup_status` probes durable-nonce + lending-account PDA presence (analogous to v1.0 DIAG-01 `get_vaultpilot_config_status` but Solana-scoped).
+**Depends on**: Phase 15
+**Requirements**: SOL-W-21, SOL-DIAG-01
+**Success Criteria** (what must be TRUE):
+  1. `prepare_solana_lifi_swap({ fromChain, fromToken, toChain: "solana", toToken, amount, toAddress })` produces an unsigned LiFi-routed bridge transaction; works both directions (EVM → Solana AND Solana → EVM)
+  2. Server-side `decodedFinalRecipient == userSuppliedToAddress` assertion at preview time (Inv #6b — mirrors v2.6 BRIDGE-T1 EVM facet decoders, applied to LiFi's Solana-side decoder); mismatch refuses
+  3. LiFi program/contract IDs added to canonical-dispatch allowlist (already present on EVM side from v1.3; Solana arm new)
+  4. `get_solana_setup_status({ wallet })` returns `{ nonceAccountPresent, marginfiAccountPresent, kaminoObligationPresent, ledgerSolAppVersion?, walletPublicKeyOnDevice }` — probes per-wallet PDA + on-device status
+  5. SECURITY.md updated with Solana-side bridge facet-decode rationale + Inv #6b extension scope
+**Plans**: 2 plans (estimate)
+
+Plans:
+- [ ] 16-01: `prepare_solana_lifi_swap` + LiFi Solana-side decoder + Inv #6b `decodedFinalRecipient` assertion at preview; cross-chain `toChain` Zod enum widening (`"solana"` joins existing EVM enum)
+- [ ] 16-02: `get_solana_setup_status` diagnostic — per-wallet PDA probe (nonce + MarginFi + Kamino) + Ledger SOL app version probe + on-device pubkey verify; v2.0 milestone close-out (SECURITY.md Solana threat-model finalization)
+
+**Status**: planning; v2.0 verify-phase will require a physical Ledger device with the Solana app installed + USB-HID connectivity + small SOL balance for return-able test broadcasts. Mirrors v1.0 ship-gate verify pattern.
+
+---
+
+### 📋 v2.1+ Future Milestones (Planned)
+
+Each is sized as one milestone (4-6 phases). All blocked on v2.0 maturity.
+
+- **v2.1 TRON** — TRX + canonical TRC-20 balances + transfers + Stake 2.0 + SunSwap (same-chain swap) + LiFi-routed TRON↔EVM bridging + TRC-20 approve. USB-HID transport. Ledger TRON app clear-signs every supported action. Reuses Phase 11's `src/wallet/non-evm-account-store.ts` for TRON account persistence (PAIR-NEV-* requirements).
 - **v2.2 Bitcoin + Litecoin** (one milestone — shared Esplora + Ledger BTC infra) — Native + segwit + taproot sends, BIP-125 RBF, PSBT multisig (combine / sign / finalize), BIP-137 message signing, LiFi-routed BTC→EVM/Solana, optional Bitcoin Core / Litecoin Core JSON-RPC for forensic chain reads (chain tips, mempool census, fee percentiles), `build_incident_report` chain-tip + mempool-anomaly bundle. USB-HID via Ledger BTC app.
 - **v2.3 EVM lending + staking expansion** — Compound V3 (multi-Comet), Morpho Blue, Lido (stake / unstake / wrap stETH↔wstETH), EigenLayer, Rocket Pool. Each protocol as a phase.
 - **v2.4 EVM DEX + LP + escape hatch** — Uniswap V3 swap + full LP verb set (mint / increase / decrease / collect / burn / rebalance), Curve (swap + add liquidity, v0.2 follow-ups deferred), `prepare_custom_call({ acknowledgeNonProtocolTarget: true })` escape hatch with `get_contract_abi` + `read_contract` companions.
@@ -286,7 +412,7 @@ Each is sized as one milestone (4-6 phases). All blocked on v1.4 distribution ma
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -300,3 +426,9 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 8. Multi-EVM fan-out + token tooling | v1.2 | 5/5 | Complete (verify-phase open) | 2026-05-18 |
 | 9. Hardening (skill + three verification tools + dispatch allowlist) | v1.3 | 5/5 | Complete (verify-phase open) | 2026-05-18 |
 | 10. Distribution + ergonomics | v1.4 | 4/4 | Complete (verify-phase open; v1.4.1 follow-up + workflow-scope loose-ends) | 2026-05-18 |
+| 11. Solana scaffolding — USB-HID + SOL reads + persistent non-EVM account cache | v2.0 | 0/5 | Planning | - |
+| 12. Solana native + SPL trust pipeline | v2.0 | 0/5 | Planning | - |
+| 13. Solana lending — MarginFi + Kamino | v2.0 | 0/4 | Planning | - |
+| 14. Jupiter v6 swaps | v2.0 | 0/2 | Planning | - |
+| 15. Staking — Marinade + Jito + native SOL | v2.0 | 0/3 | Planning | - |
+| 16. LiFi-routed EVM↔Solana bridging + Solana diagnostics | v2.0 | 0/2 | Planning | - |
