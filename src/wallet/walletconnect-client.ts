@@ -47,6 +47,17 @@ export const _wcStorage = {
   ensureStorageDirWithPerms,
 };
 
+/**
+ * Spy-affordance indirection for env reads. `eagerInitWalletConnectIfPersist`
+ * gates on `getWalletConnectProjectId()` returning a non-null value before
+ * triggering init; the regression test for the eager-init contract spies on
+ * `_env.getWalletConnectProjectId` to script the gate's behavior without
+ * touching `process.env` (which is shared mutable state across the suite).
+ */
+export const _env = {
+  getWalletConnectProjectId,
+};
+
 const METADATA = {
   name: "VaultPilot MCP",
   description: "Self-custodial DeFi for AI agents",
@@ -90,7 +101,7 @@ export async function getWalletConnectClient(): Promise<SignClientType> {
   if (cachedClient) return cachedClient;
   if (initInFlight) return initInFlight;
 
-  const projectId = getWalletConnectProjectId();
+  const projectId = _env.getWalletConnectProjectId();
   if (!projectId) throw new MissingProjectIdError();
 
   initInFlight = (async () => {
@@ -123,6 +134,55 @@ export async function getWalletConnectClient(): Promise<SignClientType> {
   })();
 
   return initInFlight;
+}
+
+/**
+ * Eagerly initialize the SignClient at server boot when persistent storage
+ * is configured, so persisted sessions are loaded into the in-memory store
+ * BEFORE the first tool dispatch.
+ *
+ * Why this is needed (bug fix — `.planning/debug/wc-session-persist-restart.md`):
+ *   The session-manager's `getStatus()` short-circuits to `null` when
+ *   `_isWalletConnectClientInitialized()` is `false` — the intent is to
+ *   avoid spending a relay handshake on a pre-pair status read. Combined
+ *   with the lazy-singleton, this means the FIRST `get_ledger_status` /
+ *   `get_vaultpilot_config_status` call after a cold MCP boot returns
+ *   "not paired" even when a session is persisted on disk. The session
+ *   only becomes visible after something else calls `getWalletConnectClient()`
+ *   (typically `pair_ledger_live`). Persist mode's user-facing meaning
+ *   degrades from "survives restart automatically" to "survives restart but
+ *   you must call pair to find out."
+ *
+ * Gates (silent skip in either case — no error surface):
+ *   - `getWalletConnectProjectId()` returns null/empty: the auto-demo or
+ *     no-Ledger user path. Init would throw `MissingProjectIdError`; eager
+ *     boot would crash the server. Skip silently and let `pair_ledger_live`
+ *     surface the missing-env diagnostic at the natural point.
+ *   - Storage mode is `"memory"`: nothing to load from disk; lazy init is
+ *     correct (and cheaper) here.
+ *
+ * Boot-time errors during init (relay unreachable, corrupt store, etc.) are
+ * caught and logged to stderr — they MUST NOT abort server startup, because
+ * the MCP must still serve read-only tools (demo personas, RPC reads) when
+ * the WC backend is unavailable. The lazy-init path retries on the first
+ * `pair_*` call.
+ *
+ * Safe to call multiple times; subsequent calls are no-ops via the same
+ * `cachedClient` short-circuit `getWalletConnectClient()` uses.
+ */
+export async function eagerInitWalletConnectIfPersist(): Promise<void> {
+  const projectId = _env.getWalletConnectProjectId();
+  if (!projectId) return;
+  if (_wcStorage.getWalletConnectStorageMode() !== "persist") return;
+  try {
+    await getWalletConnectClient();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(
+      "warn",
+      `eager WalletConnect init failed (will retry on first pair_*): ${message}`,
+    );
+  }
 }
 
 /**

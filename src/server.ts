@@ -29,6 +29,7 @@ import {
   type ToolInputSchema,
 } from "./tools/index.js";
 import { registerAllTools } from "./tools/register-all.js";
+import { eagerInitWalletConnectIfPersist } from "./wallet/walletconnect-client.js";
 
 const SERVER_NAME = "vaultpilot-mcp";
 const SERVER_VERSION = "0.0.0";
@@ -198,6 +199,16 @@ export function buildServer(): Server {
 
 export async function startServer(): Promise<void> {
   const server = buildServer();
+  // Bug fix (`.planning/debug/wc-session-persist-restart.md`): eagerly load
+  // the persisted WC session into the in-memory SignClient store BEFORE
+  // connecting the transport. Without this, `getStatus()` short-circuits to
+  // `null` on the first `get_ledger_status` / `get_vaultpilot_config_status`
+  // call after a cold boot (the gate is `_isWalletConnectClientInitialized()`,
+  // which is `false` until something triggers lazy init — typically only
+  // `pair_ledger_live`). Silent skip when no project ID or storage mode is
+  // `"memory"`; init failures log a warning but do NOT abort startup (the
+  // server must still serve demo + RPC reads when WC backend is unreachable).
+  await eagerInitWalletConnectIfPersist();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log("info", `${SERVER_NAME} ${SERVER_VERSION} listening on stdio`);
