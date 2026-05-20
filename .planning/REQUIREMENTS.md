@@ -233,10 +233,60 @@ Adds TRON support via USB-HID Ledger transport (no WalletConnect — TRON has no
 
 ### v2.2 Bitcoin + Litecoin (one milestone)
 
-- **BTC-01..N**: Esplora reads (`get_btc_balance`, `_balances`, `_account_balance`, `_multisig_balance`, `_multisig_utxos`, `_tx_history`, `_fee_estimates`); native segwit + taproot sends (`prepare_btc_send`); BIP-125 RBF (`prepare_btc_rbf_bump`); PSBT multisig (`combine_btc_psbts` / `sign_btc_multisig_psbt` / `finalize_btc_psbt` / `register_btc_multisig_wallet`); BIP-137 message signing (`sign_message_btc`); LiFi-routed BTC→EVM/Solana swap (`prepare_btc_lifi_swap`); USB-HID via Ledger BTC app
-- **BTC-FORENSIC-01..N**: Optional Bitcoin Core JSON-RPC unlocks `get_btc_block_tip` / `_block_stats` / `_blocks_recent` / `_chain_tips` / `_mempool_summary` (forensic chain reads Esplora cannot serve)
-- **LTC-01..N**: Same surface as BTC, scaled down — `prepare_litecoin_native_send`, `sign_message_ltc`, Esplora via litecoinspace.org, optional Litecoin Core RPC for forensic reads
-- **BTC-INC-01**: `build_incident_report` bundles BTC/LTC chain-tip + mempool-anomaly signals + EVM market-incident bits
+Adds Bitcoin + Litecoin support via USB-HID Ledger transport (Ledger BTC app handles both — LTC mode is a Bitcoin-app account-config). Esplora reads (no API keys) + native segwit + taproot sends + BIP-125 RBF + BIP-137 message signing + PSBT-based multisig + LiFi-routed BTC→EVM/Solana bridging. UTXO model is structurally distinct from account-model chains (EVM / Solana / TRON) — PSBT serialization replaces the single-blob payloadFingerprint shape; per-input BIP-143 sighashes commit independently. LTC mirrors BTC scaled down (shared Esplora + Ledger BTC infra). Optional Bitcoin/Litecoin Core JSON-RPC unlocks forensic chain reads Esplora can't serve.
+
+#### Read + Pair (BTC-PAIR-* + BTC-READ-* + LTC-PAIR-* + LTC-READ-*)
+
+- [ ] **BTC-PAIR-01**: `pair_btc_ledger()` opens the Ledger BTC app over USB-HID via `@ledgerhq/hw-app-btc`, returns the first segwit (bc1q…) AND first taproot (bc1p…) addresses verbatim plus a `VERIFY-ON-DEVICE` block instructing the user to confirm on the Ledger screen
+- [ ] **BTC-PAIR-02**: `get_btc_status()` returns `{ paired: true, addresses: { segwit, taproot }, derivationPath, esploraEndpoint, ledgerBtcAppVersion? }`; integrates with PAIR-NEV-* (v2.0 Phase 11) — multi-derivation-path record slots per the v2.0 multi-record-per-chain provision
+- [ ] **BTC-READ-01**: `get_btc_balance({ wallet })` returns sat + BTC-formatted balance via Esplora `/address/{addr}` endpoint
+- [ ] **BTC-READ-02**: `get_btc_balances({ wallet })` returns segwit + taproot balances separately (UTXOs live at distinct script types per derivation)
+- [ ] **BTC-READ-03**: `get_btc_account_balance({ xpub })` aggregates across all derived addresses under an xpub (gap-limit-respecting scan)
+- [ ] **BTC-READ-04**: `get_btc_tx_history({ wallet, limit })` returns recent transactions via Esplora `/address/{addr}/txs`
+- [ ] **BTC-READ-05**: `get_btc_fee_estimates()` returns Esplora's fee-rate estimates (sat/vB) for 1/2/3/6/144-block confirmation targets
+- [ ] **LTC-PAIR-01**: `pair_litecoin_ledger()` opens the Ledger BTC app in LTC account-config mode (or Ledger Litecoin app per the device firmware revision); returns LTC base58 (M-prefixed) AND ltc1q-segwit addresses; PAIR-NEV-* `chain: "litecoin"` record key reuse
+- [ ] **LTC-READ-01**: `get_litecoin_balance({ wallet })` returns litoshi + LTC-formatted balance via litecoinspace.org Esplora-compatible endpoint
+- [ ] **LTC-READ-02**: `get_litecoin_tx_history` + `get_litecoin_fee_estimates` mirror the BTC equivalents against litecoinspace.org
+
+#### Prepare → Preview → Send (BTC-PREP-* + BTC-PSBT-*)
+
+UTXO model means structurally distinct primitives from account-model chains. PSBT (BIP-174) is the canonical serialization; per-input BIP-143 sighashes are the cryptographic binding.
+
+- [ ] **BTC-PREP-01**: BTC `payloadFingerprint = keccak256("VaultPilot-btctx-v1:" ‖ <concatenated BIP-143 sighashes for all inputs>)` — domain-tagged, prepare-time stable, distinct domain tag from EVM / Solana / TRON; UTXO-shape preimage commits per-input independently
+- [ ] **BTC-PREP-02**: `preview_send` BTC branch surfaces decoded inputs/outputs + per-input sighash + Ledger BTC-app PSBT-signing flow expectation in `LEDGER BLIND-SIGN HASH` block (multi-hash for multi-input transactions)
+- [ ] **BTC-PREP-03**: `send_transaction` BTC branch enforces `previewToken` + `userDecision: "send"` + `payloadFingerprint` drift gate identically to EVM/Solana/TRON paths
+- [ ] **BTC-PSBT-01**: `prepare_btc_send({ to, sats, feeRate? })` returns `{ handle, psbt, inputs[], outputs[], feeSats, payloadFingerprint, prepareReceipt }`; coin-selection via branch-and-bound (BnB) with manual override; native segwit (bc1q…) AND taproot (bc1p…) sends both work via the same prepare tool
+- [ ] **BTC-PSBT-02**: Mixed-script-type inputs supported (some segwit + some taproot inputs in one tx) — common case for users with derived addresses across both script types
+- [ ] **BTC-PSBT-03**: `register_btc_multisig_wallet({ name, descriptor, threshold })` records a known M-of-N multisig descriptor (sortedmulti or musig-aware); descriptor validated against Bitcoin script rules; stored at `~/.vaultpilot-mcp/btc-multisig.json` (0o600 file)
+- [ ] **BTC-PSBT-04**: `get_btc_multisig_balance({ walletName })` + `get_btc_multisig_utxos({ walletName })` aggregate UTXOs at the multisig descriptor's derived addresses via Esplora
+- [ ] **BTC-PSBT-05**: `combine_btc_psbts({ psbts: [...] })` merges partially-signed PSBTs from multiple co-signers; conflicts surfaced as structured errors (input-by-input + key-by-key conflict detection)
+- [ ] **BTC-PSBT-06**: `sign_btc_multisig_psbt({ psbt, walletName })` adds the user's signature to each input they're a signer on; preview surfaces the inputs being signed
+- [ ] **BTC-PSBT-07**: `finalize_btc_psbt({ psbt })` builds the final witness data; refuses if signature threshold not met
+
+#### Writes (BTC-W-* + LTC-W-* + BTC-LIFI-*)
+
+- [ ] **BTC-W-01**: `prepare_btc_send` produces the canonical PSBT-based unsigned transaction (see BTC-PSBT-01); native segwit + taproot both supported
+- [ ] **BTC-W-02**: `prepare_btc_rbf_bump({ txid, newFeeRate })` produces an unsigned RBF replacement PSBT with the higher fee rate; original input set preserved; BIP-125 sequence-number rules enforced; refused on confirmed transactions (mempool-only) or transactions that didn't signal RBF (sequence ≥ `0xfffffffe`)
+- [ ] **BTC-W-03**: `sign_message_btc({ wallet, message })` produces a BIP-137 compact signature over `magic_bytes ‖ varint_length ‖ message`; works against the segwit address by default; BIP-322 taproot message-signing deferred to a future `sign_message_btc_bip322` tool
+- [ ] **BTC-W-04**: PSBT multisig flow (see BTC-PSBT-03..07) — combine / sign / finalize lifecycle for M-of-N multisig participation
+- [ ] **LTC-W-01**: `prepare_litecoin_native_send({ to, litoshi })` mirrors `prepare_btc_send` PSBT-based shape; same `payloadFingerprint` shape with LTC domain tag `"VaultPilot-ltctx-v1:"`
+- [ ] **LTC-W-02**: `sign_message_ltc({ wallet, message })` mirrors `sign_message_btc` with LTC magic bytes
+- [ ] **BTC-LIFI-01**: `prepare_btc_lifi_swap({ fromToken: "BTC", toChain, toToken, amount, toAddress })` produces an unsigned LiFi-routed bridge transaction; BTC → EVM and BTC → Solana both supported; server-side `decodedFinalRecipient == userSuppliedToAddress` assertion at preview time (Inv #6b extension — mirrors v2.0 SOL-W-21 + v2.1 TRON-W-11 + v2.6 BRIDGE-T1)
+
+#### Forensic chain reads (BTC-FORENSIC-* + LTC-FORENSIC-*)
+
+Optional Bitcoin Core / Litecoin Core JSON-RPC unlocks forensic chain reads Esplora cannot serve. Absent → tools return `coreNotConfigured` envelope (never silent failure).
+
+- [ ] **BTC-FORENSIC-01**: `BITCOIN_CORE_RPC_URL` (with optional `_USER`/`_PASS` basic-auth) enables Bitcoin Core JSON-RPC; absent → forensic tools return `coreNotConfigured` envelope
+- [ ] **BTC-FORENSIC-02**: `get_btc_block_tip()` returns chain tip + timestamp + difficulty (Core RPC if configured; Esplora fallback for tip-only without difficulty)
+- [ ] **BTC-FORENSIC-03**: `get_btc_block_stats({ blockHeight })` returns per-block tx count + fee percentiles + size + segwit/taproot adoption
+- [ ] **BTC-FORENSIC-04**: `get_btc_blocks_recent({ count })` returns the last N block summaries; `get_btc_chain_tips()` returns all known chain tips (reorg detection)
+- [ ] **BTC-FORENSIC-05**: `get_btc_mempool_summary()` returns mempool size + fee-rate histogram (Core RPC only — Esplora API doesn't expose full mempool)
+- [ ] **LTC-FORENSIC-01**: `LITECOIN_CORE_RPC_URL` enables the LTC-equivalent forensic suite — `get_litecoin_block_tip` + `get_litecoin_mempool_summary` + parallel tools mirroring BTC-FORENSIC-02..05
+
+#### Incident report (BTC-INC-*)
+
+- [ ] **BTC-INC-01**: `build_incident_report({ wallet?, includeChains?: string[] })` bundles BTC/LTC chain-tip + mempool-anomaly signals (unexplained spikes / reorg events / large unconfirmed-balance changes) with EVM market-incident bits; cross-chain anomaly-signal aggregation for security-event triage
 
 ### v2.3 EVM lending + staking expansion
 
