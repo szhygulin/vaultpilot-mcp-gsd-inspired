@@ -96,6 +96,74 @@ screen) is unaffected.
   defense-in-depth model expands; the per-plan threat-register blocks
   in `.planning/phases/**/PLAN.md` are the working surface today).
 
+## Solana Trust Pipeline (v2.0 — Phase 12)
+
+Phase 12 (v2.0) adds the Solana arm of the prepare → preview → send pipeline.
+The trust anchor stays the on-device hash match — the user reads the
+"Message Hash" line on their Ledger and compares it character-for-character
+against the `LEDGER BLIND-SIGN HASH (Solana)` block the server emits. The
+five overrides below name where the Solana arm diverges from the v1.x EVM
+arm; the cryptographic-binding chain (agent → MCP → transport → device)
+holds end-to-end.
+
+See § Trust Anchor above for the cross-chain framing; the EVM trust-pipeline
+narrative in Phase 4 + Phase 6 stays canonical for ERC-20 / Aave / Compound
+flows. See § Solana Trust Pipeline for the Solana-specific overrides
+(distinct domain tag, SHA-256 blind-sign hash, mandatory simulation gate,
+direct broadcast, sender-DEPENDENT fingerprint).
+
+1. **Distinct domain tag.** Solana `payloadFingerprint` uses the version-
+   stamped domain tag `"VaultPilot-soltx-v1:"` (20 UTF-8 bytes,
+   `keccak256`-prefixed); EVM uses `"VaultPilot-txverify-v1:"` (23 UTF-8
+   bytes). The two preimage shapes cannot collide even under crafted-input
+   attack — the tag bytes are distinct AND the keccak preimage shapes
+   differ. Cross-chain preimage-collision defense vs. the v1.x EVM tag.
+
+2. **SHA-256 message-bytes blind-sign hash.** The Ledger Solana app
+   displays `SHA-256(messageBytes)` on the device screen (per
+   `LedgerHQ/app-solana/src/handle_sign_message.c`). The MCP emits the
+   SAME hash unconditionally in the `LEDGER BLIND-SIGN HASH (Solana)`
+   block at preview time, so the user can byte-compare the device-shown
+   hash against the agent-shown hash. EVM uses `keccak256` of the
+   EIP-1559 envelope; Solana uses `SHA-256` of the serialized message
+   bytes. Both flow through the `presignHash` field with the same trust
+   semantics.
+
+3. **Mandatory `simulateTransaction` gate (DF-4).** Solana `preview_send`
+   refuses the entire preview (no `previewToken` minted; no LEDGER
+   BLIND-SIGN HASH block emitted) when `simulateTransaction.err !== null`
+   — a HARD refusal, not advisory. Rationale: the Ledger Solana app does
+   NOT clear-sign SPL instruction data (the user sees the message hash
+   but cannot read recipient + amount on-device for SPL transfers), so
+   the server-side simulation is the only pre-broadcast semantic check.
+   Contrast with EVM `eth_call` which stays ADVISORY (false reverts from
+   stale nonce / flaky RPC are common; the user can override).
+   Surfaces via the `SIMULATION_REFUSED` errorCode.
+
+4. **USB-HID direct broadcast bypass of WC relay.** Solana has no
+   WalletConnect-mediated broadcast — Ledger Live does not expose a
+   sign-and-broadcast equivalent to `eth_sendTransaction` for Solana.
+   The MCP calls `signSolanaTransaction(...)` directly over USB-HID
+   (Plan 12-04 transport), attaches the signature to the transaction,
+   and broadcasts via `connection.sendRawTransaction(...)`. The broadcast
+   trust boundary collapses from "relay + RPC + device" (EVM) to
+   "RPC + device" (Solana). Per-call HID open/close discipline mirrors
+   Phase 11's `fetchSolanaAddress` shape — no transport singleton; no
+   stale handles.
+
+5. **`feePayer`-in-preimage sender-DEPENDENCE.** Solana's legacy
+   `Transaction.serializeMessage()` includes `feePayer` at
+   `account_keys[0]`, so the message bytes (and thus the
+   `payloadFingerprint` preimage) are sender-DEPENDENT. This overrides
+   CONTEXT.md's "sender-independent" framing (which holds for EVM
+   EIP-1559 because `from` is NOT in the EIP-1559 preimage). Defense
+   against mid-flow persona swaps: at send time the Solana branch
+   asserts `accounts[0].address === record.tx.feePayer` BEFORE the
+   Ledger sign step; a mismatch refuses with `INTERNAL_ERROR` and names
+   the discrepancy. This is layered ON TOP of the existing
+   `PAYLOAD_FINGERPRINT_DRIFT` gate, which would also catch any
+   message-byte mutation.
+
 ## v1.4 Residual Risks (Distribution)
 
 Phase 10 (v1.4) introduces the per-platform binary distribution pipeline

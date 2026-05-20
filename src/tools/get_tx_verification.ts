@@ -40,7 +40,11 @@ import { type ChainId } from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
 import { lookupSelector } from "../clients/fourbyte.js";
 import { _canonicalDispatch } from "../security/canonical-dispatch.js";
-import { lookup } from "../signing/handle-store.js";
+import {
+  lookup,
+  type HandleRecord,
+  type PreparedTxSolana,
+} from "../signing/handle-store.js";
 import {
   AGENT_TASK_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
@@ -49,8 +53,14 @@ import {
   build4byteBlock,
   chunkHex,
 } from "../signing/blocks.js";
+import {
+  LEDGER_BLIND_SIGN_HASH_SOLANA_TEMPLATE,
+  PREPARE_RECEIPT_SOLANA_NATIVE_TEMPLATE,
+  PREPARE_RECEIPT_SOLANA_SPL_TEMPLATE,
+  VERIFY_BEFORE_SIGNING_SOLANA_TEMPLATE,
+} from "../signing/blocks-solana.js";
 import { getStatus } from "../wallet/session-manager.js";
-import { registerTool } from "./index.js";
+import { registerTool, type ToolHandlerResult } from "./index.js";
 
 const DESCRIPTION = [
   "Re-emit the verification artifacts (PREPARE RECEIPT, LEDGER BLIND-SIGN HASH, AGENT TASK, 4byte cross-check, broadcast confirmation if sent) for a previously-prepared handle, within 15 minutes of the original prepare.",
@@ -106,6 +116,16 @@ registerTool("get_tx_verification", DESCRIPTION, INPUT_SCHEMA, async (args) => {
   }
 
   const record = lookupResult.record;
+
+  // Phase 12 — Plan 12-05 — Solana branch dispatch. EVM body (below) byte-
+  // untouched. Solana handles route to the extracted branch at the bottom
+  // of this file which re-emits the Solana-shape blocks (PREPARE RECEIPT
+  // Solana + LEDGER BLIND-SIGN HASH (Solana) + txJson with messageBytesHex).
+  const txType = record.tx.txType ?? "evm";
+  if (txType === "solana") {
+    return getTxVerificationSolanaBranch(record, handleArg);
+  }
+  // ===== EVM branch (UNCHANGED — Plan 09-05 v1.3 txJson re-emit) =====
 
   // PREPARE RECEIPT is always present (every handle was created via
   // prepare_native_send → has args.to + args.valueWei).
@@ -284,3 +304,214 @@ registerTool("get_tx_verification", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     },
   };
 });
+
+// ===========================================================================
+// Phase 12 — Plan 12-05 — Solana re-emit branch (additive). EVM body above
+// stays byte-untouched. Solana handles re-emit the Solana-shape PREPARE
+// RECEIPT (dispatcher on `instructionSummary[0].kind`) + LEDGER BLIND-SIGN
+// HASH (Solana) + status-aware footer + `txJson` carrying messageBytesHex +
+// feePayer + recentBlockhash + programIds + instructionSummary (decimal
+// strings per Phase 8/9 convention).
+//
+// Demo-mode refusal fired earlier at the top of the handler (NEVER reaches
+// this branch in demo). The Solana branch ALSO has no `dispatchCheckResult`
+// concept — Solana's Layer 0.5 is the program-IDs allowlist at preview-time;
+// re-emit surfaces it as informational text in the receipt rather than as a
+// structured `dispatchCheckResult` field (mirror of EVM 's `not-applicable`
+// for native sends).
+// ===========================================================================
+
+/**
+ * Build the PREPARE RECEIPT block for a Solana handle. Dispatcher on
+ * `instructionSummary[0].kind` (mirrors the preview_send Solana branch
+ * shape — Plan 12-04). Reads verbatim agent strings from `record.args`
+ * per PREP-02 (NEVER the base58-normalized form).
+ */
+function buildSolanaPrepareReceiptBlock(record: HandleRecord): string {
+  const args = record.args;
+  const solTx = record.tx as PreparedTxSolana;
+  const instructionSummary = solTx.instructionSummary;
+  const first = instructionSummary && instructionSummary[0];
+  if (first && first.kind === "spl-transfer-checked") {
+    return PREPARE_RECEIPT_SOLANA_SPL_TEMPLATE
+      .replace("{TO}", args.to)
+      .replace("{MINT}", args.mint ?? first.mint)
+      .replace("{AMOUNT}", args.amount ?? "")
+      .replace("{RECENT_BLOCKHASH}", args.recentBlockhash ?? "")
+      .replace("{ATA_NOTICE}", "");
+  }
+  // Default — native SOL transfer.
+  return PREPARE_RECEIPT_SOLANA_NATIVE_TEMPLATE
+    .replace("{TO}", args.to)
+    .replace("{LAMPORTS}", args.lamports ?? "")
+    .replace("{RECENT_BLOCKHASH}", args.recentBlockhash ?? "");
+}
+
+/**
+ * Chunk a SHA-256 64-hex digest into 16 groups of 4 hex chars (mirror of
+ * preview_send Solana branch's `chunkSolanaHash`). Stays inline here to
+ * preserve `blocks-solana.ts` byte-frozen status.
+ */
+function chunkSolanaHash(hashFull64Hex: string): string {
+  const raw = hashFull64Hex.startsWith("0x") ? hashFull64Hex.slice(2) : hashFull64Hex;
+  const groups: string[] = [];
+  for (let i = 0; i < raw.length; i += 4) {
+    groups.push(raw.slice(i, i + 4));
+  }
+  return groups.join(" ");
+}
+
+/**
+ * Serialize the Solana `instructionSummary` for `txJson`. Bigints (lamports
+ * + amount) emit as decimal strings per Phase 8/9 convention; primitives
+ * stay primitive.
+ */
+function serializeSolanaInstructionSummary(
+  instructionSummary: PreparedTxSolana["instructionSummary"],
+): Array<Record<string, unknown>> {
+  if (!instructionSummary || instructionSummary.length === 0) return [];
+  return instructionSummary.map((s) => {
+    if (s.kind === "native-transfer") {
+      return {
+        kind: "native-transfer",
+        from: s.from,
+        to: s.to,
+        lamports: s.lamports.toString(),
+      };
+    }
+    return {
+      kind: "spl-transfer-checked",
+      mint: s.mint,
+      sourceAta: s.sourceAta,
+      destAta: s.destAta,
+      destOwner: s.destOwner,
+      amount: s.amount.toString(),
+      decimals: s.decimals,
+    };
+  });
+}
+
+/**
+ * Re-emit the verification artifacts for a Solana-typed handle. Status-aware
+ * — `prepared` emits PREPARE RECEIPT only; `previewed` adds the LEDGER
+ * BLIND-SIGN HASH (Solana) block; `sent` appends BROADCAST CONFIRMATION;
+ * `cancelled` appends CANCELLED. Surfaces both `txHash` AND `txSignature`
+ * (Solana-canonical name) in structuredContent on `sent` handles.
+ */
+function getTxVerificationSolanaBranch(
+  record: HandleRecord,
+  handleArg: string,
+): ToolHandlerResult {
+  const solTx = record.tx as PreparedTxSolana;
+  const prepareReceiptBlock = buildSolanaPrepareReceiptBlock(record);
+  const messageBytesHex = "0x" + Buffer.from(solTx.messageBytes).toString("hex");
+
+  // Build txJson — decimal-string discipline for any bigints (lamports +
+  // amount on instructionSummary). All Solana-specific fields surface
+  // verbatim.
+  const txJson = {
+    txType: "solana" as const,
+    feePayer: solTx.feePayer,
+    recentBlockhash: solTx.recentBlockhash,
+    programIds: solTx.programIds,
+    messageBytesHex,
+    instructionSummary: serializeSolanaInstructionSummary(solTx.instructionSummary),
+  };
+
+  if (record.status === "prepared") {
+    const text = [
+      prepareReceiptBlock,
+      "",
+      "(preview has not run yet; call preview_send to get the LEDGER BLIND-SIGN HASH (Solana))",
+    ].join("\n");
+    return {
+      content: [{ type: "text" as const, text }],
+      structuredContent: {
+        status: "prepared" as const,
+        handle: handleArg,
+        txType: "solana" as const,
+        feePayer: solTx.feePayer,
+        recentBlockhash: solTx.recentBlockhash,
+        payloadFingerprint: record.payloadFingerprint,
+        txJson,
+      },
+    };
+  }
+
+  if (!record.pinned) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text: `error: handle in status ${record.status} but pinned is missing (state corruption)`,
+        },
+      ],
+      structuredContent: { errorCode: "INTERNAL_ERROR" as const },
+    };
+  }
+
+  const pinned = record.pinned;
+  const presignHash = pinned.presignHash;
+  const ledgerBlock = LEDGER_BLIND_SIGN_HASH_SOLANA_TEMPLATE
+    .replace("{HASH_FULL_64HEX}", presignHash)
+    .replace("{HASH_CHUNKED_4_CHAR_GROUPS}", chunkSolanaHash(presignHash));
+
+  const sections: string[] = [
+    prepareReceiptBlock,
+    "",
+    ledgerBlock,
+    "",
+    VERIFY_BEFORE_SIGNING_SOLANA_TEMPLATE,
+  ];
+
+  let broadcastedAtIso: string | undefined;
+  let cancelledAtIso: string | undefined;
+
+  if (record.status === "sent") {
+    const sentAt = record.sentAt ?? Date.now();
+    const txSignature = record.txHash ?? "";
+    broadcastedAtIso = new Date(sentAt).toISOString();
+    sections.push(
+      "",
+      "BROADCAST CONFIRMATION",
+      `  txSignature:   ${txSignature}`,
+      `  broadcastedAt: ${broadcastedAtIso}`,
+    );
+  } else if (record.status === "cancelled") {
+    const cancelledAt = record.cancelledAt ?? Date.now();
+    cancelledAtIso = new Date(cancelledAt).toISOString();
+    sections.push(
+      "",
+      "CANCELLED",
+      `  cancelledAt: ${cancelledAtIso}`,
+    );
+  }
+
+  const text = sections.join("\n");
+
+  return {
+    content: [{ type: "text" as const, text }],
+    structuredContent: {
+      status: record.status,
+      handle: handleArg,
+      txType: "solana" as const,
+      feePayer: solTx.feePayer,
+      recentBlockhash: solTx.recentBlockhash,
+      payloadFingerprint: record.payloadFingerprint,
+      previewToken: pinned.previewToken,
+      presignHash: pinned.presignHash,
+      txJson,
+      ...(record.status === "sent" && record.txHash !== undefined
+        ? {
+            // API symmetry — `txHash` for existing agent prompts + tests.
+            txHash: record.txHash,
+            // Canonical Solana naming — SAME base58 value under both keys.
+            txSignature: record.txHash,
+            broadcastedAt: broadcastedAtIso,
+          }
+        : {}),
+      ...(record.status === "cancelled" ? { cancelledAt: cancelledAtIso } : {}),
+    },
+  };
+}

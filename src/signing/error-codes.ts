@@ -86,6 +86,23 @@
 //                              `connection.sendRawTransaction` failure
 //                              path (Plan 12-05) — generic enough per
 //                              RESEARCH OQ-3.
+//   LEDGER_NOT_CONNECTED     — Phase 12 Plan 12-05 — Solana `send_transaction`
+//                              USB-HID open-time refusal: `node-hid` is
+//                              unavailable OR no Ledger device is enumerated.
+//                              EVM Ledger flow surfaces this via WC pairing
+//                              loss (WALLET_NOT_PAIRED); Solana surfaces it
+//                              at the transport-open step. Recovery: connect
+//                              the Ledger, unlock it, open the Solana app,
+//                              retry. Sibling EVM-side refusal: WC relay
+//                              would fire BROADCAST_FAILED instead.
+//   SOLANA_APP_NOT_OPEN      — Phase 12 Plan 12-05 — Solana `send_transaction`
+//                              USB-HID first-APDU refusal: transport opens
+//                              but `getAppConfiguration()` rejects, meaning
+//                              the active app on the device is not Solana.
+//                              Distinct from `LEDGER_NOT_CONNECTED` (device
+//                              reachable; wrong app). Recovery: open the
+//                              Solana app on the device, retry. Solana-
+//                              specific; no EVM equivalent.
 
 export type ErrorCode =
   | "WALLET_NOT_PAIRED"
@@ -108,7 +125,9 @@ export type ErrorCode =
   | "DISPATCH_TARGET_REFUSED"
   | "DECODE_DIVERGENCE"
   | "RATE_LIMIT_EXCEEDED"
-  | "SIMULATION_REFUSED";
+  | "SIMULATION_REFUSED"
+  | "LEDGER_NOT_CONNECTED"
+  | "SOLANA_APP_NOT_OPEN";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

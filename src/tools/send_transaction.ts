@@ -52,10 +52,12 @@
 
 import { type Hex, toHex } from "viem";
 import { call } from "viem/actions";
+import { Message, PublicKey, Transaction } from "@solana/web3.js";
 
 import { getEthereumClient } from "../chains/ethereum.js";
+import { _solanaRegistry } from "../chains/solana/registry.js";
 import { isDemoMode } from "../config/env.js";
-import { getActivePersona } from "../demo/state.js";
+import { getActivePersona, getActiveSolanaPersona } from "../demo/state.js";
 import {
   type ErrorCode,
   type StructuredError,
@@ -65,8 +67,19 @@ import {
   lookup,
   transitionToCancelled,
   transitionToSent,
+  type HandleRecord,
+  type PreparedTxSolana,
 } from "../signing/handle-store.js";
 import { computePayloadFingerprint } from "../signing/payload-fingerprint.js";
+import { computeSolanaPayloadFingerprint } from "../signing/payload-fingerprint-solana.js";
+import { _simulationSolana } from "../signing/simulation-solana.js";
+import {
+  LedgerDeviceNotConnectedError,
+  LedgerSolanaAppNotOpenError,
+  LedgerSolanaUserRejectedError,
+  signSolanaTransaction,
+} from "../wallet/ledger-solana-transport.js";
+import { listAccounts } from "../wallet/non-evm-account-store.js";
 import {
   getActiveSessionTopic,
   getStatus,
@@ -292,12 +305,26 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
     // in-process state corruption between prepare and send — the
     // recompute fires the refusal. Test 4 mutates the STORED value
     // directly to prove this gate works against the actual attack model.
-    const recomputed = computePayloadFingerprint({
-      chainId: record.tx.chainId,
-      to: record.tx.to,
-      valueWei: record.tx.valueWei,
-      data: record.tx.data,
-    });
+    //
+    // Phase 12 — Plan 12-05 widening: discriminator dispatch on
+    // `record.tx.txType ?? "evm"`. Solana handles recompute over the
+    // serialized messageBytes via Plan 12-01's
+    // `computeSolanaPayloadFingerprint`; EVM handles keep the byte-frozen
+    // `computePayloadFingerprint(...)` call. The gate's outer structure +
+    // refusal envelope + error message + errorCode stay BYTE-IDENTICAL for
+    // BOTH branches — only the inner compute differs (RESEARCH Topic 9 lock).
+    const txType = record.tx.txType ?? "evm";
+    const recomputed =
+      txType === "solana"
+        ? computeSolanaPayloadFingerprint({
+            messageBytes: (record.tx as PreparedTxSolana).messageBytes,
+          })
+        : computePayloadFingerprint({
+            chainId: record.tx.chainId,
+            to: record.tx.to,
+            valueWei: record.tx.valueWei,
+            data: record.tx.data,
+          });
     if (recomputed !== record.payloadFingerprint) {
       return {
         isError: true,
@@ -314,6 +341,16 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
         ),
       };
     }
+
+    // Phase 12 — Plan 12-05 — Solana branch dispatch. The three FROZEN
+    // gates above (PREVIEW_REQUIRED, WRONG_STATUS, PREVIEW_TOKEN_MISMATCH,
+    // PAYLOAD_FINGERPRINT_DRIFT) and the cancel branch fired identically
+    // for both branches — only the transport call differs. EVM branch
+    // (FROZEN — DEMO-05 + WC routing below) is byte-identical to v1.0-1.3.
+    if (txType === "solana") {
+      return await sendTransactionSolanaBranch(record, handleArg);
+    }
+    // ===== EVM branch (FROZEN — DEMO-05 + WC routing unchanged) =====
 
     // DEMO-05 (Plan 05-02 wired): demo-mode `userDecision: "send"` runs the
     // unsigned tx through eth_call for revert detection. NOTHING signed;
@@ -557,3 +594,414 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
 };
 
 registerTool("send_transaction", DESCRIPTION, INPUT_SCHEMA, sendTransactionHandler);
+
+// ===========================================================================
+// Phase 12 — Plan 12-05 — Solana branch (additive; lives OUTSIDE the FROZEN
+// three-gate region above). Dispatcher in the main handler reads
+// `record.tx.txType` and routes here for `"solana"` handles. The three FROZEN
+// gates (PREVIEW_REQUIRED, WRONG_STATUS, PREVIEW_TOKEN_MISMATCH,
+// PAYLOAD_FINGERPRINT_DRIFT) and the cancel branch fired identically before
+// this dispatch — only the transport differs:
+//
+//   - EVM:    WC `signClient.request("eth_sendTransaction", ...)` (Ledger Live
+//             signs + broadcasts internally).
+//   - Solana: USB-HID `signSolanaTransaction(...)` returns a 64-byte Ed25519
+//             signature; MCP attaches the signature via `tx.addSignature` and
+//             broadcasts directly via `connection.sendRawTransaction(...)`.
+//             No WC relay; no Ledger Live equivalent.
+//
+// Demo-mode mirror (DEMO-05 — `_simulationSolana.runSolanaPreviewSimulation`
+// against the persona address): NOTHING signed; NOTHING broadcast.
+// `_transport.signTransactionViaApp` spy = 0 calls; `connection.sendRawTransaction`
+// spy = 0 calls. Locked invariant — the "nothing leaves MCP in demo mode" promise.
+//
+// Locked errorCode set: WALLET_NOT_PAIRED, LEDGER_NOT_CONNECTED,
+// SOLANA_APP_NOT_OPEN, LEDGER_REJECTED, BROADCAST_FAILED, INTERNAL_ERROR.
+// NO new errorCode introduced — Plan 12-01 added SIMULATION_REFUSED
+// (preview-only); BROADCAST_FAILED reused for sendRawTransaction failures per
+// RESEARCH OQ-3.
+// ===========================================================================
+
+/**
+ * Build the SIMULATION text block emitted by demo-mode Solana
+ * `userDecision: "send"`. Surfaces the `simulateTransaction` envelope
+ * verbatim — status + err + first 3 log lines. Mirrors the EVM
+ * `buildSimulationText` shape but with Solana-specific fields.
+ */
+function buildSolanaSimulationText(input: {
+  status: string;
+  err: string | null;
+  unitsConsumed: number | null;
+  logCount: number;
+  logs: string[];
+}): string {
+  const logPreview = input.logs
+    .slice(0, 3)
+    .map((line) => `    ${line}`)
+    .join("\n");
+  const lines = [
+    "SIMULATION (Solana — demo mode)",
+    `  status:         ${input.status.toUpperCase()}`,
+    `  err:            ${input.err ?? "(none)"}`,
+    `  unitsConsumed:  ${input.unitsConsumed === null ? "n/a" : input.unitsConsumed.toString()}`,
+    `  log count:      ${input.logCount}`,
+    "  log preview (first 3 lines; full list in structuredContent.simulationLogs):",
+    logPreview,
+  ];
+  return lines.join("\n");
+}
+
+/**
+ * Solana branch of `send_transaction`. Dispatched by the main handler when
+ * `record.tx.txType === "solana"`. Performs:
+ *
+ *   1. **Demo-mode short-circuit** (DEMO-05 mirror) — simulates against the
+ *      Solana persona; returns a simulation envelope; NOTHING signed; NOTHING
+ *      broadcast.
+ *   2. **Pairing check** — Solana uses the persistent non-EVM account store
+ *      (NOT WC `getStatus()`). Refuses `WALLET_NOT_PAIRED` if no Solana
+ *      account paired.
+ *   3. **Persona-swap defense** — assert
+ *      `accounts[0].address === record.tx.feePayer` (sender-DEPENDENT
+ *      fingerprint per RESEARCH Topic 3). Mid-flow re-pair to a different
+ *      account → `INTERNAL_ERROR` refusal.
+ *   4. **Reconstruct Transaction** from `record.tx.messageBytes` via
+ *      `Transaction.populate(Message.from(...))`.
+ *   5. **Sign via USB-HID Ledger** — `signSolanaTransaction({ messageBytes,
+ *      userInputType: "sol" })` returns `{ signature: Uint8Array }` (64-byte
+ *      Ed25519). Per-call transport open/close.
+ *   6. **Attach signature + serialize** — `tx.addSignature(feePayer,
+ *      Buffer.from(signature))`; `tx.serialize()` produces the wire bytes.
+ *   7. **Broadcast** — `connection.sendRawTransaction(serializedSignedTx)`
+ *      returns base58 signature.
+ *   8. **State transition** — `transitionToSent(handle, txSignature)`.
+ *   9. **Return** — BOTH `txHash` (API symmetry with EVM) AND `txSignature`
+ *      (canonical Solana name); same base58 value under both keys.
+ */
+async function sendTransactionSolanaBranch(
+  record: HandleRecord,
+  handleArg: string,
+): Promise<ToolHandlerResult> {
+  const solTx = record.tx as PreparedTxSolana;
+
+  // ---- Demo-mode short-circuit (DEMO-05 Solana mirror) ----------------
+  if (isDemoMode()) {
+    // T-NULL-PERSONA-1 mirror — explicit demo without `set_demo_wallet`
+    // (Solana persona). Surface WRONG_MODE so the agent prompts the user
+    // for a Solana persona before retrying.
+    const solPersona = getActiveSolanaPersona();
+    if (solPersona === null) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text:
+              "error: demo mode is active but no Solana persona set. Call `set_demo_wallet` with a Solana persona slug (e.g. \"solana-whale\") first.",
+          },
+        ],
+        structuredContent: errEnvelope(
+          "WRONG_MODE",
+          "demo mode active but no Solana persona set; call set_demo_wallet first",
+        ),
+      };
+    }
+
+    // Reconstruct Transaction from messageBytes for the simulation call.
+    // `_simulationSolana.runSolanaPreviewSimulation` NEVER throws — RPC
+    // failures demote to `status: "error"`. Demo mode does NOT refuse on
+    // non-ok simulation (preview already enforced DF-4); the envelope is
+    // surfaced informationally.
+    let tx: Transaction;
+    try {
+      const message = Message.from(Buffer.from(solTx.messageBytes));
+      tx = Transaction.populate(message);
+    } catch (err) {
+      const cause = err instanceof Error ? err.message : String(err);
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `error: failed to reconstruct Solana transaction from messageBytes: ${cause}`,
+          },
+        ],
+        structuredContent: errEnvelope(
+          "INTERNAL_ERROR",
+          "failed to reconstruct Solana transaction from messageBytes",
+          cause,
+        ),
+      };
+    }
+    const connection = _solanaRegistry.getConnection();
+    const sim = await _simulationSolana.runSolanaPreviewSimulation({
+      connection,
+      transaction: tx,
+    });
+    const simulatedAt = new Date().toISOString();
+    return {
+      content: [
+        {
+          type: "text",
+          text: buildSolanaSimulationText({
+            status: sim.status,
+            err: sim.err,
+            unitsConsumed: sim.unitsConsumed,
+            logCount: sim.logs.length,
+            logs: sim.logs,
+          }),
+        },
+      ],
+      structuredContent: {
+        simulated: true,
+        simulationResult: sim.status,
+        simulationLogs: sim.logs,
+        simulationError: sim.err,
+        simulatedAt,
+        handle: handleArg,
+        txType: "solana" as const,
+      },
+    };
+  }
+
+  // ---- Pairing check (Solana — persistent non-EVM account store) ------
+  const accounts = listAccounts({ chainFilter: "solana" });
+  if (accounts.length === 0) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text:
+            "error: no paired Solana account. Call `pair_solana_ledger` first to pair your Solana Ledger account, then retry.",
+        },
+      ],
+      structuredContent: errEnvelope(
+        "WALLET_NOT_PAIRED",
+        "no paired Solana account; call pair_solana_ledger first",
+      ),
+    };
+  }
+  // Single-account scope per v1.x (mirror `prepare_solana_native_send.ts`).
+  const account = accounts[0];
+  if (!account) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "error: no paired Solana account (unreachable narrowing).",
+        },
+      ],
+      structuredContent: errEnvelope(
+        "WALLET_NOT_PAIRED",
+        "no paired Solana account (unreachable narrowing)",
+      ),
+    };
+  }
+
+  // Persona-swap defense (RESEARCH Topic 3 + Solana fingerprint sender-
+  // DEPENDENCE). The fingerprint already binds feePayer via the message
+  // bytes; this check surfaces a clearer error than a downstream device-
+  // rejection ("Wrong derivation path") when the paired account changed
+  // between prepare and send. The PAYLOAD_FINGERPRINT_DRIFT gate above
+  // would ALSO catch any messageBytes mutation; this is a higher-fidelity
+  // diagnostic for the specific persona-swap case (feePayer matches the
+  // pinned messageBytes but the paired account doesn't).
+  if (account.address !== solTx.feePayer) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text:
+            `error: paired Solana account changed since prepare. Prepared for feePayer=${solTx.feePayer}, currently paired to ${account.address}. Re-run prepare_solana_native_send (or prepare_solana_spl_send) to mint a fresh handle against the active account.`,
+        },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        "paired Solana account changed since prepare; re-run prepare_solana_*",
+      ),
+    };
+  }
+
+  // ---- Reconstruct Transaction from messageBytes ----------------------
+  let tx: Transaction;
+  let feePayerPubkey: PublicKey;
+  try {
+    const message = Message.from(Buffer.from(solTx.messageBytes));
+    tx = Transaction.populate(message);
+    feePayerPubkey = new PublicKey(solTx.feePayer);
+  } catch (err) {
+    const cause = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `error: failed to reconstruct Solana transaction from messageBytes: ${cause}`,
+        },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        "failed to reconstruct Solana transaction from messageBytes",
+        cause,
+      ),
+    };
+  }
+
+  // ---- Sign via Ledger USB-HID (per-call transport) -------------------
+  let signature: Uint8Array;
+  try {
+    const result = await signSolanaTransaction({
+      messageBytes: solTx.messageBytes,
+      // Plan 12-04 lock — `"sol"` clear-signs the user-entered wallet
+      // address, NOT the server-derived ATA (LedgerHQ/ledger-live PR #12199).
+      userInputType: "sol",
+    });
+    signature = result.signature;
+  } catch (err) {
+    if (err instanceof LedgerDeviceNotConnectedError) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${err.message}` }],
+        structuredContent: errEnvelope(
+          "LEDGER_NOT_CONNECTED",
+          err.message,
+        ),
+      };
+    }
+    if (err instanceof LedgerSolanaAppNotOpenError) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${err.message}` }],
+        structuredContent: errEnvelope(
+          "SOLANA_APP_NOT_OPEN",
+          err.message,
+        ),
+      };
+    }
+    if (err instanceof LedgerSolanaUserRejectedError) {
+      const cause = err.message;
+      return {
+        isError: true,
+        content: [
+          { type: "text", text: `error: user rejected on Ledger device: ${cause}` },
+        ],
+        structuredContent: errEnvelope(
+          "LEDGER_REJECTED",
+          "user rejected on Ledger device",
+          cause,
+        ),
+      };
+    }
+    const cause = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [
+        { type: "text", text: `error: Ledger sign failure: ${cause}` },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        "Ledger sign failure",
+        cause,
+      ),
+    };
+  }
+
+  // ---- Attach signature + serialize ------------------------------------
+  // `tx.addSignature(feePayer, Buffer.from(signature))` writes the signature
+  // into the right `account_keys[0]` slot. After this, `tx.serialize()` with
+  // `verifySignatures: false` produces the wire bytes WITHOUT a server-side
+  // Ed25519 verify pass — the trust anchor is the on-device Ledger approval
+  // (the user verified the message hash on-screen), and the cluster verifies
+  // signatures at broadcast time anyway. `requireAllSignatures: true` keeps
+  // the all-signatures-attached invariant (account_keys[0] slot must be
+  // populated, which `addSignature` did above).
+  let signedSerialized: Buffer;
+  try {
+    tx.addSignature(feePayerPubkey, Buffer.from(signature));
+    signedSerialized = tx.serialize({
+      requireAllSignatures: true,
+      verifySignatures: false,
+    });
+  } catch (err) {
+    const cause = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [
+        { type: "text", text: `error: failed to attach signature: ${cause}` },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        "failed to attach signature to Solana transaction",
+        cause,
+      ),
+    };
+  }
+
+  // ---- Broadcast via direct sendRawTransaction (no LL bridge) ---------
+  // RESEARCH Topic 7 — Solana has no WalletConnect-mediated broadcast.
+  // The MCP calls `connection.sendRawTransaction` directly; the broadcast
+  // trust boundary collapses from "relay + RPC + device" (EVM) to "RPC +
+  // device" (Solana). Documented in SECURITY.md § Solana Trust Pipeline.
+  let txSignature: string;
+  try {
+    const connection = _solanaRegistry.getConnection();
+    txSignature = await connection.sendRawTransaction(signedSerialized);
+  } catch (err) {
+    const cause = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [
+        { type: "text", text: `error: Solana broadcast failed: ${cause}` },
+      ],
+      structuredContent: errEnvelope(
+        "BROADCAST_FAILED",
+        "Solana broadcast failed",
+        cause,
+      ),
+    };
+  }
+
+  // ---- State transition + return ---------------------------------------
+  const trans = transitionToSent(handleArg, txSignature);
+  if (!trans.ok) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `error: state transition failed after broadcast: ${trans.errorCode}`,
+        },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        `state transition failed after broadcast: ${trans.errorCode}`,
+      ),
+    };
+  }
+  const broadcastedAt = new Date().toISOString();
+  return {
+    content: [
+      {
+        type: "text",
+        text: `broadcast OK (Solana)\n  txSignature: ${txSignature}\n  broadcastedAt: ${broadcastedAt}\n  handle: ${handleArg.slice(0, 8)}…`,
+      },
+    ],
+    structuredContent: {
+      // API symmetry — existing agent prompts + tests read `txHash` (per
+      // orchestrator override). Carries the base58 signature value.
+      txHash: txSignature,
+      // Canonical Solana nomenclature (RESEARCH Topic 7). SAME base58 value
+      // surfaced under both keys.
+      txSignature,
+      broadcastedAt,
+      handle: handleArg,
+      txType: "solana" as const,
+      // Phase 12 — no WC session topic for Solana (USB-HID bypasses WC
+      // entirely). `null` surfaces for cross-chain agent symmetry.
+      sessionTopicLast8: null,
+    },
+  };
+}
