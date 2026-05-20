@@ -182,6 +182,68 @@ export async function fetchTronAddress(
 }
 
 /**
+ * Sign a TRON transaction via the Ledger TRX app over USB-HID.
+ *
+ * Per-call transport open + `try/finally` close (mirrors `fetchTronAddress`).
+ * Returns the 65-byte signature as a 130-char hex string (no 0x prefix) per
+ * `@ledgerhq/hw-app-trx@6.36.1` `.d.ts` — `signTransaction(path, rawTxHex,
+ * tokenSignatures): Promise<string>`.
+ *
+ * Throws `LedgerDeviceNotConnectedError` if no device found.
+ * Throws `LedgerTronAppNotOpenError` if the TRX app is not active.
+ * User rejection throws from the Ledger SDK (caller should catch and map).
+ *
+ * @param input.path              — BIP-44 derivation path (e.g. `"44'/195'/0'/0/0"`)
+ * @param input.rawTxHex          — `transaction.raw_data_hex` from tronweb (no 0x prefix)
+ * @param input.tokenSignatures   — TRC-20 clear-sign token sigs; `[]` for bundled tokens
+ */
+export async function signTronTransaction(input: {
+  path: string;
+  rawTxHex: string;
+  tokenSignatures: string[];
+}): Promise<string> {
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildTrxApp(transport);
+    // Verify TRON app is open (same guard as fetchTronAddress).
+    try {
+      await app.getAppConfiguration();
+    } catch {
+      throw new LedgerTronAppNotOpenError();
+    }
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    const signature: string = await app.signTransaction(
+      input.path,
+      input.rawTxHex,
+      input.tokenSignatures,
+    );
+    return signature;
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log("warn", `transport.close() failed during signTronTransaction cleanup: ${message}`);
+    }
+  }
+}
+
+/**
+ * ESM spy-affordance for the TRON signing path. Plan 18-04 `send_transaction`
+ * TRON branch calls `_tronLedgerTransport.signTransaction(...)` so tests can
+ * `vi.spyOn(_tronLedgerTransport, "signTransaction")` without monkey-patching
+ * the named export (ESM bindings are immutable). Per CLAUDE.md "Add the
+ * indirection at write time."
+ */
+export const _tronLedgerTransport = {
+  signTransaction: (input: {
+    path: string;
+    rawTxHex: string;
+    tokenSignatures: string[];
+  }): Promise<string> => signTronTransaction(input),
+};
+
+/**
  * Test-only reset. The transport is per-call (no singleton state to
  * clear); the function exists for parity with
  * `_resetLedgerSolanaTransportForTesting` so test suites can call it

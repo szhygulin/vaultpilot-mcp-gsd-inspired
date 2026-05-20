@@ -56,8 +56,9 @@ import { Message, PublicKey, Transaction } from "@solana/web3.js";
 
 import { getEthereumClient } from "../chains/ethereum.js";
 import { _solanaRegistry } from "../chains/solana/registry.js";
+import { _tronRegistry } from "../chains/tron/registry.js";
 import { isDemoMode } from "../config/env.js";
-import { getActivePersona, getActiveSolanaPersona } from "../demo/state.js";
+import { getActivePersona, getActiveSolanaPersona, getActiveTronPersona } from "../demo/state.js";
 import {
   type ErrorCode,
   type StructuredError,
@@ -69,16 +70,23 @@ import {
   transitionToSent,
   type HandleRecord,
   type PreparedTxSolana,
+  type PreparedTxTron,
 } from "../signing/handle-store.js";
 import { computePayloadFingerprint } from "../signing/payload-fingerprint.js";
 import { computeSolanaPayloadFingerprint } from "../signing/payload-fingerprint-solana.js";
+import { computeTronPayloadFingerprint } from "../signing/payload-fingerprint-tron.js";
 import { _simulationSolana } from "../signing/simulation-solana.js";
+import { _simulationTron } from "../signing/simulation-tron.js";
 import {
   LedgerDeviceNotConnectedError,
   LedgerSolanaAppNotOpenError,
   LedgerSolanaUserRejectedError,
   signSolanaTransaction,
 } from "../wallet/ledger-solana-transport.js";
+import {
+  LedgerTronAppNotOpenError,
+  _tronLedgerTransport,
+} from "../wallet/ledger-tron-transport.js";
 import { listAccounts } from "../wallet/non-evm-account-store.js";
 import {
   getActiveSessionTopic,
@@ -319,12 +327,16 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
         ? computeSolanaPayloadFingerprint({
             messageBytes: (record.tx as PreparedTxSolana).messageBytes,
           })
-        : computePayloadFingerprint({
-            chainId: record.tx.chainId,
-            to: record.tx.to,
-            valueWei: record.tx.valueWei,
-            data: record.tx.data,
-          });
+        : txType === "tron"
+          ? computeTronPayloadFingerprint({
+              rawDataBytes: new Uint8Array(Buffer.from((record.tx as PreparedTxTron).rawDataHex, "hex")),
+            })
+          : computePayloadFingerprint({
+              chainId: record.tx.chainId,
+              to: record.tx.to,
+              valueWei: record.tx.valueWei,
+              data: record.tx.data,
+            });
     if (recomputed !== record.payloadFingerprint) {
       return {
         isError: true,
@@ -349,6 +361,12 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
     // (FROZEN — DEMO-05 + WC routing below) is byte-identical to v1.0-1.3.
     if (txType === "solana") {
       return await sendTransactionSolanaBranch(record, handleArg);
+    }
+    if (txType === "tron") {
+      return await sendTransactionTronBranch(
+        record as HandleRecord & { tx: PreparedTxTron },
+        handleArg,
+      );
     }
     // ===== EVM branch (FROZEN — DEMO-05 + WC routing unchanged) =====
 
@@ -1001,6 +1019,291 @@ async function sendTransactionSolanaBranch(
       txType: "solana" as const,
       // Phase 12 — no WC session topic for Solana (USB-HID bypasses WC
       // entirely). `null` surfaces for cross-chain agent symmetry.
+      sessionTopicLast8: null,
+    },
+  };
+}
+
+// ===========================================================================
+// Phase 18 — Plan 18-04 — TRON branch (additive; lives OUTSIDE the FROZEN
+// three-gate region above). Dispatcher in the main handler reads
+// `record.tx.txType` and routes here for `"tron"` handles. The three FROZEN
+// gates (PREVIEW_REQUIRED, WRONG_STATUS, PREVIEW_TOKEN_MISMATCH,
+// PAYLOAD_FINGERPRINT_DRIFT) and the cancel branch fired identically before
+// this dispatch — only the transport call differs.
+//
+// TRON broadcast path:
+//   1. Demo-mode short-circuit (DEMO-05 mirror)
+//   2. Pairing check — persistent non-EVM account store (chainFilter: "tron")
+//   3. Sign via Ledger TRX app over USB-HID via `_tronLedgerTransport.signTransaction`
+//   4. Wrap signature into outer Transaction envelope (signature[] field)
+//   5. Broadcast via `tronweb.trx.sendRawTransaction(signedTransaction)`
+//   6. State transition via `transitionToSent`
+//
+// Error envelope mapping (RESEARCH §Topic 7):
+//   - SIGERROR → LEDGER_REJECTED (signature didn't verify)
+//   - TRANSACTION_EXPIRATION_ERROR / BANDWITH_ERROR / CONTRACT_VALIDATE_ERROR → BROADCAST_FAILED
+//
+// FLAG-1.5 inline-fix: `txID` field = `record.pinned!.presignHash.slice(2)` (SHA-256 of raw_data
+// = TRON consensus tx-id), NOT `record.payloadFingerprint.slice(2)` (keccak256 binding hash).
+// ===========================================================================
+
+/**
+ * Build the demo-mode simulation envelope for a TRON `userDecision: "send"`.
+ * Surfaces simulation result for TRC-20 (via `emitNoSimulationAvailable` shape)
+ * or the no-simulation advisory for native TRX. NOTHING signed; NOTHING broadcast.
+ */
+async function buildTronDemoSimulationResponse(
+  record: HandleRecord & { tx: PreparedTxTron },
+  handleArg: string,
+): Promise<ToolHandlerResult> {
+  const tronTx = record.tx;
+  // For demo mode, just run simulation if TRC-20 (informational only) or skip for native.
+  let simResult;
+  if (tronTx.kind === "trc20" && tronTx.instructionSummary && tronTx.instructionSummary[0]) {
+    const tronWeb = _tronRegistry.getTronWeb();
+    const summary = tronTx.instructionSummary[0];
+    if (summary.kind === "trc20-transfer") {
+      simResult = await _simulationTron.runTronPreviewSimulation({
+        tronWeb,
+        contractAddress: tronTx.contractAddress!,
+        functionSelector: "transfer(address,uint256)",
+        parameters: [
+          { type: "address", value: summary.to },
+          { type: "uint256", value: summary.amount.toString() },
+        ],
+        ownerAddress: summary.from,
+      });
+    } else {
+      simResult = _simulationTron.emitNoSimulationAvailable();
+    }
+  } else {
+    simResult = _simulationTron.emitNoSimulationAvailable();
+  }
+  const simulatedAt = new Date().toISOString();
+  const kindLabel = tronTx.kind === "native" ? "native TRX" : "TRC-20";
+  const text = [
+    `SIMULATION (TRON — demo mode)`,
+    `  kind:   ${kindLabel}`,
+    `  status: ${simResult.status.toUpperCase()}`,
+    ...(simResult.revertReason ? [`  revert: ${simResult.revertReason}`] : []),
+    `  (no broadcast performed)`,
+  ].join("\n");
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: {
+      simulated: true,
+      demoMode: true,
+      simulationResult: simResult.status,
+      simulationError: simResult.revertReason ?? simResult.rpcError ?? null,
+      simulatedAt,
+      handle: handleArg,
+      txType: "tron" as const,
+      kind: tronTx.kind,
+    },
+  };
+}
+
+/**
+ * TRON branch of `send_transaction`. Dispatched by the main handler when
+ * `record.tx.txType === "tron"`. All three FROZEN gates (PREVIEW_REQUIRED,
+ * PREVIEW_TOKEN_MISMATCH, PAYLOAD_FINGERPRINT_DRIFT) and the cancel branch
+ * fired identically before reaching this function.
+ */
+async function sendTransactionTronBranch(
+  record: HandleRecord & { tx: PreparedTxTron },
+  handleArg: string,
+): Promise<ToolHandlerResult> {
+  const tronTx = record.tx;
+  const pinned = record.pinned!;
+
+  // ---- Demo-mode short-circuit (DEMO-05 TRON mirror) --------------------
+  if (isDemoMode()) {
+    const tronPersona = getActiveTronPersona();
+    if (tronPersona === null) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: "error: demo mode is active but no TRON persona set. Call `set_demo_wallet` with a TRON persona slug first.",
+          },
+        ],
+        structuredContent: errEnvelope(
+          "WRONG_MODE",
+          "demo mode active but no TRON persona set; call set_demo_wallet first",
+        ),
+      };
+    }
+    return buildTronDemoSimulationResponse(record, handleArg);
+  }
+
+  // ---- Pairing check (TRON — persistent non-EVM account store) ----------
+  const accounts = listAccounts({ chainFilter: "tron" });
+  if (accounts.length === 0) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "error: no paired TRON account. Call `pair_tron_ledger` first to pair your TRON Ledger account, then retry.",
+        },
+      ],
+      structuredContent: errEnvelope(
+        "WALLET_NOT_PAIRED",
+        "no paired TRON account; call pair_tron_ledger first",
+      ),
+    };
+  }
+  const account = accounts[0];
+  if (!account) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: "error: no paired TRON account (unreachable narrowing)." }],
+      structuredContent: errEnvelope("WALLET_NOT_PAIRED", "no paired TRON account (unreachable narrowing)"),
+    };
+  }
+
+  // ---- Sign via Ledger TRX app (USB-HID, per-call) ----------------------
+  let signature: string;
+  try {
+    signature = await _tronLedgerTransport.signTransaction({
+      path: account.derivationPath,
+      rawTxHex: tronTx.rawDataHex,
+      tokenSignatures: [], // Phase 18 — bundled token registry covers Phase 18 set
+    });
+  } catch (err) {
+    if (err instanceof LedgerDeviceNotConnectedError) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${err.message}` }],
+        structuredContent: errEnvelope("LEDGER_NOT_CONNECTED", err.message),
+      };
+    }
+    if (err instanceof LedgerTronAppNotOpenError) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${err.message}` }],
+        structuredContent: errEnvelope(
+          "LEDGER_REJECTED",
+          "Ledger TRX app not open. Open the TRX app on the device and retry.",
+          err.message,
+        ),
+      };
+    }
+    if (err instanceof Error && /reject/i.test(err.message)) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: user rejected on Ledger device: ${err.message}` }],
+        structuredContent: errEnvelope("LEDGER_REJECTED", "user rejected on Ledger device", err.message),
+      };
+    }
+    const cause = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [{ type: "text", text: `error: TRON Ledger signing failed: ${cause}` }],
+      structuredContent: errEnvelope("INTERNAL_ERROR", "TRON Ledger signing failed", cause),
+    };
+  }
+
+  // ---- Wrap signature into outer broadcast envelope ----------------------
+  // CRITICAL FLAG-1.5 inline-fix: `txID` field MUST be
+  // `record.pinned.presignHash.slice(2)` (SHA-256 of raw_data = TRON consensus
+  // tx-id), NOT `record.payloadFingerprint.slice(2)` (keccak256 binding fingerprint).
+  // See RESEARCH §Topic 4 for the hash-function-per-layer rationale.
+  const signedTransaction = {
+    visible: true,
+    txID: pinned.presignHash.slice(2), // strip 0x prefix; TRON tx-id == SHA-256(raw_data) hex
+    raw_data: tronTx.rawDataObject,
+    raw_data_hex: tronTx.rawDataHex,
+    signature: [signature],
+  };
+
+  // ---- Broadcast via tronweb ---------------------------------------------
+  const tronWeb = _tronRegistry.getTronWeb();
+  let broadcastResult: { result: unknown; code?: string; message?: string; txid?: string };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    broadcastResult = await (tronWeb.trx.sendRawTransaction as any)(signedTransaction);
+  } catch (err) {
+    const cause = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [{ type: "text", text: `error: TronGrid broadcast call failed: ${cause}` }],
+      structuredContent: errEnvelope("BROADCAST_FAILED", "TronGrid broadcast call failed", cause),
+    };
+  }
+
+  // Defensive: handle both flat `{ result: true }` and nested `{ result: { result: true } }` shapes.
+  const topResult = broadcastResult.result;
+  const resultBool =
+    topResult === true ||
+    (topResult !== null && typeof topResult === "object" && (topResult as Record<string, unknown>).result === true);
+  if (!resultBool) {
+    // Flatten code from top-level or nested
+    const code =
+      broadcastResult.code ??
+      (topResult !== null && typeof topResult === "object"
+        ? (topResult as Record<string, unknown>).code as string | undefined
+        : undefined) ??
+      "UNKNOWN_CODE";
+    if (code === "SIGERROR") {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "error: Signature did not verify against the public key — transport corruption suspected" }],
+        structuredContent: errEnvelope(
+          "LEDGER_REJECTED",
+          "Signature did not verify against the public key — transport corruption suspected",
+          broadcastResult.message,
+        ),
+      };
+    }
+    return {
+      isError: true,
+      content: [{ type: "text", text: `error: TronGrid refused broadcast: ${code}` }],
+      structuredContent: errEnvelope(
+        "BROADCAST_FAILED",
+        `TronGrid refused broadcast: ${code}`,
+        broadcastResult.message,
+      ),
+    };
+  }
+
+  // ---- Success — stamp handle, return tx hash ---------------------------
+  // `broadcastResult.txid` is the TRON transaction ID (hex string, no 0x prefix).
+  const txHash = broadcastResult.txid ?? pinned.presignHash.slice(2);
+  const trans = transitionToSent(handleArg, txHash);
+  if (!trans.ok) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `error: state transition failed after broadcast: ${trans.errorCode}`,
+        },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        `state transition failed after broadcast: ${trans.errorCode}`,
+      ),
+    };
+  }
+  const broadcastedAt = new Date().toISOString();
+  return {
+    content: [
+      {
+        type: "text",
+        text: `broadcast OK (TRON)\n  txID: ${txHash}\n  broadcastedAt: ${broadcastedAt}\n\nView on TronScan: https://tronscan.org/#/transaction/${txHash}`,
+      },
+    ],
+    structuredContent: {
+      txHash,
+      txID: txHash, // alias for TRON convention
+      broadcastedAt,
+      handle: handleArg,
+      txType: "tron" as const,
+      kind: tronTx.kind,
+      // Phase 18 — no WC session topic for TRON (USB-HID bypasses WC).
       sessionTopicLast8: null,
     },
   };

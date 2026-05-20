@@ -183,3 +183,41 @@ transactions the user must visually approve on-device. The
 `payloadFingerprint` re-check at send time + the on-screen recipient
 rendering still catch tampering at the binary layer.
 
+
+## TRON (v2.1 — Phase 18)
+
+The v2.1 TRON trust pipeline mirrors v2.0's Solana shape with TRON-specific cryptographic-binding primitives. The same Layer 1 / Layer 2 / Layer 3 defenses apply identically; the per-chain primitives differ at the binding layer.
+
+### (1) USB-HID transport trust shape
+
+TRON signing uses `@ledgerhq/hw-app-trx` over `@ledgerhq/hw-transport-node-hid` — same USB-HID transport as Phase 12 Solana, no WalletConnect bridge. Per-call transport open + `try/finally` close (mirrors Phase 12 + Phase 17 patterns). The agent → MCP path runs over stdio; the MCP → Ledger path runs over USB-HID. The Ledger device's physical screen is the trust anchor.
+
+### (2) Protobuf raw_data preimage vs EVM RLP
+
+TRON's transaction binding hash runs over Protobuf-serialized `raw_data` bytes (`tronweb.transaction.raw_data_hex` → `Buffer.from(hex, "hex")`). This is structurally distinct from EVM's RLP-serialized EIP-1559 envelope: TRON's bytes describe an array of contract-instructions with explicit type discriminators (`TransferContract`, `TriggerSmartContract`, etc.); EVM's bytes are a single-tuple `[chainId, nonce, maxPriorityFee, maxFee, gas, to, value, data, accessList]`. Both hash via keccak256 at the VaultPilot binding layer; the domain tag (`"VaultPilot-trontx-v1:"` — 21 UTF-8 bytes, distinct from EVM 23 + Solana 20) makes cross-chain reuse impossible by construction.
+
+### (3) SHA-256 tx-id (TRON consensus) vs EVM keccak256
+
+TRON consensus computes `tx_id = SHA-256(raw_data)` (NOT keccak256 — TRON predates Ethereum's RLP-keccak combo and uses a distinct hash). The Ledger TRX app displays this exact 32-byte SHA-256 hash on blind-sign mode, labeled `"Transaction ID"`. The `LEDGER BLIND-SIGN HASH (TRON)` block in `preview_send` shows the same hash for character-for-character on-device comparison. Within the cryptographic-binding chain: `payloadFingerprint = keccak256(domain-tag ‖ raw_data)` is the agent↔MCP binding; `ledgerBlindSignHash = SHA-256(raw_data)` is the MCP↔device binding. Same input bytes; different hash functions for layer-appropriate uniqueness.
+
+### (4) TRX app clear-sign coverage + bundled token registry
+
+The Ledger TRX app v0.5+ ships a bundled token registry that clear-signs `transfer(address,uint256)` calldata for the bundled tokens: USDT-TRC20, USDC-TRC20, USDD, TUSD (the Phase 18 allowlist). For these tokens, the device displays `To`, `Token`, `Amount` decoded — the user sees the same data the PREPARE RECEIPT block surfaced server-side. For non-bundled tokens (Phase 19+), the app falls back to blind-sign mode (displays only the SHA-256 tx-id); Phase 18 + future phases emit `LEDGER NOTICE (TRON)` block above the BLIND-SIGN HASH block to warn the user.
+
+`prepare_tron_token_approve` (Phase 19 — TRC-20 `approve(spender, amount)`) is a distinct ABI from `transfer` and is NOT in the bundled registry; the conditional NOTICE fires for every approve. `prepare_tron_stake_*` (Phase 19 — Stake 2.0 FreezeBalanceV2Contract) is a different Protobuf shape entirely from TriggerSmartContract; the app blind-signs the consensus tx-id and the NOTICE fires. `prepare_sunswap_*` (Phase 20 — SunSwap router calls) are TriggerSmartContract calls to NON-allowlist contracts; the NOTICE fires.
+
+### (5) Layer 0.7 asymmetry — TRC-20 mandatory refusal, native TRX advisory only (accepted residual)
+
+The Layer 0.7 simulation gate behaves asymmetrically between TRC-20 and native TRX. **TRC-20**: `preview_send` calls `triggerconstantcontract` against TronGrid and refuses with `SIMULATION_REFUSED` if the simulated execution reverts. **Native TRX (`TransferContract`)**: TronGrid has no simulation API for non-contract calls — the `triggerconstantcontract` endpoint is for smart-contract `view`/`pure` calls only. `preview_send` emits an explicit `CHECKS PERFORMED (TRON — no simulation available)` block instead of refusing.
+
+**Accepted residual risk.** A native TRX transfer's defense at preview time relies entirely on (1) PREPARE RECEIPT byte-binding the agent's args verbatim + (2) LEDGER BLIND-SIGN HASH on-device match. A compromised agent that swaps the `to` address between the user's natural-language ask and the prepare call would be caught by PREPARE RECEIPT (the user reads the verbatim args in the response); a compromised MCP that swaps bytes between prepare and send would be caught by `payloadFingerprint` drift detection (PREP-08, Layer 3). The on-device tx-id is the final anchor. The asymmetry is surfaced visibly to the user via the `NO_SIMULATION_AVAILABLE_TRON` block — accepted residual; documented residual.
+
+### (6) Ref-block + expiration window — TAPOS replay protection + extended expiration
+
+TRON transactions carry two time-bounded fields:
+- `ref_block_bytes` + `ref_block_hash` — TAPOS (Transactions-as-Proof-of-Stake) replay protection. The transaction references the latest solidified block at build time; validators reject the transaction if the referenced block falls outside their recent-solidified-chain cache (~15-30 minutes empirically).
+- `expiration` — absolute millisecond timestamp at which the broadcast endpoint refuses the transaction. tronweb defaults to `block_timestamp + 60_000ms` (60 seconds).
+
+Phase 18 prepare tools extend the expiration to **900 seconds (15 minutes)** via `tronweb.transactionBuilder.extendExpiration(tx, 900)` to match the 15-minute handle TTL (`HANDLE_TTL_MS`). Without the extension, a user who pauses ~5 minutes between prepare and send would broadcast a stale transaction and receive `BROADCAST_FAILED: TRANSACTION_EXPIRATION_ERROR`.
+
+The 15-minute window sits inside the TAPOS replay window — both are valid for the same duration window. Past 15 minutes, the handle expires (`HANDLE_EXPIRED` envelope on `preview_send` / `send_transaction`), the user re-runs `prepare_tron_*` for a fresh handle with fresh ref-block + expiration fields. Defense-in-depth: the Layer 3 fingerprint-drift gate also catches any post-prepare in-process state corruption.
