@@ -151,7 +151,14 @@ export async function runTronPreviewSimulation(input: {
       };
     }
 
-    const simResult = result.result;
+    // tronweb's .d.ts narrows `result.result` to `{ result: boolean; message?:
+    // string }` but the runtime envelope includes `code` (e.g. `REVERT`,
+    // `OUT_OF_ENERGY`) — widen the local view to match what TronGrid returns.
+    const simResult = result.result as {
+      result: boolean;
+      code?: string;
+      message?: string;
+    };
     const energyUsed: bigint = BigInt(result.energy_used ?? 0);
     const constantResult: string[] = result.constant_result ?? [];
 
