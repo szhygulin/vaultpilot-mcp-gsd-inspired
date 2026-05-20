@@ -655,7 +655,7 @@ import "./simulate_position_change.js";    // EXISTING — Plan 28-04 extends in
 | `checkDispatchTarget(chainId, to)` | `src/security/canonical-dispatch.ts:166-179` | INHERITED — Phase 28 adds 6 Comet addresses to the Ethereum allowlist; gate behavior unchanged | n/a |
 | `_protocols.decodeErc20Call` / `_aaveProtocols.decodeAaveV3Call` | `src/protocols/erc20.ts:180` + `src/protocols/aave-v3.ts:187` | `preview_send` extension chains AFTER both on `unknown` fall-through | Existing calls; Phase 28 chains `_compoundProtocols.decodeCompoundV3Call` AFTER Aave on `unknown` |
 
-**Error codes** — Phase 28 reuses the locked 15-code set. The intent-gate refusals all use `INVALID_INPUT` with a `hint.tool` field naming the correct prepare tool — no new error codes.
+**Error codes** — Phase 28 reuses the locked 21-code set (20-code v1.x baseline through Phase 10's `RATE_LIMIT_EXCEEDED` at slot 20 + Phase 12 12-01's `SIMULATION_REFUSED` at slot 21 for Solana — merged at PR [#78](https://github.com/szhygulin/vaultpilot-mcp-gsd-inspired/pull/78)). The intent-gate refusals all use `INVALID_INPUT` with a `hint.tool` field naming the correct prepare tool — no new error codes.
 
 ## 5. Anti-Patterns Phase 28 MUST NOT Repeat
 
@@ -664,7 +664,7 @@ import "./simulate_position_change.js";    // EXISTING — Plan 28-04 extends in
 3. **No `beforeAll`-snapshot fixtures.** Fixtures R / S / T / U (Compound supply/withdraw/borrow/repay) are hardcoded `0x…` literals in `test/signing-fingerprint.test.ts`. CLAUDE.md Conventions section codifies this; Phase 7 retro reinforced.
 4. **No reimplementation of `prepare_*` scaffolding.** Mechanical-clone pattern (Phase 6 retro line 141, reinforced by Phase 7): bounded diffs only. Handle/fingerprint/error-envelope scaffolding is byte-identical to `prepare_aave_supply.ts`. The **intent-gate prologue is a new section added BEFORE the encoder call** — does not modify the existing scaffolding shape.
 5. **ESM spy-affordance pre-emptively.** `src/protocols/compound-v3.ts` ships `export const _compoundProtocols = { decodeCompoundV3Call };` and `src/chains/compound-v3.ts` ships `export const _compoundChains = { getCometState, getAllCometStates, readBaseToken, readBorrowBalance, readBaseBalance };` from the first commit. Plan 05-01 retro: "add at write time, not retroactively."
-6. **FROZEN-area discipline in every Phase 28 plan's `<success_criteria>`.** Each plan asserts zero-diff on: `src/signing/payload-fingerprint.ts`, `src/signing/presign-hash.ts`, `src/signing/handle-store.ts` state machine, `src/tools/send_transaction.ts` three gates, `src/signing/error-codes.ts` 15-code union.
+6. **FROZEN-area discipline in every Phase 28 plan's `<success_criteria>`.** Each plan asserts zero-diff on: `src/signing/payload-fingerprint.ts`, `src/signing/presign-hash.ts`, `src/signing/handle-store.ts` state machine, `src/tools/send_transaction.ts` three gates, `src/signing/error-codes.ts` 21-code union.
 7. **Intent gates re-derive at preview time** (defense-in-depth). The 4 prepare tools enforce intent gates BEFORE encoding. `preview_send` ADDITIONALLY re-derives intent from on-chain state at preview time and surfaces the derived label in DECODED ARGS — the user sees the actual semantics regardless of which prepare tool the agent claimed to use. Belt + suspenders against agent-side intent confusion.
 
 ## 6. Cryptographic-Binding Chain Delta
@@ -680,7 +680,7 @@ import "./simulate_position_change.js";    // EXISTING — Plan 28-04 extends in
 - **`src/signing/presign-hash.ts`** — EIP-1559 pre-sign hash compute byte-frozen.
 - **`src/signing/handle-store.ts` state machine** — `prepared → previewed → sent | cancelled` byte-frozen. Phase 28 reuses existing `PrepareArgs` shape (`tokenAddress` field re-purposed for the asset; mirror Phase 7).
 - **`src/tools/send_transaction.ts`** — three-gate refusal logic byte-frozen. Handler builds `txParams` from `record.tx` + `record.pinned` ONLY.
-- **`src/signing/error-codes.ts`** — 15-code locked union byte-frozen. Intent-gate refusals reuse `INVALID_INPUT`.
+- **`src/signing/error-codes.ts`** — 21-code locked union byte-frozen. Intent-gate refusals reuse `INVALID_INPUT`.
 
 ### Fixture additions
 - **Fixture R** — `Comet.supply(USDC, 100e6)` on cUSDCv3 → `payloadFingerprint` hardcoded literal. Cross-linked from `test/prepare-compound-supply.test.ts` + `test/compound-v3-lifecycle.integration.test.ts`.
@@ -824,7 +824,7 @@ Pattern-mapper asserts (read-only inspection of all 5 files):
 | `src/signing/presign-hash.ts` | NO — EIP-1559 pre-sign compute unchanged |
 | `src/signing/handle-store.ts` (state machine) | NO — reuses existing `PrepareArgs` shape (`tokenAddress` field re-purposed for asset, mirror Phase 7) |
 | `src/tools/send_transaction.ts` (three gates) | NO — handler unchanged; `tx` envelope built from `record.tx` + `record.pinned` only |
-| `src/signing/error-codes.ts` (15-code union) | NO — intent-gate refusals reuse `INVALID_INPUT` with `hint.tool` field |
+| `src/signing/error-codes.ts` (21-code union) | NO — intent-gate refusals reuse `INVALID_INPUT` with `hint.tool` field |
 
 **All 5 FROZEN areas confirmed untouched.** Each Phase 28 plan's `<success_criteria>` MUST include a zero-diff assertion on these 5 files (`git diff --quiet -- <file>` or equivalent).
 
@@ -834,5 +834,5 @@ Pattern-mapper asserts (read-only inspection of all 5 files):
 **Files scanned:** 11 critical analogs full-read + 4 supporting files targeted-read + Phase 7 PATTERNS.md reference
 **Pattern extraction date:** 2026-05-20
 **No-analog items:** 1 pattern is genuinely new (**intent-vs-reality gates** — § Greenfield). 0 files lack an analog — every file maps to a Phase 6/7 precedent for shape.
-**FROZEN-area assertion files:** 5 (`payload-fingerprint.ts`, `presign-hash.ts`, `handle-store.ts` state machine, `send_transaction.ts` three gates, `error-codes.ts` 15-code union)
+**FROZEN-area assertion files:** 5 (`payload-fingerprint.ts`, `presign-hash.ts`, `handle-store.ts` state machine, `send_transaction.ts` three gates, `error-codes.ts` 21-code union)
 **Reference PATTERNS doc:** [`.planning/phases/07-aave-v3-ethereum/07-PATTERNS.md`](../07-aave-v3-ethereum/07-PATTERNS.md)
