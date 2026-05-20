@@ -1,0 +1,424 @@
+// MCP tool: prepare_compound_repay({ chain, comet, asset, amount, from? })
+//
+// Phase 28 — Plan 28-03 (CMP-05 repay leg). Mechanical clone of
+// `prepare_compound_supply.ts` (Plan 28-02) with bounded deviations:
+//
+//   (a) Encoder = `encodeCompoundSupply(asset, amountWei)` from Plan 28-01.
+//       SAME selector as `prepare_compound_supply`: research § Topic 3
+//       Decision lock — Compound V3's `Comet.supply(base, amount)` against
+//       a wallet with outstanding debt IS the repay operation at the
+//       protocol level (the Comet contract reduces debt first; surplus
+//       deposits to the supply side). The discriminator is the intent gate
+//       + tool name.
+//   (b) Intent-gate prologue uses `selector: "supply"` and REFUSES on
+//       `intent === "supply-collateral"`. The reverse direction of
+//       `prepare_compound_supply`'s refusal on `"repay-debt"`. Two scenarios
+//       land in "supply-collateral":
+//         - asset !== baseToken  (the agent passed a collateral asset)
+//         - asset === baseToken AND borrowBalanceOf === 0n  (no debt)
+//       Both are supplies, not repays. Refusal → INVALID_INPUT +
+//       `structuredContent.hintTool: "prepare_compound_supply"`.
+//   (c) `amount: "max"` IS accepted — Compound's `supply(base, MAX_UINT256)`
+//       is the protocol-level "full-position close" sentinel (research
+//       § Topic 4; CONTEXT.md decision lock). The Comet contract clamps
+//       internally at actual debt; surplus deposits to the supply side
+//       (NOT a hard error). Strict-equality `args.amount === "max"` ONLY
+//       (lowercase; T-MAX-SPELLING-1 from Plan 06-03 prepare_token_approve
+//       discipline). `"MAX"` / `"unlimited"` / `"infinite"` flow to
+//       parseAmountStrict and reject as INVALID_INPUT kind `"format"`.
+//   (d) PREPARE RECEIPT uses `COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE` —
+//       4-slot (chain + comet + asset + amount). The `{AMOUNT}` slot
+//       renders the VERBATIM agent string (`"max"` shows as `amount: max`).
+//       The DECODED ARGS block at preview time (Plan 28-04) surfaces the
+//       resolved hex for cross-check.
+//   (e) `structuredContent.intent: "repay-debt"` on the happy path. NOT
+//       `"supply-collateral"` — the intent gate's confirmation that the
+//       wallet has debt and the agent picked the right tool.
+//
+// Refusal-path optimization: one extra RPC read (`readBaseToken`) on the
+// refusal path to surface the actual base-asset address in the human-readable
+// error message. Happy path skips this. Documented in 28-03-PLAN.md.
+//
+// NO LEDGER NOTICE block at prepare time — surfaces at preview time only.
+
+import { type Address, type Hex, erc20Abi, getAddress } from "viem";
+
+import { _compoundChains } from "../chains/compound-v3.js";
+import { getChainClient } from "../chains/registry.js";
+import {
+  chainIdFromName,
+  getAllCompoundCometsForChain,
+  type ChainId,
+  type ChainName,
+} from "../config/contracts.js";
+import { encodeCompoundSupply } from "../protocols/compound-v3.js";
+import { MAX_UINT256 } from "../protocols/erc20.js";
+import { InvalidAmountError, parseAmountStrict } from "../signing/amount.js";
+import { COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE } from "../signing/blocks.js";
+import {
+  type ErrorCode,
+  type StructuredError,
+  makeStructuredError,
+} from "../signing/error-codes.js";
+import { createHandle } from "../signing/handle-store.js";
+import { computePayloadFingerprint } from "../signing/payload-fingerprint.js";
+import { resolveFrom } from "../signing/resolve-from.js";
+import { loadTokenRegistry } from "../tokens/registry.js";
+import { registerTool } from "./index.js";
+
+function errEnvelope(
+  code: ErrorCode,
+  message: string,
+  cause?: string,
+): Record<string, unknown> & StructuredError {
+  return makeStructuredError(code, message, cause) as Record<string, unknown> &
+    StructuredError;
+}
+
+const DESCRIPTION = [
+  "Prepare an unsigned Compound V3 repay on Ethereum mainnet — repays outstanding debt on a specified Comet by supplying the Comet's base asset. Compound V3's supply(base, amount) against an existing debt IS the repay operation at the protocol level; the Comet contract reduces debt first, then any surplus deposits to the supply side.",
+  "Returns a handle the agent passes to preview_send before send_transaction.",
+  "Use when the user wants to repay debt they previously incurred via prepare_compound_borrow on the same Comet.",
+  "REQUIRES the Comet's base asset. REFUSES with INVALID_INPUT + structuredContent.hintTool: \"prepare_compound_supply\" in two scenarios: (a) `asset` is a collateral asset (non-base) — that's a collateral supply, call prepare_compound_supply; (b) `asset` is the base asset AND the wallet has no outstanding debt on this Comet — that's a lender-position deposit, not a repay.",
+  "ACCEPTS amount: \"max\" (lowercase strict-equality only — T-MAX-SPELLING-1; \"MAX\" / \"unlimited\" / \"infinite\" reject as INVALID_INPUT). \"max\" resolves to MAX_UINT256 — Compound's protocol-level full-position-close sentinel; the Comet contract clamps internally at actual debt, surplus deposits to the supply side. preview_send's DECODED ARGS block annotates this with `⚠ FULL POSITION REPAY (MAX_UINT256 sentinel)`.",
+  "Do NOT use for supply / withdraw / borrow — call prepare_compound_supply / prepare_compound_withdraw / prepare_compound_borrow respectively.",
+  "Do NOT use for non-Compound lending — Aave V3 doesn't have a prepare_aave_repay tool in v1.x (v2.4+ scope); Morpho / Spark / etc. are v2.4+ scope.",
+  "`chain` is REQUIRED and v2.3-locked to \"ethereum\". v2.3.x widens to Polygon / Arbitrum / Base / Optimism once Compound V3 mainnet markets are seeded for those chains.",
+  "`comet` is REQUIRED — the explicit Comet address (one of 6 canonical Ethereum mainnet markets: cUSDCv3 / cUSDTv3 / cWETHv3 / cUSDSv3 / cwstETHv3 / cWBTCv3). The server validates against the canonical allowlist BEFORE any RPC read.",
+  "`asset` is the underlying ERC-20 contract address — MUST be the Comet's base asset (cUSDCv3 → USDC; etc.). `amount` is a DECIMAL STRING in human units (e.g. \"100.5\") OR the literal lowercase \"max\" to close the entire borrow position.",
+  "If preview-time simulation reveals an allowance shortfall (`SIMULATION status: revert` with an `ERC20: insufficient allowance` reason), call `prepare_token_approve({ chain, tokenAddress: asset, spender: <comet>, amount: 'max' })` first, sign the approve on device, then retry this prepare.",
+  "Compound V3 calldata is NOT covered by the Ledger ERC-7730 clear-sign registry — the device will BLIND-SIGN (display a raw hash). preview_send emits a LEDGER NOTICE block at preview time explaining the blind-sign expectation; the cryptographic anchor is the on-device hash match against the PREDICTED hash this tool produces.",
+  "Pass `from` when the user wants to act from a non-default approved account (visible in `get_ledger_status.accountsByChain[chainId]`); otherwise omit and the active account is used.",
+  "Requires a paired Ledger (real mode) or active persona (demo mode).",
+  "Returns `{ handle, chain, chainId, comet, from, asset, amount, amountWei, intent, payloadFingerprint }` plus a PREPARE RECEIPT text block surfacing the verbatim args (including \"max\" verbatim).",
+  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set OR `from` doesn't match the active persona, INVALID_INPUT if chain/comet/asset/amount/from malformed (including non-canonical Comet, intent-mismatch supply routing with hintTool, T-MAX-SPELLING-1 strict-equality, fractional-overflow vs token decimals), INVALID_ACCOUNT if `from` is not in the per-chain approved set, INTERNAL_ERROR if RPC fails resolving asset decimals OR the intent-gate baseToken / borrowBalanceOf reads.",
+].join(" ");
+
+const INPUT_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    chain: {
+      type: "string",
+      enum: ["ethereum"],
+      description:
+        "Chain identifier (required). v2.3 supports ONLY ethereum; v2.3.x widens to Polygon / Arbitrum / Base / Optimism.",
+    },
+    comet: {
+      type: "string",
+      pattern: "^0x[0-9a-fA-F]{40}$",
+      description:
+        "The Compound V3 Comet contract address (required). MUST be one of the 6 canonical Ethereum mainnet markets: cUSDCv3 / cUSDTv3 / cWETHv3 / cUSDSv3 / cwstETHv3 / cWBTCv3. Refused (INVALID_INPUT) if not in the canonical allowlist.",
+    },
+    asset: {
+      type: "string",
+      pattern: "^0x[0-9a-fA-F]{40}$",
+      description:
+        "ERC-20 asset address — MUST be the Comet's base asset (the only debtable asset in the market). Refused with INVALID_INPUT + hintTool prepare_compound_supply if a collateral asset is passed.",
+    },
+    amount: {
+      type: "string",
+      description:
+        "Decimal string in human units (e.g. \"100.5\") OR the literal lowercase \"max\" to close the entire borrow position (MAX_UINT256 sentinel; protocol clamps to actual debt, surplus deposits to supply side). T-MAX-SPELLING-1 — strict-equality on \"max\" only.",
+    },
+    from: {
+      type: "string",
+      pattern: "^0x[0-9a-fA-F]{40}$",
+      description:
+        "Optional sender address — must be one of the per-chain approved accounts in `get_ledger_status.accountsByChain[chainId]`. Omit to use the active account.",
+    },
+  },
+  required: ["chain", "comet", "asset", "amount"],
+  additionalProperties: false,
+};
+
+async function resolveDecimals(
+  assetAddress: Address,
+  chainId: ChainId,
+): Promise<{ decimals: number; symbol: string }> {
+  const registry = loadTokenRegistry(chainId);
+  const cached = registry.find((entry) => entry.address === assetAddress);
+  if (cached) {
+    return { decimals: cached.decimals, symbol: cached.symbol };
+  }
+  const client = getChainClient(chainId);
+  const [decimals, symbol] = await Promise.all([
+    client.readContract({ address: assetAddress, abi: erc20Abi, functionName: "decimals" }),
+    client.readContract({ address: assetAddress, abi: erc20Abi, functionName: "symbol" }),
+  ]);
+  return { decimals, symbol };
+}
+
+registerTool("prepare_compound_repay", DESCRIPTION, INPUT_SCHEMA, async (args) => {
+  try {
+    const chainName = args.chain as ChainName;
+    if (chainName !== "ethereum") {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `error: invalid 'chain': Compound V3 v2.3 supports only 'ethereum', got "${chainName}"`,
+          },
+        ],
+        structuredContent: errEnvelope(
+          "INVALID_INPUT",
+          `invalid 'chain': Compound V3 v2.3 supports only 'ethereum', got "${chainName}"`,
+        ),
+      };
+    }
+    const chainId = chainIdFromName(chainName);
+
+    const rawComet = typeof args.comet === "string" ? args.comet : "";
+    if (!/^0x[0-9a-fA-F]{40}$/.test(rawComet)) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `error: invalid 'comet': expected 0x-prefixed 20-byte hex, got "${rawComet}"`,
+          },
+        ],
+        structuredContent: errEnvelope("INVALID_INPUT", `invalid 'comet': ${rawComet}`),
+      };
+    }
+
+    const rawAsset = typeof args.asset === "string" ? args.asset : "";
+    if (!/^0x[0-9a-fA-F]{40}$/.test(rawAsset)) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `error: invalid 'asset': expected 0x-prefixed 20-byte hex, got "${rawAsset}"`,
+          },
+        ],
+        structuredContent: errEnvelope("INVALID_INPUT", `invalid 'asset': ${rawAsset}`),
+      };
+    }
+
+    const rawAmount = typeof args.amount === "string" ? args.amount : "";
+
+    // CHEAP GATE — Comet allowlist validation BEFORE any RPC read.
+    const cometAddr = getAddress(rawComet);
+    const canonicalComets = getAllCompoundCometsForChain(chainId);
+    if (!canonicalComets.includes(cometAddr)) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text:
+              `error: 'comet' address ${rawComet} is not in the canonical Compound V3 mainnet allowlist ` +
+              "(6 Comets: cUSDCv3 / cUSDTv3 / cWETHv3 / cUSDSv3 / cwstETHv3 / cWBTCv3). " +
+              "Pass one of the canonical Comet addresses from src/config/contracts.ts.",
+          },
+        ],
+        structuredContent: errEnvelope(
+          "INVALID_INPUT",
+          `'comet' address not in canonical Compound V3 mainnet allowlist (6 Comets: cUSDCv3 / cUSDTv3 / cWETHv3 / cUSDSv3 / cwstETHv3 / cWBTCv3): ${rawComet}`,
+        ),
+      };
+    }
+
+    // SENDER resolution.
+    const rawFrom = typeof args.from === "string" ? args.from : undefined;
+    const fromResolution = await resolveFrom({ rawFrom, chainId });
+    if (fromResolution.kind === "error") {
+      return fromResolution.result;
+    }
+    const fromAddress: Address = fromResolution.fromAddress;
+    const fromCallerSupplied = fromResolution.callerSupplied;
+
+    const assetAddr = getAddress(rawAsset) as Address;
+
+    // Intent-gate prologue — runs BEFORE the encoder. The repay tool refuses
+    // on `intent === "supply-collateral"` (the reverse direction of
+    // `prepare_compound_supply`'s refusal on `"repay-debt"`). Two scenarios
+    // land in "supply-collateral":
+    //   - asset !== baseToken  (collateral supply)
+    //   - asset === baseToken AND borrowBalanceOf === 0n  (lender deposit)
+    // Both are supplies, not repays.
+    const client = getChainClient(chainId);
+    let intent: Awaited<ReturnType<typeof _compoundChains.deriveIntent>>;
+    try {
+      intent = await _compoundChains.deriveIntent(
+        client,
+        cometAddr,
+        fromAddress,
+        "supply",
+        assetAddr,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `error: failed to derive Compound intent for ${cometAddr}: ${message}`,
+          },
+        ],
+        structuredContent: errEnvelope(
+          "INTERNAL_ERROR",
+          `failed to derive Compound intent for ${cometAddr}`,
+          message,
+        ),
+      };
+    }
+
+    if (intent === "supply-collateral") {
+      // Refusal-path extra RPC read — surface the actual base token in the
+      // human-readable error message for agent self-correction.
+      let baseToken: Address;
+      try {
+        baseToken = await _compoundChains.readBaseToken(client, cometAddr);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `error: failed to read Compound baseToken for ${cometAddr}: ${message}`,
+            },
+          ],
+          structuredContent: errEnvelope(
+            "INTERNAL_ERROR",
+            `failed to read Compound baseToken for ${cometAddr}`,
+            message,
+          ),
+        };
+      }
+      const isBase = getAddress(assetAddr) === getAddress(baseToken);
+      const refusalMessage = isBase
+        ? `prepare_compound_repay received the Comet's base asset (${rawAsset}) but the wallet has no outstanding debt on ${cometAddr}. ` +
+          "This is a supply, not a repay — Compound deposits the base asset to the lender position when there is no debt to apply against. " +
+          "Call prepare_compound_supply with the same args."
+        : `prepare_compound_repay requires the Comet's base asset; received ${rawAsset} (collateral asset, baseToken is ${baseToken}). ` +
+          "Call prepare_compound_supply to supply collateral.";
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${refusalMessage}` }],
+        structuredContent: {
+          ...errEnvelope("INVALID_INPUT", refusalMessage),
+          hintTool: "prepare_compound_supply",
+        },
+      };
+    }
+
+    // intent === "repay-debt" — proceed with encoder.
+    // Resolve decimals. Registry-cache-first; live RPC on miss. Skipped on
+    // the "max" path because MAX_UINT256 doesn't need a decimals lookup —
+    // but we still resolve for the structuredContent surface (so the agent
+    // can round-trip the literal). Implementation: always resolve; cost is
+    // identical to the supply tool.
+    let decimals: number;
+    try {
+      const meta = await resolveDecimals(assetAddr, chainId);
+      decimals = meta.decimals;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `error: failed to resolve asset decimals for ${assetAddr}: ${message}`,
+          },
+        ],
+        structuredContent: errEnvelope(
+          "INTERNAL_ERROR",
+          `failed to resolve asset decimals for ${assetAddr}`,
+          message,
+        ),
+      };
+    }
+
+    // "max" handling — T-MAX-SPELLING-1 strict-equality (lowercase only).
+    // Any other spelling flows to parseAmountStrict and rejects.
+    let amountWei: bigint;
+    if (rawAmount === "max") {
+      amountWei = MAX_UINT256;
+    } else {
+      try {
+        amountWei = parseAmountStrict(rawAmount, decimals);
+      } catch (err) {
+        const message =
+          err instanceof InvalidAmountError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        return {
+          isError: true,
+          content: [
+            { type: "text", text: `error: invalid 'amount': ${message}` },
+          ],
+          structuredContent: errEnvelope("INVALID_INPUT", `invalid 'amount': ${message}`),
+        };
+      }
+    }
+
+    // SAME encoder as prepare_compound_supply — research § Topic 3
+    // Decision lock: repay and base-asset supply are byte-identical at
+    // the calldata layer; the discriminator is the intent gate.
+    const data: Hex = encodeCompoundSupply(assetAddr, amountWei);
+
+    const tx = {
+      chainId,
+      to: cometAddr,
+      valueWei: 0n,
+      data,
+    };
+
+    const payloadFingerprint = computePayloadFingerprint(tx);
+
+    const handle = createHandle({
+      args: {
+        to: rawComet,
+        valueWei: "0",
+        tokenAddress: rawAsset,
+        amount: rawAmount,
+      },
+      tx,
+      payloadFingerprint,
+    });
+
+    // RECEIPT surfaces the VERBATIM `rawAmount` (e.g. "max" stays "max" — not
+    // the resolved MAX_UINT256 hex). The DECODED ARGS block at preview time
+    // (Plan 28-04) surfaces the resolved hex for cross-check.
+    const baseReceipt = COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", `${chainName} (chainId ${chainId})`)
+      .replace("{COMET}", rawComet)
+      .replace("{ASSET}", rawAsset)
+      .replace("{AMOUNT}", rawAmount);
+    const receipt = fromCallerSupplied
+      ? `${baseReceipt}\n  from:         ${rawFrom}`
+      : baseReceipt;
+
+    return {
+      content: [{ type: "text", text: receipt }],
+      structuredContent: {
+        handle,
+        chain: chainName,
+        chainId,
+        comet: rawComet,
+        from: fromAddress,
+        asset: rawAsset,
+        amount: rawAmount,
+        amountWei: amountWei.toString(),
+        intent,
+        payloadFingerprint,
+      },
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [
+        { type: "text", text: `error: prepare_compound_repay failed: ${message}` },
+      ],
+      structuredContent: errEnvelope("INTERNAL_ERROR", "prepare_compound_repay failed", message),
+    };
+  }
+});

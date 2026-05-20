@@ -947,3 +947,75 @@ export const COMPOUND_WITHDRAW_PREPARE_RECEIPT_TEMPLATE: string = [
   "  asset:        {ASSET}",
   "  amount:       {AMOUNT}",
 ].join("\n");
+
+// -----------------------------------------------------------------------------
+// Phase 28 — Plan 28-03 additive extensions (APPEND-ONLY). The Phase 4 / 6 / 7 /
+// 8 / 9 / 28-02 templates above stay byte-identical (FROZEN). Two new PREPARE
+// RECEIPT templates back the reverse-intent tools `prepare_compound_borrow` +
+// `prepare_compound_repay`.
+//
+// The 4-tool Compound prepare surface is symmetric:
+//   - supply  / withdraw   (Plan 28-02 — forward intents)
+//   - borrow  / repay      (Plan 28-03 — reverse intents; same calldata
+//                            selectors as withdraw / supply respectively, the
+//                            INTENT is named at the tool surface)
+//
+// Plan 28-04 appends LEDGER_NOTICE_COMPOUND_TEMPLATE + 2 DECODED ARGS templates
+// at a distinct end-of-file region — no source-line collision.
+// -----------------------------------------------------------------------------
+
+/**
+ * Compound V3 borrow PREPARE RECEIPT (PREP-02 — verbatim agent args).
+ *
+ * Four slots: chain + comet + asset + amount. The borrow tool emits a
+ * `Comet.withdraw(asset, amount)` calldata (Compound V3 routes "withdraw the
+ * base asset against zero supply" as the borrow path at the protocol level),
+ * but the agent-facing tool name + this receipt template name the user-facing
+ * INTENT as `borrow` so the trust narrative the user reads on the device
+ * matches the operation in their head.
+ *
+ * `"max"` is NOT accepted by `prepare_compound_borrow` (borrowing the entire
+ * credit ceiling is an anti-pattern — over-borrows to liquidation; not a
+ * meaningful default). The `{AMOUNT}` slot carries a concrete decimal string.
+ *
+ * Substituted by `prepare_compound_borrow.ts`. Format-fanout-sentinel: one
+ * block, one home.
+ */
+export const COMPOUND_BORROW_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Compound V3 borrow",
+  "  chain:        {CHAIN}",
+  "  comet:        {COMET}",
+  "  asset:        {ASSET}",
+  "  amount:       {AMOUNT}",
+].join("\n");
+
+/**
+ * Compound V3 repay PREPARE RECEIPT (PREP-02 — verbatim agent args).
+ *
+ * Four slots: chain + comet + asset + amount. The repay tool emits a
+ * `Comet.supply(asset, amount)` calldata (Compound V3 routes "supply the base
+ * asset against existing debt" as the repay path — the Comet contract reduces
+ * debt first, then surplus deposits to the supply side), but the agent-facing
+ * tool name + this template name the INTENT as `repay`.
+ *
+ * `"max"` IS accepted (T-MAX-SPELLING-1 strict-equality, lowercase only). When
+ * the agent passes `"max"`, the `{AMOUNT}` slot renders `amount: max` verbatim
+ * (NOT the resolved MAX_UINT256 hex). Per Compound protocol semantics
+ * (research § Topic 4), `supply(base, MAX_UINT256)` is the full-position-close
+ * sentinel — the Comet contract clamps internally at actual debt; surplus
+ * deposits to the supply side. The DECODED ARGS block at preview time (Plan
+ * 28-04) surfaces the resolved hex + a `⚠ FULL POSITION REPAY (MAX_UINT256
+ * sentinel)` annotation for cross-check.
+ *
+ * Substituted by `prepare_compound_repay.ts`. Format-fanout-sentinel: one
+ * block, one home.
+ */
+export const COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Compound V3 repay",
+  "  chain:        {CHAIN}",
+  "  comet:        {COMET}",
+  "  asset:        {ASSET}",
+  "  amount:       {AMOUNT}",
+].join("\n");

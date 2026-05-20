@@ -7,6 +7,8 @@ import {
   AGENT_TASK_TEMPLATE,
   APPROVE_PREPARE_RECEIPT_TEMPLATE,
   CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE,
+  COMPOUND_BORROW_PREPARE_RECEIPT_TEMPLATE,
+  COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE,
   COMPOUND_SUPPLY_PREPARE_RECEIPT_TEMPLATE,
   COMPOUND_WITHDRAW_PREPARE_RECEIPT_TEMPLATE,
   ERC20_PREPARE_RECEIPT_TEMPLATE,
@@ -310,6 +312,69 @@ describe("Phase 28 Plan 28-02 — COMPOUND_WITHDRAW_PREPARE_RECEIPT_TEMPLATE byt
       .replace("{AMOUNT}", "max");
     expect(out).toContain("amount:       max");
     expect(out).not.toContain("ffffffff");
+    expect(out.includes("{")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 28 Plan 28-03 — COMPOUND_BORROW + COMPOUND_REPAY RECEIPT templates.
+// Two new templates (append-only); pre-existing Plan 28-02 templates byte-
+// identical (asserted above). Plan 28-04 adds LEDGER_NOTICE_COMPOUND + DECODED
+// ARGS templates.
+// ---------------------------------------------------------------------------
+
+describe("Phase 28 Plan 28-03 — COMPOUND_BORROW_PREPARE_RECEIPT_TEMPLATE byte-identity", () => {
+  it("4-slot template: chain + comet + asset + amount", () => {
+    expect(COMPOUND_BORROW_PREPARE_RECEIPT_TEMPLATE).toContain("PREPARE RECEIPT");
+    expect(COMPOUND_BORROW_PREPARE_RECEIPT_TEMPLATE).toContain("operation:    Compound V3 borrow");
+    expect(COMPOUND_BORROW_PREPARE_RECEIPT_TEMPLATE).toContain("{CHAIN}");
+    expect(COMPOUND_BORROW_PREPARE_RECEIPT_TEMPLATE).toContain("{COMET}");
+    expect(COMPOUND_BORROW_PREPARE_RECEIPT_TEMPLATE).toContain("{ASSET}");
+    expect(COMPOUND_BORROW_PREPARE_RECEIPT_TEMPLATE).toContain("{AMOUNT}");
+  });
+
+  it("verbatim substitution: all 4 slots replace cleanly with no remaining placeholders", () => {
+    const out = COMPOUND_BORROW_PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", "ethereum (chainId 1)")
+      .replace("{COMET}", "0xc3d688B66703497DAA19211EEdff47f25384cdc3")
+      .replace("{ASSET}", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+      .replace("{AMOUNT}", "50");
+    expect(out.includes("{")).toBe(false);
+    expect(out).toContain("Compound V3 borrow");
+    expect(out).toContain("comet:        0xc3d688B66703497DAA19211EEdff47f25384cdc3");
+    expect(out).toContain("amount:       50");
+  });
+});
+
+describe("Phase 28 Plan 28-03 — COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE byte-identity", () => {
+  it("4-slot template: chain + comet + asset + amount", () => {
+    expect(COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE).toContain("PREPARE RECEIPT");
+    expect(COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE).toContain("operation:    Compound V3 repay");
+    expect(COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE).toContain("{CHAIN}");
+    expect(COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE).toContain("{COMET}");
+    expect(COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE).toContain("{ASSET}");
+    expect(COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE).toContain("{AMOUNT}");
+  });
+
+  it("\"max\" verbatim substitution: AMOUNT slot renders 'max' (NOT the resolved hex)", () => {
+    const out = COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", "ethereum (chainId 1)")
+      .replace("{COMET}", "0xc3d688B66703497DAA19211EEdff47f25384cdc3")
+      .replace("{ASSET}", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+      .replace("{AMOUNT}", "max");
+    expect(out).toContain("amount:       max");
+    expect(out).not.toContain("ffffffff");
+    expect(out.includes("{")).toBe(false);
+  });
+
+  it("decimal substitution: AMOUNT slot renders concrete decimal verbatim (non-max path)", () => {
+    const out = COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", "ethereum (chainId 1)")
+      .replace("{COMET}", "0xc3d688B66703497DAA19211EEdff47f25384cdc3")
+      .replace("{ASSET}", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+      .replace("{AMOUNT}", "200.5");
+    expect(out).toContain("amount:       200.5");
+    expect(out).toContain("Compound V3 repay");
     expect(out.includes("{")).toBe(false);
   });
 });
