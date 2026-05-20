@@ -21,6 +21,7 @@ import "./list_paired_non_evm_accounts.js";
 import "./remove_paired_non_evm_account.js";
 import "./prepare_native_send.js";
 import "./prepare_token_send.js";
+import "./prepare_solana_native_send.js"; // Phase 12 Plan 12-02 (SOL-W-01) — Solana native send
 import "./prepare_token_approve.js";
 import "./prepare_revoke_approval.js";
 import "./prepare_weth_unwrap.js";
