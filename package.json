@@ -28,8 +28,12 @@
     "build:binary:windows-x64": "pkg . --fallback-to-source --target node22-win-x64 --out-path dist-binaries"
   },
   "pkg": {
-    "scripts": ["dist/**/*.js"],
-    "assets": ["package.json"]
+    "scripts": [
+      "dist/**/*.js"
+    ],
+    "assets": [
+      "package.json"
+    ]
   },
   "engines": {
     "node": ">=18.17"
@@ -39,6 +43,8 @@
   "dependencies": {
     "@clack/prompts": "^1.4.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
     "@walletconnect/sign-client": "^2.23.9",
     "@walletconnect/utils": "^2.23.9",
     "viem": "^2.48.0",
