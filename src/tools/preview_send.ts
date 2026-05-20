@@ -110,12 +110,16 @@ import {
   LEDGER_NOTICE_TRON_TEMPLATE,
   NO_SIMULATION_AVAILABLE_TRON_TEMPLATE,
   PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE,
+  PREPARE_RECEIPT_TRON_CLAIM_REWARDS_TEMPLATE,
   PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE,
   PREPARE_RECEIPT_TRON_STAKE_FREEZE_TEMPLATE,
   PREPARE_RECEIPT_TRON_STAKE_UNFREEZE_TEMPLATE,
+  PREPARE_RECEIPT_TRON_VOTE_TEMPLATE,
   PREPARE_RECEIPT_TRON_WITHDRAW_EXPIRE_TEMPLATE,
   PREPARE_RECEIPT_TRON_TRC20_TEMPLATE,
+  REWARD_ESTIMATE_TRON_TEMPLATE,
   SIMULATION_BLOCK_TRON_TEMPLATE,
+  SR_LABEL_TRON_TEMPLATE,
   STAKE_RESOURCE_TRON_TEMPLATE,
   STAKE_WAITING_PERIOD_TRON_TEMPLATE,
   UNLIMITED_APPROVAL_TRON_TEMPLATE,
@@ -1274,6 +1278,21 @@ function shouldEmitTronLedgerNotice(tx: PreparedTxTron):
       reason: "Protobuf-native contract distinct from TriggerSmartContract — blind-sign only on TRX app",
     };
   }
+  // Phase 19-03: vote + claim-rewards are also Protobuf-native.
+  if (tx.kind === "stake-vote") {
+    return {
+      emit: true,
+      instructionName: "TRON Stake 2.0 vote (VoteWitnessContract)",
+      reason: "Protobuf-native contract distinct from TriggerSmartContract — blind-sign only on TRX app",
+    };
+  }
+  if (tx.kind === "stake-claim-rewards") {
+    return {
+      emit: true,
+      instructionName: "TRON Stake 2.0 claim rewards (WithdrawBalanceContract)",
+      reason: "Protobuf-native contract distinct from TriggerSmartContract — blind-sign only on TRX app",
+    };
+  }
   return { emit: false, reason: "Phase 18 TRC-20 set in TRX app v0.5+ bundled registry" };
 }
 
@@ -1314,7 +1333,7 @@ async function previewSendTronBranch(
   //
   // No Layer 0.5 (canonical-dispatch-tron) call for any stake kind — Protobuf-native
   // contracts have no contract_address field (caller-side skip per D-11a ADDITIVE).
-  if (tronTx.kind === "stake-freeze" || tronTx.kind === "stake-unfreeze" || tronTx.kind === "stake-withdraw-expire") {
+  if (tronTx.kind === "stake-freeze" || tronTx.kind === "stake-unfreeze" || tronTx.kind === "stake-withdraw-expire" || tronTx.kind === "stake-vote" || tronTx.kind === "stake-claim-rewards") {
     // ---- Step 1: Layer 0.7 gate (asymmetric per D-04b) -------------------
     let stakeSimulation: import("../signing/simulation-tron.js").TronSimulationResult;
 
@@ -1460,19 +1479,48 @@ async function previewSendTronBranch(
 
     // ---- Step 4: Render blocks --------------------------------------------
     const summary0Stake = tronTx.instructionSummary?.[0];
-    const prepareReceiptStake = tronTx.kind === "stake-freeze"
-      ? PREPARE_RECEIPT_TRON_STAKE_FREEZE_TEMPLATE
-          .replace("{RESOURCE}", summary0Stake && "resource" in summary0Stake ? summary0Stake.resource : "")
-          .replace("{SUN}", summary0Stake && "sun" in summary0Stake ? (summary0Stake.sun as bigint).toString() : "")
-          .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
-          .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
-          .replace("{EXPIRATION}", String(tronTx.expiration))
-      : PREPARE_RECEIPT_TRON_STAKE_UNFREEZE_TEMPLATE
-          .replace("{RESOURCE}", summary0Stake && "resource" in summary0Stake ? summary0Stake.resource : "")
-          .replace("{SUN}", summary0Stake && "sun" in summary0Stake ? (summary0Stake.sun as bigint).toString() : "")
-          .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
-          .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
-          .replace("{EXPIRATION}", String(tronTx.expiration));
+
+    // Build prepare receipt per kind.
+    let prepareReceiptStake: string;
+    if (tronTx.kind === "stake-freeze") {
+      prepareReceiptStake = PREPARE_RECEIPT_TRON_STAKE_FREEZE_TEMPLATE
+        .replace("{RESOURCE}", summary0Stake && "resource" in summary0Stake ? summary0Stake.resource : "")
+        .replace("{SUN}", summary0Stake && "sun" in summary0Stake ? (summary0Stake.sun as bigint).toString() : "")
+        .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+        .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+        .replace("{EXPIRATION}", String(tronTx.expiration));
+    } else if (tronTx.kind === "stake-unfreeze") {
+      prepareReceiptStake = PREPARE_RECEIPT_TRON_STAKE_UNFREEZE_TEMPLATE
+        .replace("{RESOURCE}", summary0Stake && "resource" in summary0Stake ? summary0Stake.resource : "")
+        .replace("{SUN}", summary0Stake && "sun" in summary0Stake ? (summary0Stake.sun as bigint).toString() : "")
+        .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+        .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+        .replace("{EXPIRATION}", String(tronTx.expiration));
+    } else if (tronTx.kind === "stake-vote") {
+      // Phase 19-03: VoteWitnessContract — per-SR label rows embedded in {VOTE_ROWS}.
+      const voteRows = (summary0Stake && "votes" in summary0Stake ? summary0Stake.votes : []).map(
+        (v: { srAddress: string; count: number; label: string }) =>
+          SR_LABEL_TRON_TEMPLATE
+            .replace("{SR_RANK}", "?")
+            .replace("{SR_ADDRESS}", v.srAddress)
+            .replace("{SR_LABEL}", v.label)
+            .replace("{SR_COUNT}", String(v.count)),
+      ).join("\n");
+      const totalCountStake = summary0Stake && "totalCount" in summary0Stake ? (summary0Stake as { totalCount: number }).totalCount : 0;
+      prepareReceiptStake = PREPARE_RECEIPT_TRON_VOTE_TEMPLATE
+        .replace("{TOTAL_COUNT}", String(totalCountStake))
+        .replace("{SR_SOURCE}", "live") // advisory; tool prepares with actual source at prepare time
+        .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+        .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+        .replace("{EXPIRATION}", String(tronTx.expiration))
+        .replace("{VOTE_ROWS}", voteRows);
+    } else {
+      // stake-claim-rewards: WithdrawBalanceContract — no resource/amount args.
+      prepareReceiptStake = PREPARE_RECEIPT_TRON_CLAIM_REWARDS_TEMPLATE
+        .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+        .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+        .replace("{EXPIRATION}", String(tronTx.expiration));
+    }
 
     const resourceBlockStake = summary0Stake && "resource" in summary0Stake
       ? STAKE_RESOURCE_TRON_TEMPLATE
@@ -1490,6 +1538,11 @@ async function previewSendTronBranch(
       ? STAKE_WAITING_PERIOD_TRON_TEMPLATE
       : "";
 
+    // Advisory reward estimate block — only for stake-claim-rewards when estimatedRewardSun present.
+    const rewardEstimateBlockStake = (tronTx.kind === "stake-claim-rewards" && summary0Stake && "estimatedRewardSun" in summary0Stake && summary0Stake.estimatedRewardSun !== null)
+      ? REWARD_ESTIMATE_TRON_TEMPLATE.replace("{ESTIMATED_REWARD_SUN}", String((summary0Stake as { estimatedRewardSun: bigint | null }).estimatedRewardSun))
+      : "";
+
     const blindSignHashBlockStake = LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE
       .replace("{HASH_FULL_64HEX}", presignHashStake)
       .replace("{HASH_CHUNKED_4_CHAR_GROUPS}", chunkTronHash(presignHashStake));
@@ -1505,6 +1558,7 @@ async function previewSendTronBranch(
       prepareReceiptStake,
       ...(resourceBlockStake ? [resourceBlockStake] : []),
       ...(waitingPeriodBlockStake ? [waitingPeriodBlockStake] : []),
+      ...(rewardEstimateBlockStake ? [rewardEstimateBlockStake] : []),
       ...(ledgerNoticeBlockStake ? [ledgerNoticeBlockStake] : []),
       blindSignHashBlockStake,
       NO_SIMULATION_AVAILABLE_TRON_TEMPLATE,
