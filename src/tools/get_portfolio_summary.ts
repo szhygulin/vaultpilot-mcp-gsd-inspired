@@ -11,15 +11,29 @@ import {
   getMintDecimals as getSolanaMintDecimals,
   getSplTokenAccounts,
 } from "../chains/solana/sol-rpc-client.js";
+import {
+  getNativeBalance as getTronNativeBalance,
+  getTrc20Balance,
+} from "../chains/tron/tron-rpc-client.js";
 import { isDemoMode } from "../config/env.js";
-import { getActiveSolanaPersona } from "../demo/state.js";
+import {
+  getActiveSolanaPersona,
+  getActiveTronPersona,
+} from "../demo/state.js";
 import {
   chainIdFromName,
   type ChainId,
   type ChainName,
 } from "../config/contracts.js";
-import { getPrices, getSolanaPrices, type PriceCoin, type PriceQuote } from "../pricing/defillama.js";
+import {
+  getPrices,
+  getSolanaPrices,
+  getTronPrices,
+  type PriceCoin,
+  type PriceQuote,
+} from "../pricing/defillama.js";
 import { findByMint as findSolanaTokenByMint } from "../tokens/solana-top-50.js";
+import { listTronTokens } from "../tokens/tron-top-25.js";
 import { listAccounts } from "../wallet/non-evm-account-store.js";
 import { registerTool } from "./index.js";
 
@@ -37,7 +51,7 @@ import { registerTool } from "./index.js";
  * `chain` discriminator is load-bearing for the agent's flatten-and-aggregate
  * (Phase 8 retro).
  */
-export type PortfolioChainName = ChainName | "solana";
+export type PortfolioChainName = ChainName | "solana" | "tron";
 
 /**
  * Wrapped SOL mint — DefiLlama's canonical native-SOL pricing proxy. Prices
@@ -46,6 +60,19 @@ export type PortfolioChainName = ChainName | "solana";
  * for symmetry with the WETH-per-chain entries.
  */
 const WRAPPED_SOL_MINT = "So11111111111111111111111111111111111111112";
+
+/**
+ * Wrapped TRX (WTRX) — DefiLlama's canonical native-TRX pricing proxy.
+ * Prices identically to native TRX on the DefiLlama API (research § Topic 6
+ * + § Topic 7). The `NATIVE_PRICING_PROXY` table below maps
+ * `"tron" → WRAPPED_TRX_CONTRACT` for symmetry with WETH-per-chain + wSOL
+ * entries. WTRX itself is 6 decimals (NOT 9 like wSOL; NOT 18 like WETH) —
+ * TRX uses 6 decimals protocol-wide.
+ */
+const WRAPPED_TRX_CONTRACT = "TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR";
+
+/** TRX has 6 decimals (sun-per-TRX = 1_000_000), distinct from EVM's 18. */
+const TRX_NATIVE_DECIMALS = 6;
 
 const NATIVE_DECIMALS = 18;
 const DEFAULT_DUST_THRESHOLD_USD = 0.01;
@@ -80,6 +107,7 @@ const NATIVE_PRICING_PROXY: Record<PortfolioChainName, string> = {
   base: "0x4200000000000000000000000000000000000006", // OP-Stack WETH predeploy
   optimism: "0x4200000000000000000000000000000000000006", // OP-Stack WETH predeploy
   solana: WRAPPED_SOL_MINT, // wSOL — DefiLlama prices identically to native SOL (research § Topic 7)
+  tron: WRAPPED_TRX_CONTRACT, // WTRX — DefiLlama prices identically to native TRX (research § Topic 6 + § Topic 7)
 };
 
 const DESCRIPTION = [
@@ -115,6 +143,10 @@ const INPUT_SCHEMA = {
     includeSolana: {
       type: "boolean",
       description: "OPTIONAL. Phase 11 — Solana leg in the cross-chain fan-out. Default `true` when a Solana address is resolvable (paired record from `pair_solana_ledger`, OR active Solana demo persona). Set `false` to request EVM-only fan-out (back-compat). The Solana leg uses the resolved base58 address, NOT the agent's EVM `wallet` arg.",
+    },
+    includeTron: {
+      type: "boolean",
+      description: "OPTIONAL. Phase 17 — TRON leg in the cross-chain fan-out. Default `true` when a TRON address is resolvable (paired record from `pair_tron_ledger`, OR active TRON demo persona). Set `false` to request EVM+Solana-only fan-out (back-compat). The TRON leg uses the resolved base58check address, NOT the agent's EVM `wallet` arg.",
     },
   },
   required: ["wallet"],
@@ -192,7 +224,29 @@ interface SolanaChainPortfolio {
   rpcDegraded?: boolean;
 }
 
-type AnyChainPortfolio = ChainPortfolio | SolanaChainPortfolio;
+/**
+ * Phase 17 Plan 17-04 — TRON portfolio shape. Parallel to
+ * {@link SolanaChainPortfolio} (no `erc20Balances` deprecated alias — the
+ * name would mislead on a non-EVM chain). Native is TRX (6 decimals);
+ * fungible rows are TRC-20 contracts from `tron-top-25` registry.
+ *
+ * The `rpcDegraded` flag is reserved here for parity with the EVM /
+ * Solana shapes; Phase 17 doesn't expose a TronGrid fallback yet, so the
+ * field is always undefined for now. v2.1.x may wire a TronGrid /
+ * NowNodes / TronStack failover and surface the degraded flag here.
+ */
+interface TronChainPortfolio {
+  chain: "tron";
+  nativeBalance: NativeBalanceRow;
+  fungibleBalances: FungibleBalanceRow[];
+  totalUsd: string;
+  rpcDegraded?: boolean;
+}
+
+type AnyChainPortfolio =
+  | ChainPortfolio
+  | SolanaChainPortfolio
+  | TronChainPortfolio;
 
 interface CrossChainPortfolioResult {
   perChain: Partial<Record<PortfolioChainName, AnyChainPortfolio>>;
@@ -276,6 +330,19 @@ registerTool("get_portfolio_summary", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     includeSolana = includeSolanaRaw;
   }
 
+  // includeTron validation — defense in depth for non-MCP-dispatch callers.
+  const includeTronRaw = args.includeTron;
+  let includeTron = true;
+  if (includeTronRaw !== undefined) {
+    if (typeof includeTronRaw !== "boolean") {
+      return {
+        content: [{ type: "text", text: "error: `includeTron` must be a boolean" }],
+        isError: true,
+      };
+    }
+    includeTron = includeTronRaw;
+  }
+
   // CROSS-CHAIN branch: chain OMITTED. Fan out across all 5 EVM chains via
   // Promise.allSettled — each leg succeeds or fails independently; one
   // chain's RPC flake never poisons the whole response. The per-chain 10s
@@ -288,12 +355,16 @@ registerTool("get_portfolio_summary", DESCRIPTION, INPUT_SCHEMA, async (args) =>
   // when no Solana address resolves — matches "no chain configured" EVM
   // behavior; does NOT surface in `chainErrors`.
   const solanaWallet = includeSolana ? resolveSolanaWalletForFanOut() : null;
+  const tronWallet = includeTron ? resolveTronWalletForFanOut() : null;
 
   const evmResults = await Promise.allSettled(
     ALL_CHAINS.map((c) => readChainPortfolioWithTimeout(c, wallet, dustThreshold)),
   );
   const solanaResult = solanaWallet
     ? await Promise.allSettled([readSolanaPortfolioWithTimeout(solanaWallet, dustThreshold)])
+    : null;
+  const tronResult = tronWallet
+    ? await Promise.allSettled([readTronPortfolioWithTimeout(tronWallet, dustThreshold)])
     : null;
 
   const perChain: Partial<Record<PortfolioChainName, AnyChainPortfolio>> = {};
@@ -322,6 +393,18 @@ registerTool("get_portfolio_summary", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     } else {
       const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
       chainErrors.push({ chain: "solana", reason });
+    }
+  }
+
+  if (tronResult) {
+    const r = tronResult[0]!;
+    if (r.status === "fulfilled") {
+      perChain.tron = r.value;
+      const legUsd = parseFloat(r.value.totalUsd);
+      if (Number.isFinite(legUsd)) totalUsdNum += legUsd;
+    } else {
+      const reason = r.reason instanceof Error ? r.reason.message : String(r.reason);
+      chainErrors.push({ chain: "tron", reason });
     }
   }
 
@@ -706,6 +789,226 @@ async function readSolanaPortfolioWithTimeout(
 }
 
 /**
+ * Phase 17 Plan 17-04 — TRON fan-out address resolver. Mirror of
+ * {@link resolveSolanaWalletForFanOut}. Two-source resolution:
+ *
+ *   (1) REAL-MODE FIRST — paired TRON record from Plan 17-01's non-EVM
+ *       account store (`listAccounts({ chainFilter: "tron" })[0]`). When
+ *       the user has paired a Ledger TRON account via `pair_tron_ledger`,
+ *       the fan-out targets that address.
+ *   (2) DEMO-MODE FALLBACK — `getActiveTronPersona()?.tronAddress` from
+ *       Plan 17-05's persona registry. Only consulted when no paired
+ *       record exists AND `isDemoMode() === true`. Mirror of the Solana
+ *       FLAG-3 fallback.
+ *
+ * Returns the resolved base58check address, or `null` if neither source
+ * applies (real mode + no pair → silent skip, matching the "no chain
+ * configured" EVM behavior; does NOT surface in `chainErrors`).
+ *
+ * The resolver does NOT take the agent's `wallet` arg as input — the EVM
+ * `wallet` is 0x-prefixed hex, which is not a TRON address. The TRON leg
+ * fans out against a SEPARATE address sourced from the account store or
+ * persona registry.
+ */
+function resolveTronWalletForFanOut(): string | null {
+  // Real-mode first: paired record from Plan 17-01's account store.
+  const paired = listAccounts({ chainFilter: "tron" });
+  if (paired.length > 0 && paired[0]) return paired[0].address;
+  // Demo-mode fallback: active TRON persona (Plan 17-04 carve in state.ts;
+  // Plan 17-05 lands the full registry + setter wiring via set_demo_wallet).
+  if (isDemoMode()) {
+    const persona = getActiveTronPersona();
+    if (persona) return persona.tronAddress;
+  }
+  return null;
+}
+
+/**
+ * Phase 17 Plan 17-04 — TRON per-chain portfolio reader. Mirror of
+ * {@link readSolanaPortfolio} shape: native balance + curated TRC-20
+ * registry scan + DefiLlama pricing + dust filter + row aggregation.
+ *
+ * **NOT a per-token discovery scan** — TRON has no `getTokenAccountsByOwner`
+ * RPC analog (each TRC-20 contract is independent; balance is read by
+ * calling `balanceOf(wallet)` on each contract). We iterate the curated
+ * `tron-top-25` registry and call `balanceOf` per entry, then filter
+ * zero-balance rows. Off-list TRC-20 holdings are NOT surfaced in the
+ * portfolio leg — agent can call `get_tron_token_balance` directly with
+ * a known contract address for off-registry tokens.
+ *
+ * Per-token RPC failures don't abort the leg — the failing row carries
+ * an `error` field, exactly like the EVM `erc20-scanner.ts` shape. The
+ * `Promise.allSettled` outside this function catches whole-leg failures
+ * (e.g. RPC outage) and surfaces them as `chainErrors`.
+ *
+ * Pricing: `getTronPrices([WTRX, ...contract_addrs])` — batched DefiLlama
+ * lookup via `tron:<base58check>` keying. Native TRX prices via the WTRX
+ * proxy — DefiLlama prices it identically to native TRX.
+ */
+async function readTronPortfolio(
+  tronWallet: string,
+  dustThreshold: number,
+): Promise<TronChainPortfolio> {
+  // Native TRX balance + per-token TRC-20 reads in parallel. The TRC-20
+  // reads are issued in parallel via `Promise.allSettled` so a single
+  // contract's RPC failure (e.g. ABI mismatch) doesn't poison the leg.
+  const registryEntries = listTronTokens();
+
+  const [nativeRes, trc20Results] = await Promise.all([
+    getTronNativeBalance(tronWallet),
+    Promise.allSettled(
+      registryEntries.map((e) =>
+        getTrc20Balance(tronWallet, e.contractAddress),
+      ),
+    ),
+  ]);
+
+  // Build the resolved rows: registry entry + balance (or per-row error).
+  type ResolvedRow = {
+    contractAddress: string;
+    symbol: string;
+    decimals: number;
+    amount: bigint;
+    error?: string;
+  };
+  const resolved: ResolvedRow[] = trc20Results.map((r, i) => {
+    const entry = registryEntries[i]!;
+    if (r.status === "fulfilled") {
+      return {
+        contractAddress: entry.contractAddress,
+        symbol: entry.symbol,
+        decimals: entry.decimals,
+        amount: r.value,
+      };
+    }
+    return {
+      contractAddress: entry.contractAddress,
+      symbol: entry.symbol,
+      decimals: entry.decimals,
+      amount: 0n,
+      error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+    };
+  });
+
+  // Batched price lookup — WTRX (native proxy) + every curated contract.
+  const allAddrs = [
+    WRAPPED_TRX_CONTRACT,
+    ...registryEntries.map((e) => e.contractAddress),
+  ];
+  const prices = await getTronPrices(allAddrs);
+
+  // Native TRX row. WTRX serves as the pricing proxy (DefiLlama prices it
+  // identically to native TRX).
+  const wtrxQuote = prices.get(WRAPPED_TRX_CONTRACT);
+  const nativeRow = buildRow(
+    nativeRes.sun,
+    TRX_NATIVE_DECIMALS,
+    nativeRes.trx,
+    wtrxQuote,
+  );
+  const nativeOut: NativeBalanceRow = {
+    chain: "tron",
+    balance: nativeRow.balance,
+  };
+  if (nativeRow.balanceUsd !== undefined) nativeOut.balanceUsd = nativeRow.balanceUsd;
+  if (nativeRow.priceUnknown) nativeOut.priceUnknown = true;
+
+  // TRC-20 rows.
+  const fungibleOut: FungibleBalanceRow[] = [];
+  let totalUsd = 0;
+  if (nativeRow.usdValue !== undefined) totalUsd += nativeRow.usdValue;
+
+  for (const row of resolved) {
+    // Always preserve error rows — caller needs to see per-token RPC failures.
+    if (row.error !== undefined) {
+      fungibleOut.push({
+        chain: "tron",
+        tokenAddress: row.contractAddress,
+        symbol: row.symbol,
+        decimals: row.decimals,
+        balance: formatTokenBalance(row.amount, row.decimals),
+        error: row.error,
+      });
+      continue;
+    }
+    if (row.amount === 0n) continue; // Always drop true zeros.
+
+    const balanceStr = formatTokenBalance(row.amount, row.decimals);
+    const quote = prices.get(row.contractAddress);
+    const built = buildRow(row.amount, row.decimals, balanceStr, quote);
+
+    if (
+      dustThreshold > 0 &&
+      built.usdValue !== undefined &&
+      built.usdValue < dustThreshold
+    ) {
+      continue;
+    }
+
+    const out: FungibleBalanceRow = {
+      chain: "tron",
+      tokenAddress: row.contractAddress,
+      symbol: row.symbol,
+      decimals: row.decimals,
+      balance: built.balance,
+    };
+    if (built.balanceUsd !== undefined) out.balanceUsd = built.balanceUsd;
+    if (built.priceUnknown) out.priceUnknown = true;
+    fungibleOut.push(out);
+
+    if (built.usdValue !== undefined) totalUsd += built.usdValue;
+  }
+
+  // Native dust-filter — same symmetry as EVM / Solana path.
+  const includeNative =
+    nativeRes.sun > 0n &&
+    !(
+      dustThreshold > 0 &&
+      nativeRow.usdValue !== undefined &&
+      nativeRow.usdValue < dustThreshold
+    );
+  const finalNative: NativeBalanceRow = includeNative
+    ? nativeOut
+    : { chain: "tron", balance: nativeRes.trx };
+  let adjustedTotal = totalUsd;
+  if (!includeNative && nativeRow.usdValue !== undefined) {
+    adjustedTotal -= nativeRow.usdValue;
+  }
+
+  return {
+    chain: "tron",
+    nativeBalance: finalNative,
+    fungibleBalances: fungibleOut,
+    totalUsd: formatUsd(adjustedTotal),
+  };
+}
+
+/**
+ * TRON-leg timeout wrapper. Mirrors {@link readChainPortfolioWithTimeout}
+ * and {@link readSolanaPortfolioWithTimeout} — same 10s
+ * `PER_CHAIN_TIMEOUT_MS` AbortController + `Promise.race` shape.
+ */
+async function readTronPortfolioWithTimeout(
+  tronWallet: string,
+  dustThreshold: number,
+): Promise<TronChainPortfolio> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), PER_CHAIN_TIMEOUT_MS);
+  try {
+    return await Promise.race<TronChainPortfolio>([
+      readTronPortfolio(tronWallet, dustThreshold),
+      new Promise<TronChainPortfolio>((_, reject) => {
+        abort.signal.addEventListener("abort", () => {
+          reject(new Error(`timeout after ${PER_CHAIN_TIMEOUT_MS}ms`));
+        });
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Builds a per-row balance + USD computation from a raw bigint balance and an
  * optional price quote. Centralised so native + ERC-20 paths agree on shape.
  */
@@ -774,6 +1077,15 @@ function renderCrossChainSummary(
     const degraded = solPortfolio.rpcDegraded ? " (rpcDegraded)" : "";
     lines.push(
       `  solana: ${solPortfolio.nativeBalance.balance} (native) + ${count} SPL row${count === 1 ? "" : "s"} = ~$${solPortfolio.totalUsd}${degraded}`,
+    );
+  }
+  // TRON row — same shape as Solana (no erc20Balances on non-EVM chains).
+  const tronPortfolio = result.perChain.tron as TronChainPortfolio | undefined;
+  if (tronPortfolio) {
+    const count = tronPortfolio.fungibleBalances.length;
+    const degraded = tronPortfolio.rpcDegraded ? " (rpcDegraded)" : "";
+    lines.push(
+      `  tron: ${tronPortfolio.nativeBalance.balance} (native) + ${count} TRC-20 row${count === 1 ? "" : "s"} = ~$${tronPortfolio.totalUsd}${degraded}`,
     );
   }
   for (const { chain, reason } of result.chainErrors) {

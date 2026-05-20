@@ -275,6 +275,100 @@ export async function getSolanaPrices(
   return result;
 }
 
+/**
+ * Phase 17 — Plan 17-04. Sibling TRON-only pricing path. DefiLlama keys
+ * TRON coins as `tron:<base58check-contract>` (research § Topic 7 — verified
+ * against the live DefiLlama API). Mirror of {@link getSolanaPrices} —
+ * separate sibling for the same reason: the EVM `PriceCoin.chain: ChainName`
+ * literal-union excludes `"tron"`, and `address: Address` is the 0x-hex
+ * brand, which doesn't fit TRON's T-prefixed base58check.
+ *
+ * Returns a `Map<contractAddress, PriceQuote>` keyed by the input base58check
+ * contract address (case-preserved — TRON base58check is case-sensitive;
+ * lowercasing the T-prefix corrupts the encoding, same trap as Solana).
+ *
+ * Cache is SHARED with the EVM + Solana `cache` Map, keyed by `tron:<addr>`
+ * (distinct namespace from `<evmChain>:<address>` and `solana:<mint>` — no
+ * collision since the EVM `chain` literal-union excludes `"tron"` and Solana
+ * base58 cannot collide with TRON base58check addresses).
+ *
+ * Native TRX pricing: pass the WTRX contract
+ * `TNUC9Qb1rRpS5CbWLmNMxXBjyFoydXjWFR` — DefiLlama prices it identically to
+ * native TRX (research § Topic 6 + § Topic 7). Mirror of wSOL → SOL in the
+ * Solana path. `NATIVE_PRICING_PROXY.tron` in `get_portfolio_summary.ts`
+ * holds the WTRX address.
+ */
+export async function getTronPrices(
+  addresses: readonly string[],
+): Promise<Map<string, PriceQuote>> {
+  const result = new Map<string, PriceQuote>();
+  if (addresses.length === 0) return result;
+
+  const now = Date.now();
+  const toFetch: string[] = [];
+  const seen = new Set<string>();
+  for (const addr of addresses) {
+    if (typeof addr !== "string" || addr.length === 0) {
+      // Skip — non-string / empty input never reaches DefiLlama.
+      continue;
+    }
+    if (seen.has(addr)) continue;
+    seen.add(addr);
+    const key = `tron:${addr}`;
+    const cached = cache.get(key);
+    if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
+      result.set(addr, cached.quote);
+    } else {
+      toFetch.push(addr);
+    }
+  }
+
+  if (toFetch.length === 0) return result;
+
+  // DefiLlama TRON keying: `tron:<base58check>`, comma-joined. Base58check
+  // is case-sensitive — DO NOT lowercase (would silently miss).
+  const coins = toFetch.map((a) => `tron:${a}`).join(",");
+  const url = `${DEFILLAMA_BASE_URL}/prices/current/${coins}`;
+
+  let payload: DefiLlamaResponse | undefined;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    payload = (await response.json()) as DefiLlamaResponse;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(
+      "warn",
+      `defillama: tron price fetch failed (${message}); ${toFetch.length} addresses marked priceUnknown for ${CACHE_TTL_MS / 1000}s`,
+    );
+    for (const addr of toFetch) {
+      const quote: PriceQuote = { priceUnknown: true };
+      cache.set(`tron:${addr}`, { quote, fetchedAt: now });
+      result.set(addr, quote);
+    }
+    return result;
+  }
+
+  const coinsMap = (payload.coins ?? {}) as Record<string, { price?: unknown }>;
+  for (const addr of toFetch) {
+    const wireKey = `tron:${addr}`;
+    const entry = coinsMap[wireKey];
+    let quote: PriceQuote;
+    const price = entry?.price;
+    if (typeof price === "number" && Number.isFinite(price) && price >= 0) {
+      quote = { priceUsd: price };
+    } else {
+      quote = { priceUnknown: true };
+    }
+    cache.set(wireKey, { quote, fetchedAt: now });
+    result.set(addr, quote);
+  }
+
+  return result;
+}
+
 /** Test-only: clears the in-memory price cache so the next call refetches. */
 export function _resetPriceCacheForTesting(): void {
   cache.clear();
