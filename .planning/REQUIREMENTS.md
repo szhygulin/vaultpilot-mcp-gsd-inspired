@@ -358,7 +358,25 @@ Uniswap V3 swap + full LP verb set; Curve swap + add-liquidity (stETH/ETH legacy
 
 ### v2.5 Safe (Gnosis) multisig
 
-- **SAFE-01..N**: `get_safe_positions`, `prepare_safe_tx_propose` / `_approve` / `_execute`, `submit_safe_tx_signature` — three-step signing flow (propose → collect approvals → execute); Tx Service API integration; `enableModule` + `delegateCall: true` flagged for hard-trigger second-LLM check (Inv #12.5)
+User can read Safe (Gnosis) multisig positions, participate in the three-step propose → approve → execute signing flow, and submit signatures to the Safe Tx Service API for cross-signer coordination. `enableModule` and `delegateCall: true` operations get hard-trigger second-LLM check wiring (Inv #12.5) — Safe modules and delegate calls expand the multisig's authority beyond signed-tx execution and need extra-careful agent attention.
+
+#### Safe positions + Tx Service (SAFE-01..04)
+
+- [ ] **SAFE-01**: `get_safe_positions({ wallet, chain? })` returns Safes where the wallet is an owner; per-Safe surfaces address + owners[] + threshold + nonce + pendingTransactions[] + enabledModules[]
+- [ ] **SAFE-02**: `get_safe_transaction({ chain, safeAddress, safeTxHash })` returns full transaction details + collected signatures + required threshold
+- [ ] **SAFE-03**: Safe Tx Service API client (`src/clients/safe-tx-service.ts`) mirrors `etherscan.ts` shape per-chain (Ethereum + Arbitrum + Polygon + Base + Optimism endpoints documented at safe-global.com)
+- [ ] **SAFE-04**: Safe ProxyFactory + Singleton addresses sourced from `src/config/contracts.ts` per-chain table; canonical-dispatch allowlist Safe arm wiring (Singleton is the dispatch target for all Safe operations)
+
+#### Three-step signing flow (SAFE-05..08)
+
+- [ ] **SAFE-05**: `prepare_safe_tx_propose({ chain, safeAddress, to, value, data, operation })` builds the SafeTx hash + the EIP-712 typed-data structure; user signs the SafeTx hash via Ledger (typed-data signing required — depends on Ledger ETH app clear-sign-typed-data coverage, accepted-residual otherwise); SafeTx hash computation in `src/signing/safe-tx-hash.ts` (regression-tested with fixture Safe transactions)
+- [ ] **SAFE-06**: `prepare_safe_tx_approve({ chain, safeAddress, safeTxHash })` fetches the pending SafeTx from Tx Service, surfaces the decoded operation in CHECKS PERFORMED, prepares the user's signature
+- [ ] **SAFE-07**: `submit_safe_tx_signature({ chain, safeAddress, safeTxHash, signature })` submits the user's signature to the Tx Service (off-chain coordination — no on-chain tx)
+- [ ] **SAFE-08**: `prepare_safe_tx_execute({ chain, safeAddress, safeTxHash })` builds the on-chain execution transaction once enough signatures collected; signatures-bytes assembled from Tx Service state
+
+#### `enableModule` + `delegateCall` hard-trigger second-LLM check (SAFE-09 — Inv #12.5)
+
+- [ ] **SAFE-09**: `prepare_safe_tx_propose` (and `_approve`) detect `enableModule(...)` calldata pattern at preview time and emit a hard-trigger block `[HARD-TRIGGER — MODULE ENABLE]` instructing the agent to run `get_verification_artifact` AND surface the result to the user before requesting `userDecision`; `operation: 1` (delegateCall) hard-triggers a similar `[HARD-TRIGGER — DELEGATECALL]` block; both blocks are NOT structured refusals (the operations are legitimate) but the second-LLM check becomes a precondition the agent MUST surface to the user before signing; skill-side Inv #12.5 encoded in companion `vaultpilot-preflight` skill (sister-repo coordinated bump)
 
 ### v2.6 Bridge facet decoders + cross-chain hardening
 
