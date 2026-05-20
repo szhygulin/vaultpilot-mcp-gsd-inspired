@@ -77,6 +77,7 @@ import {
 import { _protocols, type Erc20Decoded } from "../protocols/erc20.js";
 import { _solanaSpl } from "../protocols/solana-spl.js";
 import { _solanaSystem } from "../protocols/solana-system.js";
+import { _tronStake } from "../protocols/tron-stake.js";
 import { WETH9_SELECTORS } from "../protocols/weth9.js";
 import { _canonicalDispatch } from "../security/canonical-dispatch.js";
 import { _canonicalDispatchSolana } from "../security/canonical-dispatch-solana.js";
@@ -110,10 +111,16 @@ import {
   NO_SIMULATION_AVAILABLE_TRON_TEMPLATE,
   PREPARE_RECEIPT_TRON_APPROVE_TEMPLATE,
   PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE,
+  PREPARE_RECEIPT_TRON_STAKE_FREEZE_TEMPLATE,
+  PREPARE_RECEIPT_TRON_STAKE_UNFREEZE_TEMPLATE,
+  PREPARE_RECEIPT_TRON_WITHDRAW_EXPIRE_TEMPLATE,
   PREPARE_RECEIPT_TRON_TRC20_TEMPLATE,
   SIMULATION_BLOCK_TRON_TEMPLATE,
+  STAKE_RESOURCE_TRON_TEMPLATE,
+  STAKE_WAITING_PERIOD_TRON_TEMPLATE,
   UNLIMITED_APPROVAL_TRON_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
+  WITHDRAWABLE_BALANCE_TRON_TEMPLATE,
 } from "../signing/blocks-tron.js";
 import {
   type ErrorCode,
@@ -1244,6 +1251,29 @@ function shouldEmitTronLedgerNotice(tx: PreparedTxTron):
       reason: "approve ABI distinct from transfer — not in TRX app v0.5+ bundled clear-sign registry",
     };
   }
+  // Phase 19-02: Stake 2.0 kinds are Protobuf-native — distinct shape from TriggerSmartContract;
+  // blind-sign only. LEDGER NOTICE is UNCONDITIONALLY emitted for all stake kinds.
+  if (tx.kind === "stake-freeze") {
+    return {
+      emit: true,
+      instructionName: "TRON Stake 2.0 freeze (FreezeBalanceV2Contract)",
+      reason: "Protobuf-native contract distinct from TriggerSmartContract — blind-sign only on TRX app",
+    };
+  }
+  if (tx.kind === "stake-unfreeze") {
+    return {
+      emit: true,
+      instructionName: "TRON Stake 2.0 unfreeze (UnfreezeBalanceV2Contract)",
+      reason: "Protobuf-native contract distinct from TriggerSmartContract — blind-sign only on TRX app",
+    };
+  }
+  if (tx.kind === "stake-withdraw-expire") {
+    return {
+      emit: true,
+      instructionName: "TRON Stake 2.0 withdraw expired unfreeze (WithdrawExpireUnfreezeContract)",
+      reason: "Protobuf-native contract distinct from TriggerSmartContract — blind-sign only on TRX app",
+    };
+  }
   return { emit: false, reason: "Phase 18 TRC-20 set in TRX app v0.5+ bundled registry" };
 }
 
@@ -1273,6 +1303,238 @@ async function previewSendTronBranch(
   structuredContent?: Record<string, unknown>;
 }> {
   const tronTx = record.tx;
+
+  // ---- Phase 19-02 — Stake 2.0 arms (EARLY RETURN before Layer 0.5 + Layer 0.7) ----
+  // Placement is LOAD-BEARING: fires BEFORE the approve/revoke arm and BEFORE the
+  // trc20-transfer-only Layer 0.5 stablecoin allowlist.
+  //
+  // stake-freeze / stake-unfreeze: advisory Layer 0.7 (NO_SIMULATION_AVAILABLE).
+  // stake-withdraw-expire: MANDATORY Layer 0.7 refusal if checkWithdrawableBalance === 0n
+  //   (D-04b asymmetric gate — prevents broadcasting a no-op tx).
+  //
+  // No Layer 0.5 (canonical-dispatch-tron) call for any stake kind — Protobuf-native
+  // contracts have no contract_address field (caller-side skip per D-11a ADDITIVE).
+  if (tronTx.kind === "stake-freeze" || tronTx.kind === "stake-unfreeze" || tronTx.kind === "stake-withdraw-expire") {
+    // ---- Step 1: Layer 0.7 gate (asymmetric per D-04b) -------------------
+    let stakeSimulation: import("../signing/simulation-tron.js").TronSimulationResult;
+
+    if (tronTx.kind === "stake-withdraw-expire") {
+      // MANDATORY refusal gate for withdraw-expire: check on-chain withdrawable balance.
+      const tronWebStake = _tronRegistry.getTronWeb();
+      const summary0Stake = tronTx.instructionSummary?.[0];
+      const ownerAddr = summary0Stake && "from" in summary0Stake ? summary0Stake.from : "";
+      let withdrawableCheck: { withdrawable: bigint; expiringAt: number | null };
+      try {
+        withdrawableCheck = await _tronStake.checkWithdrawableBalance(tronWebStake, ownerAddr);
+      } catch (_checkErr) {
+        // Fail-closed per D-04b: if RPC check fails, treat as 0 (refuse).
+        withdrawableCheck = { withdrawable: 0n, expiringAt: null };
+      }
+      if (withdrawableCheck.withdrawable === 0n) {
+        const message =
+          "TRON Stake 2.0 withdraw-expire refused: no expired unfreeze records found " +
+          "(Layer 0.7 mandatory refusal — D-04b). " +
+          "Wait 14 days from the unfreeze transaction before calling preview_send. " +
+          "Current on-chain withdrawable balance: 0 SUN.";
+        return {
+          isError: true,
+          content: [{ type: "text", text: `error: ${message}` }],
+          structuredContent: {
+            ...(errEnvelope("SIMULATION_REFUSED", message) as Record<string, unknown>),
+            simulation: { status: "refused", revertReason: "no expired unfreeze records", rpcError: null, energyUsed: null, constantResult: [] },
+          },
+        };
+      }
+      // PASS: withdrawable > 0n — emit WITHDRAWABLE_BALANCE_TRON_TEMPLATE advisory.
+      const expiryIso = withdrawableCheck.expiringAt
+        ? new Date(withdrawableCheck.expiringAt).toISOString()
+        : "n/a";
+      const withdrawableBlock = WITHDRAWABLE_BALANCE_TRON_TEMPLATE
+        .replace("{WITHDRAWABLE_SUN}", withdrawableCheck.withdrawable.toString())
+        .replace("{EARLIEST_EXPIRY_ISO}", expiryIso);
+      stakeSimulation = _simulationTron.emitNoSimulationAvailable();
+      // We'll inject the withdrawableBlock below.
+
+      // ---- Step 2: Recompute presignHash -----------------------------------
+      const rawDataBytesStakeW = Buffer.from(tronTx.rawDataHex, "hex");
+      const { presignHash: presignHashStakeW } = _tronPresign.computeTronPresignHash({
+        rawDataBytes: new Uint8Array(rawDataBytesStakeW),
+      });
+
+      // ---- Step 3: Mint previewToken + pin ----------------------------------
+      const previewTokenStakeW = crypto.randomUUID();
+      const transStakeW = transitionToPreviewed(record.handle, {
+        nonce: 0,
+        gas: 0n,
+        maxFeePerGas: 0n,
+        maxPriorityFeePerGas: 0n,
+        previewToken: previewTokenStakeW,
+        presignHash: presignHashStakeW,
+        selector: null,
+      });
+      if (!transStakeW.ok) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `error: handle state changed during preview (${transStakeW.errorCode})` }],
+          structuredContent: errEnvelope(transStakeW.errorCode, `handle transition failed: ${transStakeW.errorCode}`) as Record<string, unknown>,
+        };
+      }
+
+      // ---- Step 4: Render blocks --------------------------------------------
+      const prepareReceiptStakeW = PREPARE_RECEIPT_TRON_WITHDRAW_EXPIRE_TEMPLATE
+        .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+        .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+        .replace("{EXPIRATION}", String(tronTx.expiration));
+
+      const blindSignHashBlockStakeW = LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE
+        .replace("{HASH_FULL_64HEX}", presignHashStakeW)
+        .replace("{HASH_CHUNKED_4_CHAR_GROUPS}", chunkTronHash(presignHashStakeW));
+
+      const noticeDecisionStakeW = shouldEmitTronLedgerNotice(tronTx);
+      const ledgerNoticeBlockStakeW = noticeDecisionStakeW.emit
+        ? LEDGER_NOTICE_TRON_TEMPLATE
+            .replace("{INSTRUCTION_NAME}", noticeDecisionStakeW.instructionName)
+            .replace("{REGISTRY_STATUS}", noticeDecisionStakeW.reason)
+        : "";
+
+      const responseTextPartsStakeW = [
+        prepareReceiptStakeW,
+        withdrawableBlock,
+        ...(ledgerNoticeBlockStakeW ? [ledgerNoticeBlockStakeW] : []),
+        blindSignHashBlockStakeW,
+        VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
+        `\nPreview token: ${previewTokenStakeW}`,
+        `\nNext step: send_transaction({ handle: "${record.handle}", previewToken: "${previewTokenStakeW}", userDecision: "send" })`,
+      ];
+
+      return {
+        content: [{ type: "text", text: responseTextPartsStakeW.filter(Boolean).join("\n\n") }],
+        structuredContent: {
+          handle: record.handle,
+          chain: "tron",
+          kind: tronTx.kind,
+          previewToken: previewTokenStakeW,
+          presignHash: presignHashStakeW,
+          simulation: stakeSimulation,
+          withdrawableSun: withdrawableCheck.withdrawable.toString(),
+          payloadFingerprint: record.payloadFingerprint,
+          decodedArgs: tronTx.instructionSummary,
+          blockHeader: {
+            refBlockBytes: tronTx.refBlockBytes,
+            refBlockHash: tronTx.refBlockHash,
+            expiration: tronTx.expiration,
+          },
+          rawDataHex: tronTx.rawDataHex,
+          sessionTopicLast8: null,
+        },
+      };
+    }
+
+    // stake-freeze or stake-unfreeze: advisory path (NO_SIMULATION_AVAILABLE).
+    stakeSimulation = _simulationTron.emitNoSimulationAvailable();
+
+    // ---- Step 2: Recompute presignHash -----------------------------------
+    const rawDataBytesStake = Buffer.from(tronTx.rawDataHex, "hex");
+    const { presignHash: presignHashStake } = _tronPresign.computeTronPresignHash({
+      rawDataBytes: new Uint8Array(rawDataBytesStake),
+    });
+
+    // ---- Step 3: Mint previewToken + pin ----------------------------------
+    const previewTokenStake = crypto.randomUUID();
+    const transStake = transitionToPreviewed(record.handle, {
+      nonce: 0,
+      gas: 0n,
+      maxFeePerGas: 0n,
+      maxPriorityFeePerGas: 0n,
+      previewToken: previewTokenStake,
+      presignHash: presignHashStake,
+      selector: null,
+    });
+    if (!transStake.ok) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: handle state changed during preview (${transStake.errorCode})` }],
+        structuredContent: errEnvelope(transStake.errorCode, `handle transition failed: ${transStake.errorCode}`) as Record<string, unknown>,
+      };
+    }
+
+    // ---- Step 4: Render blocks --------------------------------------------
+    const summary0Stake = tronTx.instructionSummary?.[0];
+    const prepareReceiptStake = tronTx.kind === "stake-freeze"
+      ? PREPARE_RECEIPT_TRON_STAKE_FREEZE_TEMPLATE
+          .replace("{RESOURCE}", summary0Stake && "resource" in summary0Stake ? summary0Stake.resource : "")
+          .replace("{SUN}", summary0Stake && "sun" in summary0Stake ? (summary0Stake.sun as bigint).toString() : "")
+          .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+          .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+          .replace("{EXPIRATION}", String(tronTx.expiration))
+      : PREPARE_RECEIPT_TRON_STAKE_UNFREEZE_TEMPLATE
+          .replace("{RESOURCE}", summary0Stake && "resource" in summary0Stake ? summary0Stake.resource : "")
+          .replace("{SUN}", summary0Stake && "sun" in summary0Stake ? (summary0Stake.sun as bigint).toString() : "")
+          .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+          .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+          .replace("{EXPIRATION}", String(tronTx.expiration));
+
+    const resourceBlockStake = summary0Stake && "resource" in summary0Stake
+      ? STAKE_RESOURCE_TRON_TEMPLATE
+          .replace("{RESOURCE}", summary0Stake.resource)
+          .replace(
+            "{RESOURCE_DESCRIPTION}",
+            summary0Stake.resource === "ENERGY"
+              ? "ENERGY (consumed by TRC-20 transfers + contract calls — reduces gas costs)"
+              : "BANDWIDTH (consumed by tx broadcast — reduces transaction fees)",
+          )
+      : "";
+
+    // STAKE_WAITING_PERIOD_TRON_TEMPLATE only for unfreeze.
+    const waitingPeriodBlockStake = tronTx.kind === "stake-unfreeze"
+      ? STAKE_WAITING_PERIOD_TRON_TEMPLATE
+      : "";
+
+    const blindSignHashBlockStake = LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE
+      .replace("{HASH_FULL_64HEX}", presignHashStake)
+      .replace("{HASH_CHUNKED_4_CHAR_GROUPS}", chunkTronHash(presignHashStake));
+
+    const noticeDecisionStake = shouldEmitTronLedgerNotice(tronTx);
+    const ledgerNoticeBlockStake = noticeDecisionStake.emit
+      ? LEDGER_NOTICE_TRON_TEMPLATE
+          .replace("{INSTRUCTION_NAME}", noticeDecisionStake.instructionName)
+          .replace("{REGISTRY_STATUS}", noticeDecisionStake.reason)
+      : "";
+
+    const responseTextPartsStake = [
+      prepareReceiptStake,
+      ...(resourceBlockStake ? [resourceBlockStake] : []),
+      ...(waitingPeriodBlockStake ? [waitingPeriodBlockStake] : []),
+      ...(ledgerNoticeBlockStake ? [ledgerNoticeBlockStake] : []),
+      blindSignHashBlockStake,
+      NO_SIMULATION_AVAILABLE_TRON_TEMPLATE,
+      VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
+      `\nPreview token: ${previewTokenStake}`,
+      `\nNext step: send_transaction({ handle: "${record.handle}", previewToken: "${previewTokenStake}", userDecision: "send" })`,
+    ];
+
+    return {
+      content: [{ type: "text", text: responseTextPartsStake.filter(Boolean).join("\n\n") }],
+      structuredContent: {
+        handle: record.handle,
+        chain: "tron",
+        kind: tronTx.kind,
+        previewToken: previewTokenStake,
+        presignHash: presignHashStake,
+        simulation: stakeSimulation,
+        payloadFingerprint: record.payloadFingerprint,
+        decodedArgs: tronTx.instructionSummary,
+        blockHeader: {
+          refBlockBytes: tronTx.refBlockBytes,
+          refBlockHash: tronTx.refBlockHash,
+          expiration: tronTx.expiration,
+        },
+        rawDataHex: tronTx.rawDataHex,
+        sessionTopicLast8: null,
+      },
+    };
+  }
+  // End Phase 19-02 stake arms — fall through to approve/revoke + trc20-transfer + native arms.
 
   // ---- Phase 19 — approve/revoke arm (EARLY RETURN before Layer 0.5 + Layer 0.7) ----
   // Placement is LOAD-BEARING: fires BEFORE the trc20-transfer-only Layer 0.5 stablecoin
