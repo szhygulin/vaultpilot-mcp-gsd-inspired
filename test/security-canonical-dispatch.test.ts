@@ -20,6 +20,7 @@ import { getAddress, type Address } from "viem";
 
 import {
   getAaveV3PoolAddress,
+  getAllCompoundCometsForChain,
   getWethAddress,
   type ChainId,
 } from "../src/config/contracts.js";
@@ -47,8 +48,9 @@ const LIFI_DIAMOND: Address = getAddress(
 // BRIDGED_VARIANTS).
 // ---------------------------------------------------------------------------
 describe("CANONICAL_DISPATCH_TARGETS — per-chain Set size lower bounds (T-CANONICAL-DISPATCH-COVERAGE-1)", () => {
-  it("Ethereum (1) Set has >= 15 entries (4 canonical + BRIDGED_VARIANTS Ethereum rows)", () => {
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBeGreaterThanOrEqual(15);
+  it("Ethereum (1) Set has >= 21 entries (4 canonical + BRIDGED_VARIANTS Ethereum rows + 6 Compound Comets)", () => {
+    // Phase 28 Plan 28-04 — Ethereum-arm allowlist extended by 6 Comets.
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBeGreaterThanOrEqual(21);
   });
 
   it("Arbitrum (42161) Set has >= 8 entries", () => {
@@ -235,5 +237,59 @@ describe("BRIDGED_VARIANTS consumption — Phase 6 ERC-20 compatibility (T-ERC20
     const longTail = getAddress("0xfedcba9876543210fedcba9876543210fedcba98");
     const result = checkDispatchTarget(1, longTail);
     expect(result.kind).toBe("refused");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 28 Plan 28-04 — Compound V3 Comets in the Ethereum-arm allowlist.
+// All 6 mainnet Comets pass Layer 0.5; v2.3.x widens to other chains.
+// ---------------------------------------------------------------------------
+
+describe("Phase 28 Plan 28-04 — Compound V3 Comets in Ethereum-arm allowlist", () => {
+  it("Every Compound V3 mainnet Comet (6 addresses) is in the Ethereum allowlist", () => {
+    const comets = getAllCompoundCometsForChain(1);
+    expect(comets.length).toBe(6);
+    for (const comet of comets) {
+      expect(CANONICAL_DISPATCH_TARGETS[1].has(comet)).toBe(true);
+    }
+  });
+
+  it("Every Compound V3 mainnet Comet passes checkDispatchTarget on Ethereum (6 assertions)", () => {
+    for (const comet of getAllCompoundCometsForChain(1)) {
+      expect(checkDispatchTarget(1, comet)).toEqual({ kind: "ok" });
+    }
+  });
+
+  it("Compound V3 mainnet Comets are NOT in non-Ethereum allowlists (Phase 28 mainnet-only)", () => {
+    // Phase 28 is mainnet-only; v2.3.x widens to other chains. Until then,
+    // the Comet addresses MUST NOT appear on L2 allowlists (membership-leak
+    // anchor — preserves the per-chain SOT discipline).
+    const mainnetComets = getAllCompoundCometsForChain(1);
+    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
+    for (const chainId of otherChains) {
+      for (const comet of mainnetComets) {
+        expect(CANONICAL_DISPATCH_TARGETS[chainId].has(comet)).toBe(false);
+      }
+    }
+  });
+
+  it("getAllCompoundCometsForChain returns [] on non-mainnet — SOT cross-check", () => {
+    // The allowlist builder consumes this SOT getter directly; an empty
+    // return guarantees zero contamination across the Ethereum-arm extension.
+    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
+    for (const chainId of otherChains) {
+      expect(getAllCompoundCometsForChain(chainId)).toEqual([]);
+    }
+  });
+
+  it("Refused tx.to on Ethereum surfaces the Compound Comets in allowlist (verbatim)", () => {
+    const eoa = getAddress("0x0000000000000000000000000000000000000001");
+    const result = checkDispatchTarget(1, eoa);
+    expect(result.kind).toBe("refused");
+    if (result.kind !== "refused") return;
+    // All 6 Comets present in the refusal payload — agent can see them.
+    for (const comet of getAllCompoundCometsForChain(1)) {
+      expect(result.allowlist).toContain(comet);
+    }
   });
 });

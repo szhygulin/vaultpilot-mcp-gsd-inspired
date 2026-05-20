@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Hex } from "viem";
+import type { Address, Hex } from "viem";
 
 import {
   AAVE_SUPPLY_PREPARE_RECEIPT_TEMPLATE,
@@ -11,12 +11,16 @@ import {
   COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE,
   COMPOUND_SUPPLY_PREPARE_RECEIPT_TEMPLATE,
   COMPOUND_WITHDRAW_PREPARE_RECEIPT_TEMPLATE,
+  DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY,
+  DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW,
   ERC20_PREPARE_RECEIPT_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
+  LEDGER_NOTICE_COMPOUND_TEMPLATE,
   PREPARE_RECEIPT_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
   WETH_UNWRAP_PREPARE_RECEIPT_TEMPLATE,
   build4byteBlock,
+  buildCompoundDecodedArgsBlock,
   chunkHex,
 } from "../src/signing/blocks.js";
 import type { FourbyteResult } from "../src/clients/fourbyte.js";
@@ -376,5 +380,136 @@ describe("Phase 28 Plan 28-03 — COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE byte-i
     expect(out).toContain("amount:       200.5");
     expect(out).toContain("Compound V3 repay");
     expect(out.includes("{")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 28 Plan 28-04 — LEDGER_NOTICE_COMPOUND_TEMPLATE + DECODED_ARGS
+// COMPOUND_SUPPLY + COMPOUND_WITHDRAW templates. All 3 new templates byte-
+// identity asserted. Plans 28-02 / 28-03 templates above remain byte-identical.
+// ---------------------------------------------------------------------------
+
+describe("Phase 28 Plan 28-04 — LEDGER_NOTICE_COMPOUND_TEMPLATE byte-identity (research § Topic 8)", () => {
+  it("template carries the LEDGER NOTICE header + Compound-specific prose", () => {
+    expect(LEDGER_NOTICE_COMPOUND_TEMPLATE).toContain("LEDGER NOTICE");
+    expect(LEDGER_NOTICE_COMPOUND_TEMPLATE).toContain(
+      "Compound V3 supply / withdraw is NOT covered by the Ledger Ethereum app's ERC-7730 clear-sign registry.",
+    );
+    expect(LEDGER_NOTICE_COMPOUND_TEMPLATE).toContain("BLIND-SIGN");
+    expect(LEDGER_NOTICE_COMPOUND_TEMPLATE).toContain("Settings → Blind signing → Enabled");
+    expect(LEDGER_NOTICE_COMPOUND_TEMPLATE).toContain("cryptographic anchor");
+  });
+
+  it("template is byte-identical to research § Topic 8 — no inline substitution slots", () => {
+    // The Compound NOTICE is a fixed-text block — no {SLOT} placeholders.
+    expect(LEDGER_NOTICE_COMPOUND_TEMPLATE.includes("{")).toBe(false);
+  });
+
+  it("template parallels LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE shape (Phase 6 precedent)", () => {
+    // Same structural sections — header + protocol-specific warning + numbered
+    // remediation steps + closing cryptographic-anchor reference.
+    const lines = LEDGER_NOTICE_COMPOUND_TEMPLATE.split("\n");
+    expect(lines[0]).toBe("LEDGER NOTICE");
+    // Numbered remediation steps survive substitution.
+    expect(LEDGER_NOTICE_COMPOUND_TEMPLATE).toMatch(/1\.\s+Open the Ethereum app/);
+    expect(LEDGER_NOTICE_COMPOUND_TEMPLATE).toMatch(/2\.\s+Settings → Blind signing → Enabled/);
+    expect(LEDGER_NOTICE_COMPOUND_TEMPLATE).toMatch(/3\.\s+Retry send_transaction/);
+  });
+});
+
+describe("Phase 28 Plan 28-04 — DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY byte-identity", () => {
+  it("6-slot template: comet + asset + asset_label + amount_human + amount_wei + intent_label", () => {
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY).toContain("DECODED ARGS");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY).toContain("function:  supply");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY).toContain("{COMET}");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY).toContain("{ASSET}");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY).toContain("{ASSET_LABEL}");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY).toContain("{AMOUNT_HUMAN}");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY).toContain("{AMOUNT_WEI}");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY).toContain("{INTENT_LABEL}");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY).toContain("Compound V3 — canonical");
+  });
+
+  it("verbatim substitution: all 6 slots replace cleanly with no remaining placeholders", () => {
+    const out = DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY
+      .replace("{COMET}", "0xc3d688B66703497DAA19211EEdff47f25384cdc3")
+      .replace("{ASSET}", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+      .replace("{ASSET_LABEL}", "(USDC)")
+      .replace("{AMOUNT_HUMAN}", "100")
+      .replace("{AMOUNT_WEI}", "100000000")
+      .replace("{INTENT_LABEL}", "supply-collateral");
+    expect(out.includes("{")).toBe(false);
+    expect(out).toContain("comet:     0xc3d688B66703497DAA19211EEdff47f25384cdc3");
+    expect(out).toContain("asset:     0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48 (USDC)");
+    expect(out).toContain("amount:    100");
+    expect(out).toContain("amountWei: 100000000");
+    expect(out).toContain("intent:    supply-collateral");
+  });
+});
+
+describe("Phase 28 Plan 28-04 — DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW byte-identity", () => {
+  it("6-slot template: comet + asset + asset_label + amount_human + amount_wei + intent_label", () => {
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW).toContain("DECODED ARGS");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW).toContain("function:  withdraw");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW).toContain("{COMET}");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW).toContain("{ASSET}");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW).toContain("{ASSET_LABEL}");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW).toContain("{AMOUNT_HUMAN}");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW).toContain("{AMOUNT_WEI}");
+    expect(DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW).toContain("{INTENT_LABEL}");
+  });
+
+  it("intent label renders verbatim — `borrow` reverse-intent on the withdraw selector", () => {
+    const out = DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW
+      .replace("{COMET}", "0xc3d688B66703497DAA19211EEdff47f25384cdc3")
+      .replace("{ASSET}", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+      .replace("{ASSET_LABEL}", "(USDC)")
+      .replace("{AMOUNT_HUMAN}", "50")
+      .replace("{AMOUNT_WEI}", "50000000")
+      .replace("{INTENT_LABEL}", "borrow");
+    expect(out.includes("{")).toBe(false);
+    expect(out).toContain("intent:    borrow");
+  });
+});
+
+describe("Phase 28 Plan 28-04 — buildCompoundDecodedArgsBlock helper", () => {
+  const COMET = "0xc3d688B66703497DAA19211EEdff47f25384cdc3" as Address;
+  const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as Address;
+
+  it("supply branch: renders amount via formatUnits with tokenContext decimals", () => {
+    const out = buildCompoundDecodedArgsBlock(
+      { kind: "compound-supply", asset: USDC, amount: 100_000_000n, isMax: false },
+      { symbol: "USDC", decimals: 6 },
+      COMET,
+      "supply-collateral",
+    );
+    expect(out).toContain("function:  supply");
+    expect(out).toContain(`comet:     ${COMET} (Compound V3 — canonical)`);
+    expect(out).toContain(`asset:     ${USDC} (USDC)`);
+    expect(out).toContain("amount:    100");
+    expect(out).toContain("amountWei: 100000000");
+    expect(out).toContain("intent:    supply-collateral");
+  });
+
+  it("withdraw branch with isMax: renders ENTIRE BALANCE (uint256.max)", () => {
+    const MAX_UINT256 = 2n ** 256n - 1n;
+    const out = buildCompoundDecodedArgsBlock(
+      { kind: "compound-withdraw", asset: USDC, amount: MAX_UINT256, isMax: true },
+      { symbol: "USDC", decimals: 6 },
+      COMET,
+      "withdraw-collateral",
+    );
+    expect(out).toContain("amount:    ENTIRE BALANCE (uint256.max)");
+    expect(out).toContain("intent:    withdraw-collateral");
+  });
+
+  it("off-list asset: surfaces '(unknown asset — no registry match)' label", () => {
+    const out = buildCompoundDecodedArgsBlock(
+      { kind: "compound-supply", asset: USDC, amount: 100n, isMax: false },
+      null,
+      COMET,
+      "supply-collateral",
+    );
+    expect(out).toContain("(unknown asset — no registry match)");
   });
 });

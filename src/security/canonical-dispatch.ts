@@ -59,6 +59,7 @@ import { getAddress, type Address } from "viem";
 
 import {
   getAaveV3PoolAddress,
+  getAllCompoundCometsForChain,
   getWethAddress,
   type ChainId,
 } from "../config/contracts.js";
@@ -106,12 +107,20 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
   const tokenContracts = BRIDGED_VARIANTS
     .filter((v) => v.chainId === chainId)
     .map((v) => v.address);
+  // Phase 28 — Plan 28-04. Compound V3 Comets via the SOT getter (`get
+  // AllCompoundCometsForChain` — Plan 28-01). NO inline literals here. Phase
+  // 28 ships ONLY the Ethereum arm (chainId === 1 → 6 Comets); other chains
+  // return `[]` per the SOT contract. v2.3.x adds Polygon / Arbitrum / Base /
+  // Optimism Comets, at which point the SOT getter widens and this builder
+  // picks them up automatically — zero code change here.
+  const compoundComets = getAllCompoundCometsForChain(chainId);
   return new Set<Address>([
     getAaveV3PoolAddress(chainId),
     getWethAddress(chainId),
     ONEINCH_V6_ROUTER_ALL_CHAINS,
     LIFI_DIAMOND_ALL_CHAINS,
     ...tokenContracts,
+    ...compoundComets,
   ]);
 }
 
@@ -121,12 +130,13 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
  * new chain extends this Record alongside the `ChainId` union in
  * `src/config/contracts.ts`.
  *
- * Membership counts per chain (execute-time, 2026-05-18):
- *   - Ethereum (1):  20 entries (4 canonical + 17 BRIDGED_VARIANTS — 1 WETH overlap)
- *   - Arbitrum (42161): 21 entries (4 + 18 — 1 WETH overlap)
- *   - Polygon (137):    22 entries (4 + 19 — 1 WETH overlap)
- *   - Base (8453):       8 entries (4 + 5 — 1 WETH overlap)
- *   - Optimism (10):    17 entries (4 + 14 — 1 WETH overlap)
+ * Membership counts per chain (execute-time, 2026-05-20 — Phase 28 Plan 28-04
+ * Ethereum-arm extended by 6 Compound V3 Comets):
+ *   - Ethereum (1):  26 entries (4 canonical + 17 BRIDGED_VARIANTS — 1 WETH overlap + 6 Comets)
+ *   - Arbitrum (42161): 21 entries (4 + 18 — 1 WETH overlap; Compound v2.3.x)
+ *   - Polygon (137):    22 entries (4 + 19 — 1 WETH overlap; Compound v2.3.x)
+ *   - Base (8453):       8 entries (4 + 5 — 1 WETH overlap; Compound v2.3.x)
+ *   - Optimism (10):    17 entries (4 + 14 — 1 WETH overlap; Compound v2.3.x)
  */
 export const CANONICAL_DISPATCH_TARGETS: Readonly<
   Record<ChainId, ReadonlySet<Address>>

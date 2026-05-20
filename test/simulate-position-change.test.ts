@@ -18,9 +18,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 let publicNodeFallback = false;
 // Phase 8 — Plan 08-02: tool migrated to per-chain registry.
+// Phase 28 Plan 28-04: extended mock returns USDC decimals (6) for the base-
+// asset ERC-20 decimals() read used by the Compound dispatcher arm; other
+// reads return undefined and the production code's try/catch handles them.
 vi.mock("../src/chains/registry.js", () => {
   return {
-    getChainClient: () => ({ readContract: vi.fn() }) as unknown as PublicClient,
+    getChainClient: () =>
+      ({
+        readContract: vi.fn(async ({ functionName }: { functionName: string }) => {
+          if (functionName === "decimals") return 6;
+          if (functionName === "symbol") return "USDC";
+          return undefined;
+        }),
+      }) as unknown as PublicClient,
     isPublicNodeFallback: () => publicNodeFallback,
     _resetChainRegistryForTesting: () => {},
     PUBLICNODE_RPC_URLS: { 1: "https://test.invalid" },
@@ -28,6 +38,8 @@ vi.mock("../src/chains/registry.js", () => {
 });
 
 import { _aaveChains } from "../src/chains/aave-v3.js";
+import { _compoundChains } from "../src/chains/compound-v3.js";
+import { getCompoundCometAddress } from "../src/config/contracts.js";
 import { _resetDemoModeForTesting } from "../src/config/env.js";
 import { _resetActivePersonaForTesting, setActivePersona } from "../src/demo/state.js";
 import * as handleStoreModule from "../src/signing/handle-store.js";
@@ -495,5 +507,292 @@ describe("simulate_position_change — asset must be a listed reserve", () => {
     expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
       "INVALID_INPUT",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 28 Plan 28-04 — Compound V3 dispatcher arm. Aave-only tests above
+// remain BYTE-IDENTICAL — default `protocol: "aave-v3"` for back-compat.
+// ---------------------------------------------------------------------------
+
+const cUSDCv3 = getCompoundCometAddress(1, "USDC")!;
+const WBTC: Address = "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599";
+const PRICE_FEED = "0xfeed00000000000000000000000000000000feed" as Address;
+
+function mockCompoundState(overrides?: Parameters<typeof _compoundChains.getCometState>[0] extends never ? never : Partial<Awaited<ReturnType<typeof _compoundChains.getCometState>>>) {
+  // Default state: WBTC collateral wallet on cUSDCv3.
+  const base = {
+    comet: cUSDCv3,
+    baseToken: USDC,
+    baseSupplied: 0n,
+    baseBorrowed: 0n,
+    isBorrowCollateralized: true,
+    isLiquidatable: false,
+    supplyRate: 0n,
+    borrowRate: 0n,
+    utilization: 0n,
+    totalSupply: 0n,
+    totalBorrow: 0n,
+    numAssets: 1,
+    baseTokenPriceFeed: PRICE_FEED,
+    baseTokenPriceUsd: 10n ** 8n,
+    collateral: [],
+  };
+  return { ...base, ...overrides };
+}
+
+describe("simulate_position_change — Compound V3 dispatcher arm (Plan 28-04)", () => {
+  it("protocol: \"compound-v3\" without cometAddress → INVALID_INPUT", async () => {
+    const result = await callTool({
+      protocol: "compound-v3",
+      asset: USDC,
+      action: "supply",
+      amount: "100",
+    });
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as { errorCode: string };
+    expect(sc.errorCode).toBe("INVALID_INPUT");
+    expect(result.content[0]?.text).toMatch(/cometAddress/);
+  });
+
+  it("protocol: \"compound-v3\" with non-canonical cometAddress → INVALID_INPUT", async () => {
+    const result = await callTool({
+      protocol: "compound-v3",
+      cometAddress: "0xdEaDBeefDEaDbeefdEAdbEEFdEadbeeFDeAdbEEf",
+      asset: USDC,
+      action: "supply",
+      amount: "100",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/not in the canonical/);
+  });
+
+  it("protocol: \"compound-v3\" on non-mainnet → INVALID_INPUT (Phase 28 mainnet-only)", async () => {
+    const result = await callTool({
+      chain: "arbitrum",
+      protocol: "compound-v3",
+      cometAddress: cUSDCv3,
+      asset: USDC,
+      action: "supply",
+      amount: "100",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/Ethereum mainnet only/);
+  });
+
+  it("supply action: with WBTC collateral on cUSDCv3 → adds collateral; ratio improves", async () => {
+    // Wallet: 1 WBTC supplied, $20k USDC debt. ratio = 24000/20000 = 1.2.
+    // After supply: +1 WBTC → ratio = 48000/20000 = 2.4.
+    vi.spyOn(_compoundChains, "getCometState").mockResolvedValueOnce(
+      mockCompoundState({
+        baseBorrowed: 20_000n * 10n ** 6n,
+        numAssets: 1,
+      }),
+    );
+    vi.spyOn(_compoundChains, "getCometCollateralPositions").mockResolvedValueOnce([
+      {
+        asset: WBTC,
+        balance: 1n * 10n ** 8n,
+        priceUsd: 30_000n * 10n ** 8n,
+        priceFeed: PRICE_FEED,
+        scale: 10n ** 8n,
+        decimals: 8,
+        borrowCollateralFactor: 80n * 10n ** 16n,
+        liquidateCollateralFactor: 85n * 10n ** 16n,
+        liquidationFactor: 95n * 10n ** 16n,
+        supplyCap: 1_000n * 10n ** 8n,
+      },
+    ]);
+
+    const result = await callTool({
+      protocol: "compound-v3",
+      cometAddress: cUSDCv3,
+      asset: WBTC,
+      action: "supply",
+      amount: "1.0",
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      protocol: string;
+      currentRatio: string;
+      projectedRatio: string;
+      isBorrowCollateralizedCurrent: boolean;
+      isBorrowCollateralizedProjected: boolean;
+      liquidationRiskCurrent: string;
+      liquidationRiskProjected: string;
+    };
+    expect(sc.protocol).toBe("compound-v3");
+    expect(sc.currentRatio).toBe("1.2");
+    expect(sc.projectedRatio).toBe("2.4");
+    expect(sc.isBorrowCollateralizedCurrent).toBe(true);
+    expect(sc.isBorrowCollateralizedProjected).toBe(true);
+    expect(sc.liquidationRiskCurrent).toBe("warning");
+    expect(sc.liquidationRiskProjected).toBe("safe");
+  });
+
+  it("borrow action: adds debt; ratio degrades; would-liquidate warning emitted on safe→danger transition", async () => {
+    // Wallet: 1 WBTC supplied, $10k debt. ratio = 24000/10000 = 2.4 (safe).
+    // After borrowing $15k more → debt $25k → ratio = 24000/25000 = 0.96 (danger);
+    // 85%-weighted = $25500; debt $25k → NOT yet liquidatable (within grace band).
+    vi.spyOn(_compoundChains, "getCometState").mockResolvedValueOnce(
+      mockCompoundState({
+        baseBorrowed: 10_000n * 10n ** 6n,
+        numAssets: 1,
+      }),
+    );
+    vi.spyOn(_compoundChains, "getCometCollateralPositions").mockResolvedValueOnce([
+      {
+        asset: WBTC,
+        balance: 1n * 10n ** 8n,
+        priceUsd: 30_000n * 10n ** 8n,
+        priceFeed: PRICE_FEED,
+        scale: 10n ** 8n,
+        decimals: 8,
+        borrowCollateralFactor: 80n * 10n ** 16n,
+        liquidateCollateralFactor: 85n * 10n ** 16n,
+        liquidationFactor: 95n * 10n ** 16n,
+        supplyCap: 1_000n * 10n ** 8n,
+      },
+    ]);
+
+    const result = await callTool({
+      protocol: "compound-v3",
+      cometAddress: cUSDCv3,
+      asset: USDC,
+      action: "borrow",
+      amount: "15000",
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      currentRatio: string;
+      projectedRatio: string;
+      liquidationRiskCurrent: string;
+      liquidationRiskProjected: string;
+      warning?: string;
+    };
+    expect(sc.currentRatio).toBe("2.4");
+    expect(sc.liquidationRiskCurrent).toBe("safe");
+    expect(sc.liquidationRiskProjected).toBe("danger");
+    expect(sc.warning).toBe("would-liquidate");
+  });
+
+  it("repay action: reduces debt; ratio improves", async () => {
+    // Wallet: 1 WBTC supplied, $20k debt. ratio = 24000/20000 = 1.2 (warning).
+    // After repaying $10k → debt $10k → ratio = 24000/10000 = 2.4 (safe).
+    vi.spyOn(_compoundChains, "getCometState").mockResolvedValueOnce(
+      mockCompoundState({
+        baseBorrowed: 20_000n * 10n ** 6n,
+        numAssets: 1,
+      }),
+    );
+    vi.spyOn(_compoundChains, "getCometCollateralPositions").mockResolvedValueOnce([
+      {
+        asset: WBTC,
+        balance: 1n * 10n ** 8n,
+        priceUsd: 30_000n * 10n ** 8n,
+        priceFeed: PRICE_FEED,
+        scale: 10n ** 8n,
+        decimals: 8,
+        borrowCollateralFactor: 80n * 10n ** 16n,
+        liquidateCollateralFactor: 85n * 10n ** 16n,
+        liquidationFactor: 95n * 10n ** 16n,
+        supplyCap: 1_000n * 10n ** 8n,
+      },
+    ]);
+
+    const result = await callTool({
+      protocol: "compound-v3",
+      cometAddress: cUSDCv3,
+      asset: USDC,
+      action: "repay",
+      amount: "10000",
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      currentRatio: string;
+      projectedRatio: string;
+      liquidationRiskCurrent: string;
+      liquidationRiskProjected: string;
+    };
+    expect(sc.currentRatio).toBe("1.2");
+    expect(sc.projectedRatio).toBe("2.4");
+    expect(sc.liquidationRiskCurrent).toBe("warning");
+    expect(sc.liquidationRiskProjected).toBe("safe");
+  });
+
+  it("withdraw action on collateral: reduces collateral; ratio degrades", async () => {
+    // Wallet: 1 WBTC supplied, $10k debt. ratio = 2.4 (safe).
+    // After withdrawing 0.5 WBTC → collateral $15k × 0.80 = $12k → ratio 1.2 (warning).
+    vi.spyOn(_compoundChains, "getCometState").mockResolvedValueOnce(
+      mockCompoundState({
+        baseBorrowed: 10_000n * 10n ** 6n,
+        numAssets: 1,
+      }),
+    );
+    vi.spyOn(_compoundChains, "getCometCollateralPositions").mockResolvedValueOnce([
+      {
+        asset: WBTC,
+        balance: 1n * 10n ** 8n,
+        priceUsd: 30_000n * 10n ** 8n,
+        priceFeed: PRICE_FEED,
+        scale: 10n ** 8n,
+        decimals: 8,
+        borrowCollateralFactor: 80n * 10n ** 16n,
+        liquidateCollateralFactor: 85n * 10n ** 16n,
+        liquidationFactor: 95n * 10n ** 16n,
+        supplyCap: 1_000n * 10n ** 8n,
+      },
+    ]);
+
+    const result = await callTool({
+      protocol: "compound-v3",
+      cometAddress: cUSDCv3,
+      asset: WBTC,
+      action: "withdraw",
+      amount: "0.5",
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      currentRatio: string;
+      projectedRatio: string;
+      warning?: string;
+    };
+    expect(sc.currentRatio).toBe("2.4");
+    expect(sc.projectedRatio).toBe("1.2");
+    expect(sc.warning).toBe("near-liquidation");
+  });
+
+  it("borrow projection requires base token (refuses on non-base asset)", async () => {
+    vi.spyOn(_compoundChains, "getCometState").mockResolvedValueOnce(
+      mockCompoundState({ numAssets: 1 }),
+    );
+    vi.spyOn(_compoundChains, "getCometCollateralPositions").mockResolvedValueOnce([
+      {
+        asset: WBTC,
+        balance: 1n * 10n ** 8n,
+        priceUsd: 30_000n * 10n ** 8n,
+        priceFeed: PRICE_FEED,
+        scale: 10n ** 8n,
+        decimals: 8,
+        borrowCollateralFactor: 80n * 10n ** 16n,
+        liquidateCollateralFactor: 85n * 10n ** 16n,
+        liquidationFactor: 95n * 10n ** 16n,
+        supplyCap: 1_000n * 10n ** 8n,
+      },
+    ]);
+
+    const result = await callTool({
+      protocol: "compound-v3",
+      cometAddress: cUSDCv3,
+      asset: WBTC,
+      action: "borrow",
+      amount: "1.0",
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/borrow projection requires the base token/);
   });
 });

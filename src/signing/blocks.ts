@@ -1019,3 +1019,143 @@ export const COMPOUND_REPAY_PREPARE_RECEIPT_TEMPLATE: string = [
   "  asset:        {ASSET}",
   "  amount:       {AMOUNT}",
 ].join("\n");
+
+// -----------------------------------------------------------------------------
+// Phase 28 — Plan 28-04 additive extensions (APPEND-ONLY). All Phase 4 / 6 / 7 /
+// 8 / 9 / 28-02 / 28-03 templates above stay byte-identical (FROZEN). Three new
+// templates back the preview-time Compound V3 surface:
+//
+//   - LEDGER_NOTICE_COMPOUND_TEMPLATE          — blind-sign warning (Compound
+//                                                 NOT in LedgerHQ ERC-7730
+//                                                 registry per research §
+//                                                 Topic 8).
+//   - DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY    — DECODED ARGS for `supply` selector.
+//   - DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW  — DECODED ARGS for `withdraw` selector.
+//
+// The `{INTENT_LABEL}` slot on each DECODED ARGS template carries the
+// PREVIEW-TIME DERIVED intent label (`supply-collateral` / `repay-debt` /
+// `withdraw-collateral` / `borrow`) — NOT the agent's claimed tool name.
+// Defense-in-depth per patterns § 5 Anti-Pattern #7: prepare-time gates (Plans
+// 28-02 + 28-03) + preview-time re-derivation (Plan 28-04) cover different
+// attack shapes.
+//
+// LEDGER_NOTICE_COMPOUND_TEMPLATE mirrors `LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE`
+// (Phase 6) — same shape, same Settings → Blind signing path. Compound is NOT
+// in the LedgerHQ clear-signing registry as of 2026-05-20; the device will
+// blind-sign every Compound V3 transaction. The NOTICE block is emitted
+// immediately above the LEDGER BLIND-SIGN HASH block (consistent with WETH9
+// precedent).
+// -----------------------------------------------------------------------------
+
+/**
+ * `LEDGER NOTICE` block — emitted in preview_send ABOVE the LEDGER BLIND-SIGN
+ * HASH for Compound V3 calldata against a canonical Comet address. Research
+ * § Topic 8 (verified 2026-05-20 against [LedgerHQ/clear-signing-erc7730-
+ * registry/registry/](https://github.com/LedgerHQ/clear-signing-erc7730-
+ * registry/tree/master/registry) — 44 entries enumerated, NO `compound` or
+ * `comet` entry). The device WILL blind-sign every Compound V3 transaction;
+ * devices ship with blind-sign DISABLED by default — the user hits a
+ * confusing refusal ("Blind signing is not enabled") unless they enable the
+ * setting first.
+ *
+ * Block carries the exact Ledger UI navigation path so the user can enable
+ * the setting without leaving the rehearsal. Non-cryptographic UX defense —
+ * the trust anchor remains the LEDGER BLIND-SIGN HASH match (which the block
+ * re-anchors in its closing line).
+ *
+ * Conditional emission (preview_send): tx.chainId === 1 AND tx.to is in the
+ * Plan 28-01 canonical Comets set AND the calldata selector decodes to
+ * `compound-supply` or `compound-withdraw`. Defense against an unrelated
+ * contract that happens to expose a matching selector — only the SOT-
+ * canonical Comets get the NOTICE.
+ */
+export const LEDGER_NOTICE_COMPOUND_TEMPLATE: string = [
+  "LEDGER NOTICE",
+  "  Compound V3 supply / withdraw is NOT covered by the Ledger Ethereum app's ERC-7730 clear-sign registry.",
+  "  Your device WILL BLIND-SIGN this transaction (display a raw hash, no decoded args).",
+  "  If your device refuses with \"Blind signing is not enabled\":",
+  "    1. Open the Ethereum app on your device",
+  "    2. Settings → Blind signing → Enabled",
+  "    3. Retry send_transaction",
+  "  Match the LEDGER BLIND-SIGN HASH below CHARACTER-FOR-CHARACTER against",
+  "  the value your device displays — this is the cryptographic anchor.",
+].join("\n");
+
+/**
+ * DECODED ARGS block — Compound V3 `supply(asset, amount)` shape. Surfaces
+ * the comet (canonical Comet address from src/config/contracts.ts), asset
+ * (decoded from calldata, NOT record.tx.to per T-COMPOUND-TX-TO-CONFUSION-1),
+ * amount + amountWei, and the PREVIEW-TIME DERIVED intent label
+ * (`supply-collateral` or `repay-debt`).
+ */
+export const DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY: string = [
+  "DECODED ARGS",
+  "  function:  supply",
+  "  comet:     {COMET} (Compound V3 — canonical)",
+  "  asset:     {ASSET} {ASSET_LABEL}",
+  "  amount:    {AMOUNT_HUMAN}",
+  "  amountWei: {AMOUNT_WEI}",
+  "  intent:    {INTENT_LABEL}",
+].join("\n");
+
+/**
+ * DECODED ARGS block — Compound V3 `withdraw(asset, amount)` shape. Same
+ * shape as supply; `{AMOUNT_HUMAN}` swaps to "ENTIRE BALANCE (uint256.max)"
+ * when the decoded amount equals MAX_UINT256 (Compound's full-position-close
+ * sentinel). The `{INTENT_LABEL}` slot surfaces `withdraw-collateral` or
+ * `borrow` depending on the preview-time re-derivation.
+ */
+export const DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW: string = [
+  "DECODED ARGS",
+  "  function:  withdraw",
+  "  comet:     {COMET} (Compound V3 — canonical)",
+  "  asset:     {ASSET} {ASSET_LABEL}",
+  "  amount:    {AMOUNT_HUMAN}",
+  "  amountWei: {AMOUNT_WEI}",
+  "  intent:    {INTENT_LABEL}",
+].join("\n");
+
+/**
+ * Render the DECODED ARGS block for a Compound V3 decoded call. Parallel
+ * helper to `buildAaveDecodedArgsBlock`. The preview-time-derived `intent`
+ * label is what surfaces in the block — NOT the agent's claimed tool name.
+ *
+ * `tokenContext` is supplied by preview_send from a lookup against
+ * `decoded.asset` (T-COMPOUND-TX-TO-CONFUSION-1 mitigation — NOT
+ * `record.tx.to`; that's the Comet contract). Off-list assets surface `null`
+ * and the block emits a fallback label.
+ *
+ * `isMax` on the withdraw arm swaps the human amount for "ENTIRE BALANCE
+ * (uint256.max)" — Compound's protocol-level full-position-close sentinel.
+ */
+export function buildCompoundDecodedArgsBlock(
+  decoded: { kind: "compound-supply" | "compound-withdraw"; asset: Address; amount: bigint; isMax: boolean },
+  tokenContext: { symbol: string; decimals: number } | null,
+  cometAddress: Address,
+  intentLabel: string,
+): string {
+  const assetLabel = tokenContext
+    ? `(${tokenContext.symbol})`
+    : "(unknown asset — no registry match)";
+  const decimals = tokenContext?.decimals ?? 18;
+  if (decoded.kind === "compound-supply") {
+    return DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY
+      .replace("{COMET}", cometAddress)
+      .replace("{ASSET}", decoded.asset)
+      .replace("{ASSET_LABEL}", assetLabel)
+      .replace("{AMOUNT_HUMAN}", formatUnits(decoded.amount, decimals))
+      .replace("{AMOUNT_WEI}", decoded.amount.toString())
+      .replace("{INTENT_LABEL}", intentLabel);
+  }
+  // compound-withdraw
+  const amountHuman = decoded.isMax
+    ? "ENTIRE BALANCE (uint256.max)"
+    : formatUnits(decoded.amount, decimals);
+  return DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW
+    .replace("{COMET}", cometAddress)
+    .replace("{ASSET}", decoded.asset)
+    .replace("{ASSET_LABEL}", assetLabel)
+    .replace("{AMOUNT_HUMAN}", amountHuman)
+    .replace("{AMOUNT_WEI}", decoded.amount.toString())
+    .replace("{INTENT_LABEL}", intentLabel);
+}

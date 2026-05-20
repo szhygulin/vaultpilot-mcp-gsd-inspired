@@ -24,9 +24,10 @@
 // is the top-50 ERC-20s); rare misses surface as the literal underlying
 // address.
 
-import { formatUnits, getAddress, isAddress, type Address } from "viem";
+import { erc20Abi, formatUnits, getAddress, isAddress, type Address } from "viem";
 
 import { _aaveChains } from "../chains/aave-v3.js";
+import { _compoundChains, type CometStateDecoded } from "../chains/compound-v3.js";
 import { getChainClient, isPublicNodeFallback } from "../chains/registry.js";
 import { chainIdFromName, type ChainId, type ChainName } from "../config/contracts.js";
 import {
@@ -37,21 +38,27 @@ import {
   type DebtPosition,
   type LiquidationRisk,
 } from "../signing/aave-health.js";
+import {
+  computeCompoundCollateralization,
+  RATIO_SCALE,
+  type CompoundCollateralPosition,
+} from "../signing/compound-collateralization.js";
 import { loadTokenRegistry } from "../tokens/registry.js";
 import { registerTool } from "./index.js";
 
 const DESCRIPTION = [
-  "Read Aave V3 lending positions on a supported EVM chain for a wallet address.",
-  "Returns supplied + borrowed positions per asset, aggregate health factor, and liquidation-risk flag.",
-  "Use when the user asks about their Aave positions, lending balances, borrow position, or health factor.",
-  "Do NOT use for non-Aave lending — Compound / Morpho / etc. are v2.3+ scope.",
+  "Read DeFi lending positions on a supported EVM chain for a wallet address (Aave V3 across all 5 chains; on Ethereum mainnet, also Compound V3 across the 6 canonical Comets).",
+  "Returns per-position rows with a discriminator `protocol: \"aave-v3\" | \"compound-v3\"`, aggregate per-protocol summaries under `sources.{aave, compound}`, and protocol-native health metrics (Aave health factor; Compound `isBorrowCollateralized` + `isLiquidatable` booleans + derived collateralization ratio).",
+  "Use when the user asks about their Aave or Compound positions, lending balances, borrow position, or health factor.",
   "Do NOT use for non-lending wallet balances — call `get_portfolio_summary` for wallet-level holdings.",
   "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism. Aave V3 reserves differ per chain; the server resolves the per-chain UiPoolDataProvider via the typed SOT.",
-  "Returns `{ chain, wallet, positions: [...], totalCollateralUsd, totalDebtUsd, healthFactor, noDebt, liquidationRisk, userEModeCategoryId, rpcDegraded? }`.",
-  "`healthFactor` is `null` when the user has no debt (`noDebt: true`); the agent checks `noDebt` BEFORE comparing `healthFactor` numerically.",
+  "On Ethereum mainnet (chainId=1), the response ALSO returns Compound V3 positions across the 6 canonical Comets (cUSDCv3 / cUSDTv3 / cWETHv3 / cUSDSv3 / cwstETHv3 / cWBTCv3). Each position row carries a protocol discriminator (\"aave-v3\" | \"compound-v3\"); top-level `sources.{aave, compound}` summary surfaces both protocol arms with zero-value anchors (Compound arm zero-anchored on non-mainnet chains).",
+  "Returns `{ chain, chainId, wallet, positions: [...], totalCollateralUsd, totalDebtUsd, healthFactor, noDebt, liquidationRisk, userEModeCategoryId, sources: { aave: {...}, compound: { perComet: [...] } }, rpcDegraded? }`. `totalCollateralUsd` / `totalDebtUsd` / `healthFactor` / `noDebt` / `liquidationRisk` describe the AAVE arm (Compound carries its own per-Comet metrics under `sources.compound.perComet`).",
+  "`healthFactor` is `null` when the Aave user has no debt (`noDebt: true`); the agent checks `noDebt` BEFORE comparing `healthFactor` numerically.",
   "`liquidationRisk` is one of `\"safe\"` (HF >= 1.50), `\"warning\"` (1.10 <= HF < 1.50), `\"danger\"` (HF < 1.10), or `\"noDebt\"`.",
-  "Each position row carries `{ asset, symbol, decimals, suppliedHuman, suppliedUsd, borrowedHuman, borrowedUsd, liquidityRate, variableBorrowRate, liquidationThresholdBps, isFrozen, isActive, usageAsCollateralEnabledOnUser, aTokenAddress, variableDebtTokenAddress, priceInMarketReferenceCurrency }`.",
-  "Frozen / inactive reserves are surfaced verbatim — never silently omitted; the agent decides whether to route around them.",
+  "Each Aave position row carries `{ protocol: \"aave-v3\", asset, symbol, decimals, suppliedHuman, suppliedUsd, borrowedHuman, borrowedUsd, liquidityRate, variableBorrowRate, liquidationThresholdBps, isFrozen, isActive, usageAsCollateralEnabledOnUser, aTokenAddress, variableDebtTokenAddress, priceInMarketReferenceCurrency }`.",
+  "Each Compound position row carries `{ protocol: \"compound-v3\", comet, baseToken, baseSymbol, suppliedHuman, borrowedHuman, isBorrowCollateralized, isLiquidatable, liquidationCollateralRatio, liquidationRisk, collateral: [...] }`.",
+  "Frozen / inactive Aave reserves are surfaced verbatim — never silently omitted; the agent decides whether to route around them.",
   "eMode users see `userEModeCategoryId !== 0` surfaced verbatim. v1.1 health-factor math uses the per-asset liquidation threshold; v2.3 widens to per-category override (research § Topic 3 A3 caveat).",
   "Failure modes: INVALID_INPUT (malformed wallet address), INTERNAL_ERROR (RPC unreachable; the public-node fallback path has already been tried).",
 ].join(" ");
@@ -75,7 +82,8 @@ const INPUT_SCHEMA = {
   additionalProperties: false,
 };
 
-interface LendingPositionRow {
+interface AaveLendingPositionRow {
+  protocol: "aave-v3";
   asset: Address;
   symbol: string;
   decimals: number;
@@ -96,6 +104,55 @@ interface LendingPositionRow {
   priceInMarketReferenceCurrency: string;
 }
 
+interface CompoundCollateralRowSurface {
+  asset: Address;
+  balance: string;
+  balanceHuman: string;
+  priceUsd: string;
+  borrowCollateralFactor: string;
+  liquidateCollateralFactor: string;
+}
+
+interface CompoundLendingPositionRow {
+  protocol: "compound-v3";
+  comet: Address;
+  baseToken: Address;
+  baseSymbol: string;
+  baseDecimals: number;
+  suppliedScaled: string;
+  suppliedHuman: string;
+  borrowedScaled: string;
+  borrowedHuman: string;
+  isBorrowCollateralized: boolean;
+  isLiquidatable: boolean;
+  liquidationCollateralRatio: string | null;
+  liquidationRisk: LiquidationRisk;
+  collateral: CompoundCollateralRowSurface[];
+}
+
+type LendingPositionRow = AaveLendingPositionRow | CompoundLendingPositionRow;
+
+interface CompoundCometSummary {
+  comet: Address;
+  ratioScaled: string | null;
+  isBorrowCollateralized: boolean;
+  isLiquidatable: boolean;
+  noDebt: boolean;
+}
+
+interface SourcesSummary {
+  aave: {
+    totalCollateralUsd: string;
+    totalDebtUsd: string;
+    healthFactor: string | null;
+    liquidationRisk: LiquidationRisk;
+    noDebt: boolean;
+  };
+  compound: {
+    perComet: CompoundCometSummary[];
+  };
+}
+
 interface LendingPositionsResult {
   chain: ChainName;
   chainId: number;
@@ -107,55 +164,44 @@ interface LendingPositionsResult {
   noDebt: boolean;
   liquidationRisk: LiquidationRisk;
   userEModeCategoryId: number;
+  sources: SourcesSummary;
   rpcDegraded?: boolean;
 }
 
-registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) => {
-  // Phase 8 — Plan 08-02: chainId from the agent's `chain` enum. The
-  // ETHEREUM_CHAIN_ID constant retired in this migration — Aave V3 reserve
-  // sets differ per chain, so the chainId now flows through every read.
-  const chainName = args.chain as ChainName;
-  const chainId = chainIdFromName(chainName);
+/**
+ * Pure extraction of the Aave V3 read path. Plan 28-04 EXTENDS this tool with
+ * a Compound V3 branch via `Promise.all([readAavePositions, getAllCometStates])`.
+ *
+ * Byte-identity invariant: the Aave row shape is BYTE-IDENTICAL to pre-28-04
+ * — the only added field is the `protocol: "aave-v3"` discriminator. Test
+ * suite `test/get-lending-positions.test.ts` re-asserts this against a pinned
+ * fixture.
+ */
+async function readAavePositions(
+  client: import("viem").PublicClient,
+  chainId: ChainId,
+  wallet: Address,
+): Promise<{
+  positions: AaveLendingPositionRow[];
+  totalCollateralBase: bigint;
+  totalDebtBase: bigint;
+  collateralPositions: CollateralPosition[];
+  debtPositions: DebtPosition[];
+  baseUnit: bigint;
+  userEModeCategoryId: number;
+}> {
+  const [reservesData, userReservesData] = await Promise.all([
+    _aaveChains.getReservesData(client, chainId),
+    _aaveChains.getUserReservesData(client, chainId, wallet),
+  ]);
 
-  const walletRaw = args.wallet;
-  if (typeof walletRaw !== "string" || !isAddress(walletRaw, { strict: false })) {
-    return {
-      content: [{ type: "text", text: "error: `wallet` must be a valid 0x-prefixed EVM address" }],
-      isError: true,
-    };
-  }
-  const wallet: Address = getAddress(walletRaw);
-
-  const client = getChainClient(chainId);
-
-  let reservesData: Awaited<ReturnType<typeof _aaveChains.getReservesData>>;
-  let userReservesData: Awaited<ReturnType<typeof _aaveChains.getUserReservesData>>;
-  try {
-    [reservesData, userReservesData] = await Promise.all([
-      _aaveChains.getReservesData(client, chainId),
-      _aaveChains.getUserReservesData(client, chainId, wallet),
-    ]);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return {
-      content: [
-        {
-          type: "text",
-          text: `error: failed to read Aave V3 positions for ${wallet}: ${message}`,
-        },
-      ],
-      isError: true,
-    };
-  }
-
-  // Index reserves by underlyingAsset for O(1) join with user reserves.
   const reserveByAsset = new Map(
     reservesData.reserves.map((r) => [getAddress(r.underlyingAsset), r] as const),
   );
 
   const baseUnit = reservesData.baseCurrency.marketReferenceCurrencyUnit;
 
-  const positions: LendingPositionRow[] = [];
+  const positions: AaveLendingPositionRow[] = [];
   const collateralPositions: CollateralPosition[] = [];
   const debtPositions: DebtPosition[] = [];
 
@@ -165,18 +211,8 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
   for (const ur of userReservesData.userReserves) {
     const underlying = getAddress(ur.underlyingAsset);
     const reserve = reserveByAsset.get(underlying);
-    if (!reserve) {
-      // Defensive: getUserReservesData returns every reserve the user has
-      // touched; getReservesData returns every active reserve. A user-only
-      // entry without a matching reserve row would imply a stale read across
-      // the two calls — surface the row with sentinel values rather than
-      // silently dropping it.
-      continue;
-    }
+    if (!reserve) continue;
 
-    // Skip rows where the user has neither supplied nor borrowed. The
-    // protocol returns one userReserve entry per system reserve; the vast
-    // majority are zero/zero for any given user.
     if (ur.scaledATokenBalance === 0n && ur.scaledVariableDebt === 0n) continue;
 
     const row = buildPositionRow(ur, reserve, baseUnit, chainId);
@@ -209,17 +245,193 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     }
   }
 
-  const hf = computeHealthFactor({ collateralPositions, debtPositions });
-  const liquidationRisk = classifyLiquidationRisk(hf.healthFactorScaled, hf.noDebt);
+  return {
+    positions,
+    totalCollateralBase,
+    totalDebtBase,
+    collateralPositions,
+    debtPositions,
+    baseUnit,
+    userEModeCategoryId: userReservesData.userEModeCategoryId,
+  };
+}
 
-  const healthFactor =
-    hf.healthFactorScaled === null ? null : formatUnits(hf.healthFactorScaled, 18);
+/**
+ * Build a Compound V3 lending position row + the per-Comet summary block from
+ * a `CometStateDecoded` + an optional resolved base-token decimals/symbol.
+ * Returns `null` when the wallet has zero base + zero collateral on this Comet
+ * (the row is filtered out — mirror Aave skip-zero-reserves discipline). The
+ * per-Comet summary IS always emitted (zero-anchor — patterns § 2 T-LENDING-
+ * MULTIPROTOCOL-1).
+ */
+function buildCompoundRow(
+  state: CometStateDecoded,
+  baseTokenInfo: { symbol: string; decimals: number },
+): { row: CompoundLendingPositionRow | null; summary: CompoundCometSummary } {
+  // Build the pure-bigint collateral-math input.
+  const collateral: CompoundCollateralPosition[] = state.collateral.map((c) => ({
+    balance: c.balance,
+    priceUsd: c.priceUsd,
+    decimals: c.decimals,
+    borrowCollateralFactor: c.borrowCollateralFactor,
+    liquidateCollateralFactor: c.liquidateCollateralFactor,
+  }));
 
-  // baseCurrency.marketReferenceCurrencyUnit is 1e8 on mainnet (USD with 8
-  // decimals); formatUnits(base, 8) yields the dollar value.
-  const baseDecimals = countBaseDecimals(baseUnit);
-  const totalCollateralUsd = formatUsdFromBase(totalCollateralBase, baseDecimals);
-  const totalDebtUsd = formatUsdFromBase(totalDebtBase, baseDecimals);
+  const collateralization = computeCompoundCollateralization({
+    collateral,
+    base: {
+      baseBorrowed: state.baseBorrowed,
+      basePriceUsd: state.baseTokenPriceUsd,
+      baseDecimals: baseTokenInfo.decimals,
+    },
+  });
+
+  const ratioScaled = collateralization.ratioScaled;
+  const liquidationCollateralRatio =
+    ratioScaled === null ? null : formatUnits(ratioScaled, 18);
+
+  const summary: CompoundCometSummary = {
+    comet: state.comet,
+    ratioScaled: ratioScaled === null ? null : ratioScaled.toString(),
+    isBorrowCollateralized: state.isBorrowCollateralized,
+    isLiquidatable: state.isLiquidatable,
+    noDebt: state.baseBorrowed === 0n,
+  };
+
+  const hasNonzeroCollateral = state.collateral.some((c) => c.balance > 0n);
+  if (state.baseSupplied === 0n && state.baseBorrowed === 0n && !hasNonzeroCollateral) {
+    return { row: null, summary };
+  }
+
+  const collateralSurface: CompoundCollateralRowSurface[] = state.collateral.map((c) => ({
+    asset: c.asset,
+    balance: c.balance.toString(),
+    balanceHuman: formatUnits(c.balance, c.decimals),
+    priceUsd: formatUnits(c.priceUsd, 8),
+    borrowCollateralFactor: formatUnits(c.borrowCollateralFactor, 18),
+    liquidateCollateralFactor: formatUnits(c.liquidateCollateralFactor, 18),
+  }));
+
+  const row: CompoundLendingPositionRow = {
+    protocol: "compound-v3",
+    comet: state.comet,
+    baseToken: state.baseToken,
+    baseSymbol: baseTokenInfo.symbol,
+    baseDecimals: baseTokenInfo.decimals,
+    suppliedScaled: state.baseSupplied.toString(),
+    suppliedHuman: formatUnits(state.baseSupplied, baseTokenInfo.decimals),
+    borrowedScaled: state.baseBorrowed.toString(),
+    borrowedHuman: formatUnits(state.baseBorrowed, baseTokenInfo.decimals),
+    isBorrowCollateralized: state.isBorrowCollateralized,
+    isLiquidatable: state.isLiquidatable,
+    liquidationCollateralRatio,
+    liquidationRisk: collateralization.liquidationRisk,
+    collateral: collateralSurface,
+  };
+  return { row, summary };
+}
+
+/**
+ * Resolve `{ symbol, decimals }` for a Compound base token. Registry-first;
+ * RPC fallback. Best-effort — on RPC failure, returns sentinel `{ symbol:
+ * "?", decimals: 18 }`. Compound mainnet base tokens (USDC / USDT / WETH /
+ * USDS / wstETH / WBTC) are all in the top-50 registry for chainId=1.
+ */
+async function resolveBaseToken(
+  client: import("viem").PublicClient,
+  chainId: ChainId,
+  token: Address,
+): Promise<{ symbol: string; decimals: number }> {
+  const registry = loadTokenRegistry(chainId);
+  const hit = registry.find((entry) => entry.address === token);
+  if (hit) return { symbol: hit.symbol, decimals: hit.decimals };
+  try {
+    const [decimals, symbol] = await Promise.all([
+      client.readContract({ address: token, abi: erc20Abi, functionName: "decimals" }),
+      client.readContract({ address: token, abi: erc20Abi, functionName: "symbol" }),
+    ]);
+    return { symbol: String(symbol), decimals: Number(decimals) };
+  } catch {
+    return { symbol: "?", decimals: 18 };
+  }
+}
+
+registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) => {
+  // Phase 8 — Plan 08-02: chainId from the agent's `chain` enum. The
+  // ETHEREUM_CHAIN_ID constant retired in this migration — Aave V3 reserve
+  // sets differ per chain, so the chainId now flows through every read.
+  const chainName = args.chain as ChainName;
+  const chainId = chainIdFromName(chainName);
+
+  const walletRaw = args.wallet;
+  if (typeof walletRaw !== "string" || !isAddress(walletRaw, { strict: false })) {
+    return {
+      content: [{ type: "text", text: "error: `wallet` must be a valid 0x-prefixed EVM address" }],
+      isError: true,
+    };
+  }
+  const wallet: Address = getAddress(walletRaw);
+
+  const client = getChainClient(chainId);
+
+  // Phase 28 — Plan 28-04. Concurrent fan-out: Aave V3 reads + Compound V3
+  // multi-Comet reads. Compound is mainnet-only in Phase 28; non-mainnet
+  // chains short-circuit to an empty array (the Promise.resolve preserves
+  // the Promise.all shape without an additional RPC call).
+  let aaveLeg: Awaited<ReturnType<typeof readAavePositions>>;
+  let compoundLeg: CometStateDecoded[];
+  try {
+    [aaveLeg, compoundLeg] = await Promise.all([
+      readAavePositions(client, chainId, wallet),
+      chainId === 1
+        ? _compoundChains.getAllCometStates(client, chainId, wallet)
+        : Promise.resolve<CometStateDecoded[]>([]),
+    ]);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      content: [
+        {
+          type: "text",
+          text: `error: failed to read lending positions for ${wallet}: ${message}`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const aaveHf = computeHealthFactor({
+    collateralPositions: aaveLeg.collateralPositions,
+    debtPositions: aaveLeg.debtPositions,
+  });
+  const aaveLiquidationRisk = classifyLiquidationRisk(aaveHf.healthFactorScaled, aaveHf.noDebt);
+  const aaveHealthFactor =
+    aaveHf.healthFactorScaled === null ? null : formatUnits(aaveHf.healthFactorScaled, 18);
+
+  const baseDecimals = countBaseDecimals(aaveLeg.baseUnit);
+  const totalCollateralUsd = formatUsdFromBase(aaveLeg.totalCollateralBase, baseDecimals);
+  const totalDebtUsd = formatUsdFromBase(aaveLeg.totalDebtBase, baseDecimals);
+
+  // Build Compound rows + per-Comet summaries. Resolve base-token metadata in
+  // parallel (one resolve per Comet — the registry hit is synchronous; RPC
+  // fallback fires only for unmapped tokens).
+  const baseTokenInfos = await Promise.all(
+    compoundLeg.map((state) => resolveBaseToken(client, chainId, state.baseToken)),
+  );
+
+  const compoundRows: CompoundLendingPositionRow[] = [];
+  const compoundSummaries: CompoundCometSummary[] = [];
+  compoundLeg.forEach((state, i) => {
+    const baseTokenInfo = baseTokenInfos[i]!;
+    const { row, summary } = buildCompoundRow(state, baseTokenInfo);
+    compoundSummaries.push(summary);
+    if (row !== null) compoundRows.push(row);
+  });
+
+  // Merge Aave + Compound rows. Order is deterministic: Aave first (preserving
+  // pre-28-04 ordering for byte-identity), then Compound.
+  const aaveRows: AaveLendingPositionRow[] = aaveLeg.positions;
+  const positions: LendingPositionRow[] = [...aaveRows, ...compoundRows];
 
   const result: LendingPositionsResult = {
     chain: chainName,
@@ -228,19 +440,29 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     positions,
     totalCollateralUsd,
     totalDebtUsd,
-    healthFactor,
-    noDebt: hf.noDebt,
-    liquidationRisk,
-    userEModeCategoryId: userReservesData.userEModeCategoryId,
+    healthFactor: aaveHealthFactor,
+    noDebt: aaveHf.noDebt,
+    liquidationRisk: aaveLiquidationRisk,
+    userEModeCategoryId: aaveLeg.userEModeCategoryId,
+    sources: {
+      aave: {
+        totalCollateralUsd,
+        totalDebtUsd,
+        healthFactor: aaveHealthFactor,
+        liquidationRisk: aaveLiquidationRisk,
+        noDebt: aaveHf.noDebt,
+      },
+      compound: { perComet: compoundSummaries },
+    },
   };
   if (isPublicNodeFallback(chainId)) result.rpcDegraded = true;
 
   const summaryLines: string[] = [];
   summaryLines.push(`Aave V3 positions for ${wallet}:`);
-  if (positions.length === 0) {
+  if (aaveRows.length === 0) {
     summaryLines.push("  (no supplied or borrowed positions)");
   } else {
-    for (const p of positions) {
+    for (const p of aaveRows) {
       const parts: string[] = [];
       if (p.suppliedScaled !== "0") parts.push(`supplied ${p.suppliedHuman} ${p.symbol}`);
       if (p.borrowedScaled !== "0") parts.push(`borrowed ${p.borrowedHuman} ${p.symbol}`);
@@ -252,21 +474,51 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     }
   }
   const hfText =
-    hf.noDebt
+    aaveHf.noDebt
       ? "noDebt"
-      : healthFactor === null
+      : aaveHealthFactor === null
         ? "noDebt"
-        : `${Number(healthFactor).toFixed(4)} (${liquidationRisk})`;
+        : `${Number(aaveHealthFactor).toFixed(4)} (${aaveLiquidationRisk})`;
   summaryLines.push(
     `  collateral $${totalCollateralUsd} / debt $${totalDebtUsd} / HF ${hfText}${
       result.rpcDegraded ? " (rpcDegraded)" : ""
     }`,
   );
-  if (userReservesData.userEModeCategoryId !== 0) {
+  if (aaveLeg.userEModeCategoryId !== 0) {
     summaryLines.push(
-      `  eMode category ${userReservesData.userEModeCategoryId} (v1.1 uses per-asset LT — see tool description for v2.3 caveat)`,
+      `  eMode category ${aaveLeg.userEModeCategoryId} (v1.1 uses per-asset LT — see tool description for v2.3 caveat)`,
     );
   }
+
+  if (chainId === 1) {
+    summaryLines.push("");
+    summaryLines.push(`Compound V3 positions for ${wallet}:`);
+    if (compoundRows.length === 0) {
+      summaryLines.push("  (no supplied / borrowed / collateral positions across 6 Comets)");
+    } else {
+      for (const r of compoundRows) {
+        const parts: string[] = [];
+        if (r.suppliedScaled !== "0") parts.push(`supplied ${r.suppliedHuman} ${r.baseSymbol}`);
+        if (r.borrowedScaled !== "0") parts.push(`borrowed ${r.borrowedHuman} ${r.baseSymbol}`);
+        if (r.collateral.length > 0) {
+          const collateralParts = r.collateral.map((c) => `${c.balanceHuman} @ ${c.asset.slice(0, 8)}`);
+          parts.push(`collateral [${collateralParts.join(", ")}]`);
+        }
+        const riskText =
+          r.liquidationCollateralRatio === null
+            ? "noDebt"
+            : `ratio ${Number(r.liquidationCollateralRatio).toFixed(4)} (${r.liquidationRisk})`;
+        summaryLines.push(
+          `  ${r.comet}: ${parts.join(" + ")} — isBorrowCollateralized=${r.isBorrowCollateralized}, isLiquidatable=${r.isLiquidatable}, ${riskText}`,
+        );
+      }
+    }
+  }
+
+  // Suppress unused-import warning for the RATIO_SCALE re-export (used by
+  // downstream consumers + cross-tests; kept on the import path so a single
+  // edit doesn't cascade through the type chain).
+  void RATIO_SCALE;
 
   return {
     content: [{ type: "text", text: summaryLines.join("\n") }],
@@ -302,7 +554,7 @@ function buildPositionRow(
   },
   baseUnit: bigint,
   chainId: ChainId,
-): LendingPositionRow {
+): AaveLendingPositionRow {
   const decimals = Number(reserve.decimals);
   const baseDecimals = countBaseDecimals(baseUnit);
 
@@ -318,7 +570,11 @@ function buildPositionRow(
   // fallback path returns the literal address.
   const symbol = reserve.symbol.length > 0 ? reserve.symbol : resolveSymbolFallback(reserve.underlyingAsset, chainId);
 
+  // Phase 28 Plan 28-04: `protocol: "aave-v3"` discriminator added — the
+  // ONLY change to the Aave row shape. All other fields BYTE-IDENTICAL to
+  // pre-28-04.
   return {
+    protocol: "aave-v3",
     asset: getAddress(reserve.underlyingAsset),
     symbol,
     decimals,

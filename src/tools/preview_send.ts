@@ -52,6 +52,7 @@ import { erc20Abi, type Address, type Hex } from "viem";
 import { estimateFeesPerGas, estimateGas, getTransactionCount } from "viem/actions";
 import { Message, Transaction } from "@solana/web3.js";
 
+import { _compoundChains } from "../chains/compound-v3.js";
 import { getChainClient } from "../chains/registry.js";
 import { _solanaRegistry } from "../chains/solana/registry.js";
 import { lookupSelector } from "../clients/fourbyte.js";
@@ -59,6 +60,7 @@ import {
   chainIdFromName,
   chainNameFromId,
   getAaveV3PoolAddress,
+  getAllCompoundCometsForChain,
   getWethAddress,
   type ChainId,
   type ChainName,
@@ -66,6 +68,11 @@ import {
 import { isDemoMode } from "../config/env.js";
 import { getActivePersona } from "../demo/state.js";
 import { _aaveProtocols, type AaveV3Decoded } from "../protocols/aave-v3.js";
+import {
+  _compoundProtocols,
+  COMPOUND_V3_SELECTORS,
+  type CompoundV3Decoded,
+} from "../protocols/compound-v3.js";
 import { _protocols, type Erc20Decoded } from "../protocols/erc20.js";
 import { _solanaSpl } from "../protocols/solana-spl.js";
 import { _solanaSystem } from "../protocols/solana-system.js";
@@ -77,10 +84,12 @@ import {
   CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE,
   DISPATCH_TARGET_REFUSAL_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
+  LEDGER_NOTICE_COMPOUND_TEMPLATE,
   LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
   build4byteBlock,
   buildAaveDecodedArgsBlock,
+  buildCompoundDecodedArgsBlock,
   buildDecodedArgsBlock,
   buildSimulationBlock,
   chunkHex,
@@ -464,14 +473,22 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // the agent). _protocols indirection for ESM spy-affordance.
     const decodedArgs: Erc20Decoded = _protocols.decodeErc20Call(record.tx.data);
 
-    // Phase 7 — Plan 07-03: two-tier selector dispatch. If the ERC-20 decoder
-    // returned `kind: "unknown"`, try the Aave V3 decoder. ERC-20 selectors
-    // (transfer / approve / WETH9.withdraw) take precedence — the ABI dispatch
-    // tables are disjoint, so a clean fall-through is sufficient.
+    // Phase 7 — Plan 07-03 + Phase 28 — Plan 28-04: THREE-tier selector
+    // dispatch. If the ERC-20 decoder returned `kind: "unknown"`, try the Aave
+    // V3 decoder; if Aave also returns unknown, try the Compound V3 decoder.
+    // ERC-20 selectors (transfer / approve / WETH9.withdraw) take precedence
+    // — the ABI dispatch tables are disjoint, so a clean fall-through is
+    // sufficient.
     let aaveDecoded: AaveV3Decoded | null = null;
+    let compoundDecoded: Exclude<CompoundV3Decoded, { kind: "unknown" }> | null = null;
     if (decodedArgs.kind === "unknown") {
       const aave = _aaveProtocols.decodeAaveV3Call(record.tx.data);
-      if (aave.kind !== "unknown") aaveDecoded = aave;
+      if (aave.kind !== "unknown") {
+        aaveDecoded = aave;
+      } else {
+        const compound = _compoundProtocols.decodeCompoundV3Call(record.tx.data);
+        if (compound.kind !== "unknown") compoundDecoded = compound;
+      }
     }
 
     // Resolve token-decimals context for the DECODED ARGS block. Two paths:
@@ -510,6 +527,33 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
           // Best-effort. tokenContext stays null.
         }
       }
+    } else if (compoundDecoded !== null) {
+      // Phase 28 Plan 28-04: T-COMPOUND-TX-TO-CONFUSION-1 mitigation. Token
+      // context resolves against `compoundDecoded.asset` — NOT `record.tx.to`
+      // (the Comet contract). Registry-first; RPC fallback for long-tail
+      // assets that aren't in the top-50 registry.
+      const registry = loadTokenRegistry(record.tx.chainId as ChainId);
+      const entry = registry.find((e) => e.address === compoundDecoded!.asset);
+      tokenContext = entry ? { symbol: entry.symbol, decimals: entry.decimals } : null;
+      if (tokenContext === null) {
+        try {
+          const [d, sym] = await Promise.all([
+            client.readContract({
+              address: compoundDecoded.asset,
+              abi: erc20Abi,
+              functionName: "decimals",
+            }),
+            client.readContract({
+              address: compoundDecoded.asset,
+              abi: erc20Abi,
+              functionName: "symbol",
+            }),
+          ]);
+          tokenContext = { decimals: Number(d), symbol: String(sym) };
+        } catch {
+          // Best-effort. tokenContext stays null.
+        }
+      }
     } else if (decodedArgs.kind === "transfer" || decodedArgs.kind === "approve") {
       const registry = loadTokenRegistry(record.tx.chainId as ChainId);
       const entry = registry.find((e) => e.address === record.tx.to);
@@ -518,9 +562,41 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
         : null;
     }
 
-    // Decoded-args block selection — the Aave path uses the parallel helper
-    // (separate from the ERC-20 helper to keep both byte-frozen against
-    // template drift).
+    // Phase 28 Plan 28-04 — preview-time intent re-derivation (defense-in-
+    // depth). The same `deriveIntent` helper Plans 28-02 + 28-03 consume at
+    // prepare time runs again at preview time. If the on-chain state has
+    // drifted between prepare and preview (e.g. debt was repaid by a separate
+    // tx in the gap), the re-derivation labels the new reality. The user
+    // signing on the device sees the actual operation regardless of what label
+    // the agent claimed at prepare time.
+    //
+    // Surfaces in the DECODED ARGS block as the `intent:` line. Best-effort —
+    // RPC failure during re-derivation falls back to the raw selector label
+    // (compound-supply / compound-withdraw) rather than refusing.
+    let compoundIntentLabel: string = "";
+    if (compoundDecoded !== null) {
+      const selector =
+        compoundDecoded.kind === "compound-supply" ? "supply" : "withdraw";
+      try {
+        compoundIntentLabel = await _compoundChains.deriveIntent(
+          client,
+          record.tx.to,
+          senderAddress,
+          selector,
+          compoundDecoded.asset,
+        );
+      } catch {
+        // RPC failure — surface the raw selector kind so the user sees
+        // something rather than a missing line. Defensive only; the LEDGER
+        // BLIND-SIGN HASH match remains the trust anchor.
+        compoundIntentLabel =
+          compoundDecoded.kind === "compound-supply" ? "supply-collateral?" : "withdraw-collateral?";
+      }
+    }
+
+    // Decoded-args block selection — the Aave path uses a parallel helper, the
+    // Compound path uses ITS parallel helper (separate from ERC-20 + Aave to
+    // keep all three byte-frozen against template drift).
     const decodedArgsBlock =
       aaveDecoded !== null
         ? buildAaveDecodedArgsBlock(
@@ -528,7 +604,14 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
             tokenContext,
             getAaveV3PoolAddress(record.tx.chainId as ChainId),
           )
-        : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
+        : compoundDecoded !== null
+          ? buildCompoundDecodedArgsBlock(
+              compoundDecoded,
+              tokenContext,
+              record.tx.to,
+              compoundIntentLabel,
+            )
+          : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
 
     // Phase 6 — Plan 06-02: wide eth_call simulation. DF-1 LOCKED. Runs for
     // ALL tx shapes including native sends (defense-in-depth uniform per
@@ -579,9 +662,27 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     const isWethUnwrap =
       selector === WETH9_SELECTORS.withdraw &&
       record.tx.to === getWethAddress(record.tx.chainId as ChainId);
+
+    // Phase 28 Plan 28-04: LEDGER NOTICE for Compound V3. Research § Topic 8
+    // — Compound NOT in the LedgerHQ ERC-7730 clear-signing registry as of
+    // 2026-05-20; the device WILL blind-sign every Compound V3 transaction.
+    // Conditional emission: tx.chainId === 1 (Phase 28 mainnet-only) AND
+    // tx.to is in the canonical Comets set AND the selector matches one of
+    // the 2 Compound selectors. Defense against an unrelated contract that
+    // happens to expose a matching selector — only the SOT-canonical Comets
+    // get the NOTICE.
+    const isCompoundComet =
+      compoundDecoded !== null &&
+      record.tx.chainId === 1 &&
+      (selector === COMPOUND_V3_SELECTORS.supply ||
+        selector === COMPOUND_V3_SELECTORS.withdraw) &&
+      getAllCompoundCometsForChain(1).includes(record.tx.to);
+
     const ledgerNoticeBlock: string | null = isWethUnwrap
       ? LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE
-      : null;
+      : isCompoundComet
+        ? LEDGER_NOTICE_COMPOUND_TEMPLATE
+        : null;
 
     // Filter empty decoded-args block (unknown-kind / native sends) so the
     // text-array join doesn't emit a stray empty block alongside the 4byte
@@ -625,18 +726,34 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
               to: aaveDecoded.to,
               isMax: aaveDecoded.isMax,
             }
-        : decodedArgs.kind === "transfer"
-          ? { kind: "transfer" as const, to: decodedArgs.to, amount: decodedArgs.amount.toString() }
-          : decodedArgs.kind === "approve"
+        : compoundDecoded !== null
+          ? compoundDecoded.kind === "compound-supply"
             ? {
-                kind: "approve" as const,
-                spender: decodedArgs.spender,
-                amount: decodedArgs.amount.toString(),
-                isUnlimited: decodedArgs.isUnlimited,
+                kind: "compound-supply" as const,
+                asset: compoundDecoded.asset,
+                amount: compoundDecoded.amount.toString(),
+                isMax: compoundDecoded.isMax,
+                intent: compoundIntentLabel,
               }
-            : decodedArgs.kind === "withdraw"
-              ? { kind: "withdraw" as const, amount: decodedArgs.amount.toString() }
-              : { kind: "unknown" as const, selector: decodedArgs.selector };
+            : {
+                kind: "compound-withdraw" as const,
+                asset: compoundDecoded.asset,
+                amount: compoundDecoded.amount.toString(),
+                isMax: compoundDecoded.isMax,
+                intent: compoundIntentLabel,
+              }
+          : decodedArgs.kind === "transfer"
+            ? { kind: "transfer" as const, to: decodedArgs.to, amount: decodedArgs.amount.toString() }
+            : decodedArgs.kind === "approve"
+              ? {
+                  kind: "approve" as const,
+                  spender: decodedArgs.spender,
+                  amount: decodedArgs.amount.toString(),
+                  isUnlimited: decodedArgs.isUnlimited,
+                }
+              : decodedArgs.kind === "withdraw"
+                ? { kind: "withdraw" as const, amount: decodedArgs.amount.toString() }
+                : { kind: "unknown" as const, selector: decodedArgs.selector };
 
     return {
       content: [{ type: "text", text }],
@@ -658,10 +775,15 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
           resultData: simulationResult.resultData,
           errorMessage: simulationResult.errorMessage,
         },
-        // Plan 06-04: tag for forward-looking get_tx_verification re-emit
-        // (Plan 04-05 re-emit will need to pick up this branch in Phase 9).
-        // `null` when not a WETH unwrap; canonical tag string when emitted.
-        ledgerNotice: isWethUnwrap ? ("weth-unwrap-blind-sign" as const) : null,
+        // Plan 06-04 + Plan 28-04: tag for forward-looking get_tx_verification
+        // re-emit. `null` when no NOTICE; canonical tag string when emitted.
+        // Two tag values: `"weth-unwrap-blind-sign"` (Phase 6); `"compound-v3-
+        // blind-sign"` (Phase 28).
+        ledgerNotice: isCompoundComet
+          ? ("compound-v3-blind-sign" as const)
+          : isWethUnwrap
+            ? ("weth-unwrap-blind-sign" as const)
+            : null,
         // Plan 09-05 (SEC-36) — WC session topic surface for user cross-check
         // against Ledger Live → Settings → Connected Apps. `null` in demo
         // mode (no WC session); real-mode carries the last-8-chars of the WC
