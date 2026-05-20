@@ -221,3 +221,77 @@ TRON transactions carry two time-bounded fields:
 Phase 18 prepare tools extend the expiration to **900 seconds (15 minutes)** via `tronweb.transactionBuilder.extendExpiration(tx, 900)` to match the 15-minute handle TTL (`HANDLE_TTL_MS`). Without the extension, a user who pauses ~5 minutes between prepare and send would broadcast a stale transaction and receive `BROADCAST_FAILED: TRANSACTION_EXPIRATION_ERROR`.
 
 The 15-minute window sits inside the TAPOS replay window — both are valid for the same duration window. Past 15 minutes, the handle expires (`HANDLE_EXPIRED` envelope on `preview_send` / `send_transaction`), the user re-runs `prepare_tron_*` for a fresh handle with fresh ref-block + expiration fields. Defense-in-depth: the Layer 3 fingerprint-drift gate also catches any post-prepare in-process state corruption.
+
+## TRON v2.1 Phase 19 (TRC-20 approve + Stake 2.0)
+
+Phase 19 extends the Phase 18 trust pipeline to TRC-20 approve/revoke + the full Stake 2.0 lifecycle (freeze / unfreeze / withdraw-expire / vote / claim-rewards). All 7 new MCP tools consume the Phase 18 primitives shelf unchanged; no new cryptographic-binding primitives ship.
+
+### 1. TRC-20 approve — `⚠ UNLIMITED APPROVAL` + revoke byte-identity
+
+`prepare_tron_token_approve` accepts `amount: "max"` (strict lowercase equality) as the sentinel for `MAX_UINT256 = 2^256 - 1` (mirrors v1.1 Phase 6 PREP-29). On unlimited approve, the response emits `⚠ UNLIMITED APPROVAL (TRON)` block in CHECKS PERFORMED. The PREPARE RECEIPT surfaces the verbatim agent input (`amount: max`) — not the expanded 78-digit decimal — preserving the audit trail of agent intent.
+
+`prepare_tron_revoke_approval` is a distinct named tool calling the same internal `prepareTronApproveInternal` helper with `amountWei: 0n`. **T-TRON-REVOKE-DRIFT-1** asserts byte-identical `rawDataHex` + `payloadFingerprint` between `revoke({T,S})` and `approve({T,S,amount:"0"})` — the shared helper makes drift IMPOSSIBLE BY CONSTRUCTION.
+
+Spender labels resolved from `KNOWN_SPENDERS_TRON` (`src/config/contracts.ts` sibling sub-table); unknown spenders surface `(unknown spender — no prior interaction recorded)` literal. Labels are advisory; on-device base58check spender address is the trust anchor.
+
+### 2. Stake 2.0 resource semantics (Energy vs Bandwidth)
+
+`prepare_tron_stake_freeze` + `prepare_tron_stake_unfreeze` take a `resource: "ENERGY" | "BANDWIDTH"` enum (strict-equality — case variants rejected with `INVALID_INPUT`). The `STAKE_RESOURCE_TRON_TEMPLATE` block in CHECKS PERFORMED surfaces the resource semantics verbatim (`ENERGY` = consumed by TRC-20 transfers + contract calls; `BANDWIDTH` = consumed by tx broadcast). Users entering the wrong resource market still get a valid transaction (the calldata is well-formed); the surface block prevents silent confusion.
+
+### 3. Asymmetric Layer 0.7 simulation gate
+
+TRON simulation enforcement is asymmetric across `PreparedTxTron.kind` values:
+
+- `"trc20"` (transfer, approve, revoke) — MANDATORY refusal on `triggerconstantcontract` REVERT via `simulation-tron.ts` Layer 0.7. Existing Phase 18 behavior; unchanged.
+- `"stake-withdraw-expire"` — MANDATORY refusal when `_tronStake.checkWithdrawableBalance(tronWeb, fromAddress).withdrawable === 0n`. Uses `tronWeb.trx.getAccount` to read `unfrozenV2[]` records + sum matured `unfreeze_amount`. Refusal envelope surfaces `expiringAt` ISO timestamp. No server-side time-tracker per D-04c — leverages on-chain account state directly.
+- `"native"` + `"stake-freeze"` + `"stake-unfreeze"` + `"stake-vote"` + `"stake-claim-rewards"` — ADVISORY `NO_SIMULATION_AVAILABLE_TRON_TEMPLATE` block (NOT refusal). Defense for these kinds relies on PREPARE RECEIPT (byte-bound agent input) + LEDGER BLIND-SIGN HASH (TRON) (on-device SHA-256 tx-id match).
+
+The asymmetry is intentional: TRC-20 has on-chain simulation via `triggerconstantcontract`; Stake 2.0 Protobuf-native contracts do not (they are not TVM smart contracts). Withdraw-expire is the exception because the eligibility check is a cheap account-state read, not a contract simulation.
+
+### 4. SR registry trust source surfacing
+
+`prepare_tron_stake_vote` resolves SR labels via a hybrid registry (`src/protocols/tron-sr-registry.ts`):
+- PRIMARY: `tronWeb.trx.listSuperRepresentatives()` live fetch.
+- FALLBACK: bundled `src/tokens/tron-srs.json` snapshot (~30 entries) on RPC failure.
+
+The response ALWAYS surfaces `srSource: "live" | "snapshot-fallback"` so the trust source is unambiguous (mirrors `rpcDegraded` pattern from READ-05). Labels are advisory; on-device `vote_address` (base58check) is the trust anchor for user approval. Unknown SRs (not in either source) surface `(unverified SR — confirm address)` literal — not a positive label.
+
+Accepted residual: 6h SR rotation cadence vs per-release snapshot refresh cadence. Snapshot drift is bounded by release cadence and is degraded UX, not a safety failure.
+
+### 5. Voting rewards advisory — NO intent-vs-reality gate
+
+`prepare_tron_stake_claim_rewards` is zero-arg (calldata is `WithdrawBalanceContract()` with only `owner_address`). The advisory field `estimatedRewardSun: string | null` is computed best-effort via `tronWeb.trx.getReward(fromAddress)`. RPC failure demotes to `null` + CHECKS PERFORMED block `"estimate unavailable (RPC failure)"`.
+
+Deliberate departure from Phase 28 Compound's `INVALID_INPUT + hintTool` pattern: calldata has NO args to mismatch against. The protocol computes the actual reward at broadcast time; the agent-prepare-time estimate is informational, not a refusal trigger.
+
+### 6. `LEDGER NOTICE (TRON)` emitted for all Phase 19 tools
+
+None of Phase 19's 7 new tools target instructions present in the Ledger TRX-app bundled clear-sign registry. The TRX-app v1.0+ ships clear-sign decoders for native TRX `TransferContract` + the 4 stablecoin TRC-20 `transfer(to, amount)` calls (Phase 18). All Phase 19 calldata flows through blind-sign mode: user sees a 64-char SHA-256 tx-id and must match it character-for-character against the `LEDGER BLIND-SIGN HASH (TRON)` block in the preview output. The `LEDGER_NOTICE_TRON_TEMPLATE` (Phase 18 pre-staged) emits for every Phase 19 tool, naming the instruction + registry status `"not in TRX-app bundled clear-sign registry"`.
+
+Opposite of Phase 18's TRC-20 stablecoin transfer pattern where clear-sign coverage exists.
+
+### 7. Stake 1.0 deprecation regression locks
+
+`FreezeBalanceContract` (Stake 1.0) is deprecated by the TRON network as of `java-tron 4.6.0`. Using the wrong tronweb builder (`transactionBuilder.freezeBalance(amount, duration, resource, owner)`) silently produces `raw_data.contract[0].type === "FreezeBalanceContract"` — REJECTED by validators at broadcast (not caught by simulation; deprecation is enforced at the validator-rules layer, not the VM layer).
+
+Phase 19 locks against this regression at three layers:
+1. Fixture Tron-19-B asserts `raw_data.contract[0].type === "FreezeBalanceV2Contract"` (exact string match).
+2. Plan-check grep refuses any `transactionBuilder.freezeBalance\b` (word-boundary; prevents false match on `freezeBalanceV2`) call in `src/`.
+3. Cross-link from `prepare-tron-stake-freeze.test.ts` to the fixture anchor.
+
+### Phase 19 threat register summary
+
+| Threat ID | STRIDE | Severity | Mitigation |
+|-----------|--------|----------|------------|
+| T-SPENDER-SUB-1 | Tampering | HIGH | KNOWN_SPENDERS_TRON allowlist + `⚠ UNLIMITED APPROVAL` block + Ledger blind-sign |
+| T-TRON-REVOKE-DRIFT | Tampering | MEDIUM | Shared `prepareTronApproveInternal` makes drift impossible by construction |
+| T-MAX-EXPLICIT | Tampering | MEDIUM | Strict lowercase `"max"` sentinel; case variants rejected by `parseTronAmountStrict` |
+| T-STAKE2-DISTINCT | Tampering | HIGH | Fixture Tron-19-B `FreezeBalanceV2Contract` regression + grep at `src/` |
+| T-EARLY-WITHDRAW | Denial-of-Service | MEDIUM | Layer 0.7 mandatory refusal via `_tronStake.checkWithdrawableBalance` account read |
+| T-VOTE-MAP | Tampering | MEDIUM | Protocol-layer array→VoteInfo map conversion unit-tested |
+| T-SR-REGISTRY | Information Disclosure | LOW | Hybrid live+snapshot; `srSource` always surfaced; labels advisory |
+| T-REWARD-GATE | Repudiation | LOW | No gate on advisory estimate; zero-arg calldata has nothing to gate |
+| T-NUMBER-OVERFLOW | Tampering | MEDIUM | `Number()` conversion guard in encodeFreezeBalanceV2 |
+| T-FROZEN | Tampering | CRITICAL | `git diff origin/main -- <frozen-paths>` empty at Plan 19-04 commit; D-11a integration test assertion |
+
+Existing content (header, threat model intro, invariants 1-14, Solana section, Phase 18 TRON section) BYTE-FROZEN — only new content appended above.
