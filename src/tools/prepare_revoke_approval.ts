@@ -38,9 +38,10 @@ const DESCRIPTION = [
   "Do NOT use for ERC-20 transfers / native ETH / WETH unwrap / other contract calls — each has a dedicated prepare_* tool.",
   "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism.",
   "`tokenAddress` is the ERC-20 contract address (0x-prefixed 20-byte hex). `spender` is the contract whose allowance should be revoked.",
+  "Pass `from` when the user wants to act from a non-default approved account (visible in `get_ledger_status.accountsByChain[chainId]`); otherwise omit and the active account is used. PREPARE RECEIPT surfaces `From:` only when caller-supplied.",
   "Requires a paired Ledger (call pair_ledger_live first if get_ledger_status shows paired: false). In demo mode, succeeds against the active persona's address as `from`; send_transaction returns a simulation envelope instead of broadcasting.",
   "Returns the same shape as prepare_token_approve (`{ handle, chain, chainId, from, spender, tokenAddress, amount: \"0\", amountWei: \"0\", payloadFingerprint }`) plus the PREPARE RECEIPT and DECODED ARGS surface in preview_send.",
-  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set, INVALID_INPUT if chain/tokenAddress/spender malformed.",
+  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set OR if `from` doesn't match the active persona, INVALID_INPUT if chain/tokenAddress/spender/from malformed, INVALID_ACCOUNT if `from` is not in the per-chain approved set.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -62,6 +63,12 @@ const INPUT_SCHEMA = {
       pattern: "^0x[0-9a-fA-F]{40}$",
       description:
         "Contract address whose allowance is being revoked (0x-prefixed 20-byte hex). NOT a wallet address.",
+    },
+    from: {
+      type: "string",
+      pattern: "^0x[0-9a-fA-F]{40}$",
+      description:
+        "Optional sender address — must be one of the per-chain approved accounts in `get_ledger_status.accountsByChain[chainId]`. Omit to use the active account. In demo mode, must match the active persona's address.",
     },
   },
   required: ["chain", "tokenAddress", "spender"],
@@ -106,12 +113,14 @@ registerTool("prepare_revoke_approval", DESCRIPTION, INPUT_SCHEMA, async (args) 
 
     // Revoke is approve(spender, 0n). Delegate to the shared helper for
     // byte-identity with prepare_token_approve({ ..., amount: "0" }).
+    const rawFrom = typeof args.from === "string" ? args.from : undefined;
     return await prepareApproveInternal({
       rawTokenAddress,
       rawSpender,
       rawAmount: "0",
       amountWei: 0n,
       chainId,
+      rawFrom,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

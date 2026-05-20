@@ -83,6 +83,7 @@ const PAIRED_STATUS = {
   address: PRIMARY_ADDRESS,
   chainId: 1,
   sessionTopicLast8: "deadbeef",
+  accountsByChain: { 1: [PRIMARY_ADDRESS] } as Record<number, `0x${string}`[]>,
 };
 
 const WETH_CHECKSUMMED = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2";
@@ -323,5 +324,99 @@ describe("prepare_weth_unwrap — register-all wiring (smoke)", () => {
     const target = path.resolve(here, "..", "src", "tools", "register-all.ts");
     const source = await fs.readFile(target, "utf8");
     expect(source).toContain('import "./prepare_weth_unwrap.js";');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #62 — optional `from` parameter.
+// ---------------------------------------------------------------------------
+describe("prepare_weth_unwrap — optional `from` param (Issue #62)", () => {
+  const NON_DEFAULT = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`;
+  const NOT_IN_SESSION = "0xabcDEF0123456789aBCdef0123456789AbCdEF01" as `0x${string}`;
+  const MULTI_ACCOUNT_STATUS = {
+    ...PAIRED_STATUS,
+    accounts: [PRIMARY_ADDRESS, NON_DEFAULT],
+    accountsByChain: { 1: [PRIMARY_ADDRESS, NON_DEFAULT] } as Record<number, `0x${string}`[]>,
+  };
+
+  it("supplied + in approved set → uses it; receipt includes `from:`; fingerprint anchors to Fixture F", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callTool({ amount: FIXTURE_F_AMOUNT, from: NON_DEFAULT });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { from: string; payloadFingerprint: string };
+    expect(sc.from).toBe(NON_DEFAULT);
+    expect(sc.payloadFingerprint).toBe(FIXTURE_F_FINGERPRINT);
+    expect(result.content[0]?.text ?? "").toContain(`from:         ${NON_DEFAULT}`);
+  });
+
+  it("supplied + NOT in approved set → INVALID_ACCOUNT", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callTool({ amount: FIXTURE_F_AMOUNT, from: NOT_IN_SESSION });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "INVALID_ACCOUNT",
+    );
+    expect(createHandleSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("supplied + malformed → INVALID_INPUT", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callTool({ amount: FIXTURE_F_AMOUNT, from: "0xZZZ" });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "INVALID_INPUT",
+    );
+    expect(createHandleSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("omitted → byte-identical to today; receipt does NOT include `from:`", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callTool({ amount: FIXTURE_F_AMOUNT });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0]?.text ?? "").not.toMatch(/^\s*from:/im);
+  });
+
+  it("fixture re-anchor: payloadFingerprint with `from` == without for same {amount, chain}", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const withFrom = await callTool({ amount: FIXTURE_F_AMOUNT, from: NON_DEFAULT });
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const withoutFrom = await callTool({ amount: FIXTURE_F_AMOUNT });
+
+    const fpA = (withFrom.structuredContent as { payloadFingerprint: string })
+      .payloadFingerprint;
+    const fpB = (withoutFrom.structuredContent as { payloadFingerprint: string })
+      .payloadFingerprint;
+    expect(fpA).toBe(fpB);
+    expect(fpA).toBe(FIXTURE_F_FINGERPRINT);
+  });
+
+  it("demo + `from` matches persona → succeeds; getStatus NEVER called", async () => {
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    setActivePersona("whale");
+    const WHALE_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+
+    const result = await callTool({ amount: FIXTURE_F_AMOUNT, from: WHALE_ADDRESS });
+
+    expect(result.isError).toBeFalsy();
+    expect(getStatusSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("demo + `from` does NOT match persona → WRONG_MODE", async () => {
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    setActivePersona("whale");
+
+    const result = await callTool({ amount: FIXTURE_F_AMOUNT, from: NON_DEFAULT });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "WRONG_MODE",
+    );
+    expect(createHandleSpy).toHaveBeenCalledTimes(0);
   });
 });

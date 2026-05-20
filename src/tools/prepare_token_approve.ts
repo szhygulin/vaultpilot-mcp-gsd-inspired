@@ -33,8 +33,6 @@ import {
   type ChainId,
   type ChainName,
 } from "../config/contracts.js";
-import { isDemoMode } from "../config/env.js";
-import { getActivePersona } from "../demo/state.js";
 import { MAX_UINT256, encodeErc20Approve } from "../protocols/erc20.js";
 import { InvalidAmountError, parseAmountStrict } from "../signing/amount.js";
 import { APPROVE_PREPARE_RECEIPT_TEMPLATE } from "../signing/blocks.js";
@@ -45,8 +43,8 @@ import {
 } from "../signing/error-codes.js";
 import { createHandle } from "../signing/handle-store.js";
 import { computePayloadFingerprint } from "../signing/payload-fingerprint.js";
+import { resolveFrom } from "../signing/resolve-from.js";
 import { loadTokenRegistry } from "../tokens/registry.js";
-import { getStatus } from "../wallet/session-manager.js";
 import { type ToolHandlerResult, registerTool } from "./index.js";
 
 function errEnvelope(
@@ -68,9 +66,10 @@ const DESCRIPTION = [
   "`tokenAddress` is the ERC-20 contract address (0x-prefixed 20-byte hex). `spender` is the contract that will be authorized to move tokens — NOT a wallet address.",
   "`amount` is a DECIMAL STRING in human units (e.g. \"100.5\") OR the literal string \"max\" for unlimited (= 2^256-1). \"max\" is the ONLY accepted unlimited spelling — \"MAX\" / \"unlimited\" / \"infinite\" all refuse with INVALID_INPUT (strict-mode parity with userDecision: \"send\"'s enum lock).",
   "preview_send labels the approval `⚠ UNLIMITED APPROVAL` when amount === 2^256-1 (strict equality, not threshold-based) and surfaces a one-line revoke-path hint pointing at prepare_revoke_approval.",
+  "Pass `from` when the user wants to act from a non-default approved account (visible in `get_ledger_status.accountsByChain[chainId]`); otherwise omit and the active account is used. PREPARE RECEIPT surfaces `From:` only when caller-supplied.",
   "Requires a paired Ledger (call pair_ledger_live first if get_ledger_status shows paired: false). In demo mode, succeeds against the active persona's address as `from`; send_transaction returns a simulation envelope instead of broadcasting.",
   "Returns `{ handle, chain, chainId, from, spender, tokenAddress, amount, amountWei, payloadFingerprint }` plus a PREPARE RECEIPT text block surfacing the verbatim agent args.",
-  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set, INVALID_INPUT if chain/tokenAddress/spender/amount malformed (including non-canonical \"max\" spellings and fractional-overflow vs token decimals).",
+  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set OR if `from` doesn't match the active persona, INVALID_INPUT if chain/tokenAddress/spender/amount/from malformed (including non-canonical \"max\" spellings and fractional-overflow vs token decimals), INVALID_ACCOUNT if `from` is not in the per-chain approved set.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -96,6 +95,12 @@ const INPUT_SCHEMA = {
       type: "string",
       description:
         "Decimal string in human units (e.g. \"100.5\") OR the literal string \"max\" for 2^256-1. \"max\" is the only accepted unlimited spelling.",
+    },
+    from: {
+      type: "string",
+      pattern: "^0x[0-9a-fA-F]{40}$",
+      description:
+        "Optional sender address — must be one of the per-chain approved accounts in `get_ledger_status.accountsByChain[chainId]`. Omit to use the active account. In demo mode, must match the active persona's address.",
     },
   },
   required: ["chain", "tokenAddress", "spender", "amount"],
@@ -155,51 +160,22 @@ export async function prepareApproveInternal(input: {
   amountWei: bigint;
   /** Phase 8 — Plan 08-02: per-chain dispatch (defaults to ethereum for back-compat with revoke callers that omit it). */
   chainId?: ChainId;
+  /** Issue #62 — optional caller-supplied sender; validated against per-chain approved set when present. */
+  rawFrom?: string | undefined;
 }): Promise<ToolHandlerResult> {
-  const { rawTokenAddress, rawSpender, rawAmount, amountWei } = input;
+  const { rawTokenAddress, rawSpender, rawAmount, amountWei, rawFrom } = input;
   const chainId: ChainId = input.chainId ?? 1;
   const chainName = chainNameFromId(chainId);
 
-  // SENDER resolution (Plan 05-02 Option B): demo branch SKIPS getStatus()
-  // so the spy observes zero calls in the demo arm. T-DEMO-1 + T-NULL-
-  // PERSONA-1 mitigation parity with prepare_token_send.
-  let fromAddress: Address;
-  if (isDemoMode()) {
-    const persona = getActivePersona();
-    if (persona === null) {
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text:
-              "error: demo mode is active but no persona set. Call `set_demo_wallet({ persona: \"whale\" | \"defi-degen\" | \"stable-saver\" | \"staking-maxi\" })` first.",
-          },
-        ],
-        structuredContent: errEnvelope(
-          "WRONG_MODE",
-          "demo mode active but no persona set; call set_demo_wallet first",
-        ),
-      };
-    }
-    fromAddress = persona.address;
-  } else {
-    const status = await getStatus();
-    if (status === null) {
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text:
-              "error: no live Ledger session. Call `pair_ledger_live` to pair a Ledger via WalletConnect, then retry.",
-          },
-        ],
-        structuredContent: errEnvelope("WALLET_NOT_PAIRED", "no live Ledger session"),
-      };
-    }
-    fromAddress = status.activeAccount;
+  // SENDER resolution (Plan 05-02 + Issue #62): delegated to shared
+  // `resolveFrom` helper. T-DEMO-1 invariant preserved (helper's demo
+  // branch never calls getStatus).
+  const fromResolution = await resolveFrom({ rawFrom, chainId });
+  if (fromResolution.kind === "error") {
+    return fromResolution.result;
   }
+  const fromAddress: Address = fromResolution.fromAddress;
+  const fromCallerSupplied = fromResolution.callerSupplied;
 
   // Checksum server-internal addresses. NEVER surfaced in the receipt
   // (PREP-02 / T-PREP-RCPT-1 — the receipt reads from rawTokenAddress /
@@ -243,11 +219,15 @@ export async function prepareApproveInternal(input: {
   });
 
   // Phase 8 — Plan 08-02: `{CHAIN}` slot widening.
-  const receipt = APPROVE_PREPARE_RECEIPT_TEMPLATE
+  // Issue #62: append `from:` line ONLY when caller-supplied.
+  const baseReceipt = APPROVE_PREPARE_RECEIPT_TEMPLATE
     .replace("{CHAIN}", `${chainName} (chainId ${chainId})`)
     .replace("{TOKEN_ADDRESS}", rawTokenAddress)
     .replace("{SPENDER}", rawSpender)
     .replace("{AMOUNT}", rawAmount);
+  const receipt = fromCallerSupplied
+    ? `${baseReceipt}\n  from:         ${rawFrom}`
+    : baseReceipt;
 
   return {
     content: [{ type: "text", text: receipt }],
@@ -356,12 +336,14 @@ registerTool("prepare_token_approve", DESCRIPTION, INPUT_SCHEMA, async (args) =>
       }
     }
 
+    const rawFrom = typeof args.from === "string" ? args.from : undefined;
     return await prepareApproveInternal({
       rawTokenAddress,
       rawSpender,
       rawAmount,
       amountWei,
       chainId,
+      rawFrom,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

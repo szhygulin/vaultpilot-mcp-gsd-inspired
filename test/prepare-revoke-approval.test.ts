@@ -77,6 +77,7 @@ const PAIRED_STATUS = {
   address: PRIMARY_ADDRESS,
   chainId: 1,
   sessionTopicLast8: "deadbeef",
+  accountsByChain: { 1: [PRIMARY_ADDRESS] } as Record<number, `0x${string}`[]>,
 };
 
 const USDC_CHECKSUMMED = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
@@ -265,5 +266,97 @@ describe("prepare_revoke_approval — register-all wiring (smoke)", () => {
     const target = path.resolve(here, "..", "src", "tools", "register-all.ts");
     const source = await fs.readFile(target, "utf8");
     expect(source).toContain('import "./prepare_revoke_approval.js";');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #62 — optional `from` parameter. Revoke proxies through the same
+// shared `prepareApproveInternal` helper as prepare_token_approve, so the
+// per-tool tests confirm the wiring (`args.from` flows through). Cross-tool
+// byte-identity (revoke({...,from}) === approve({...,amount:"0",from})) is
+// also preserved by the helper.
+// ---------------------------------------------------------------------------
+describe("prepare_revoke_approval — optional `from` param (Issue #62)", () => {
+  const NON_DEFAULT = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`;
+  const NOT_IN_SESSION = "0xabcDEF0123456789aBCdef0123456789AbCdEF01" as `0x${string}`;
+  const MULTI_ACCOUNT_STATUS = {
+    ...PAIRED_STATUS,
+    accounts: [PRIMARY_ADDRESS, NON_DEFAULT],
+    accountsByChain: { 1: [PRIMARY_ADDRESS, NON_DEFAULT] } as Record<number, `0x${string}`[]>,
+  };
+
+  it("supplied + in approved set → uses it; receipt includes `from:`", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callRevoke({
+      tokenAddress: USDC_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+      from: NON_DEFAULT,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { from: string };
+    expect(sc.from).toBe(NON_DEFAULT);
+    expect(result.content[0]?.text ?? "").toContain(`from:         ${NON_DEFAULT}`);
+  });
+
+  it("supplied + NOT in approved set → INVALID_ACCOUNT", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callRevoke({
+      tokenAddress: USDC_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+      from: NOT_IN_SESSION,
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "INVALID_ACCOUNT",
+    );
+  });
+
+  it("supplied + malformed → INVALID_INPUT", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callRevoke({
+      tokenAddress: USDC_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+      from: "0xZZZ",
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "INVALID_INPUT",
+    );
+  });
+
+  it("omitted → byte-identical to today; receipt does NOT include `from:`", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callRevoke({
+      tokenAddress: USDC_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0]?.text ?? "").not.toMatch(/^\s*from:/im);
+  });
+
+  it("byte-identity preserved across approve({amount:\"0\",from}) vs revoke({from})", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const approveResult = await callApprove({
+      tokenAddress: USDC_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+      amount: "0",
+      from: NON_DEFAULT,
+    });
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const revokeResult = await callRevoke({
+      tokenAddress: USDC_CHECKSUMMED,
+      spender: UNI_V3_CHECKSUMMED,
+      from: NON_DEFAULT,
+    });
+
+    const fpA = (approveResult.structuredContent as { payloadFingerprint: string })
+      .payloadFingerprint;
+    const fpR = (revokeResult.structuredContent as { payloadFingerprint: string })
+      .payloadFingerprint;
+    expect(fpA).toBe(fpR);
   });
 });

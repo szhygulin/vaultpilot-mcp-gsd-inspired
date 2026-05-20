@@ -86,6 +86,10 @@ const PAIRED_STATUS = {
   address: PRIMARY_ADDRESS,
   chainId: 1,
   sessionTopicLast8: "deadbeef",
+  // Issue #62: resolveFrom reads accountsByChain[chainId] for per-chain
+  // `from` validation. Tests that call the tool without supplying `from`
+  // ignore this map; tests that DO supply `from` rely on it.
+  accountsByChain: { 1: [PRIMARY_ADDRESS] } as Record<number, `0x${string}`[]>,
 };
 
 // Fixture A inputs — research § Code Example 1, asserted by Plan 04-01's
@@ -511,5 +515,158 @@ describe("prepare_native_send — chain arg gate (Plan 08-02 / PREP-40 + PREP-41
     const arbFp = (arbResult.structuredContent as { payloadFingerprint: string })
       .payloadFingerprint;
     expect(ethFp).not.toBe(arbFp);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #62 — optional `from` parameter. Validates against
+// `status.accountsByChain[chainId]` (per-chain approved set, same contract
+// `set_active_account({ chain })` enforces today). Demo mode refuses any
+// `from` that doesn't match the active persona address (WRONG_MODE).
+// ---------------------------------------------------------------------------
+describe("prepare_native_send — optional `from` param (Issue #62)", () => {
+  const NON_DEFAULT = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as `0x${string}`;
+  const NOT_IN_SESSION = "0xabcDEF0123456789aBCdef0123456789AbCdEF01" as `0x${string}`;
+  const MULTI_ACCOUNT_STATUS = {
+    ...PAIRED_STATUS,
+    accounts: [PRIMARY_ADDRESS, NON_DEFAULT],
+    accountsByChain: { 1: [PRIMARY_ADDRESS, NON_DEFAULT] } as Record<number, `0x${string}`[]>,
+  };
+
+  it("supplied + in approved set → uses it; PREPARE RECEIPT includes `from:` line", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+
+    const result = await callTool({
+      to: FIXTURE_A.to,
+      valueWei: FIXTURE_A.valueWei,
+      from: NON_DEFAULT,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { from: string; payloadFingerprint: string };
+    expect(sc.from).toBe(NON_DEFAULT);
+    // PREP-03 from-independence: fingerprint anchors to Fixture A regardless
+    // of which approved account is named — `from` is NOT in the preimage.
+    expect(sc.payloadFingerprint).toBe(FIXTURE_A.payloadFingerprint);
+
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain(`from:     ${NON_DEFAULT}`);
+  });
+
+  it("supplied + NOT in approved set → INVALID_ACCOUNT with in-session list in error payload", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+
+    const result = await callTool({
+      to: FIXTURE_A.to,
+      valueWei: FIXTURE_A.valueWei,
+      from: NOT_IN_SESSION,
+    });
+
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as { errorCode: string; message: string };
+    expect(sc.errorCode).toBe("INVALID_ACCOUNT");
+    // Surface the in-session list so the agent can self-correct.
+    expect(sc.message).toContain(PRIMARY_ADDRESS);
+    expect(sc.message).toContain(NON_DEFAULT);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain(NOT_IN_SESSION);
+    expect(text).toContain(PRIMARY_ADDRESS);
+
+    expect(createHandleSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("supplied + malformed (`0xZZZ...`) → INVALID_INPUT; createHandle NEVER called", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+
+    const result = await callTool({
+      to: FIXTURE_A.to,
+      valueWei: FIXTURE_A.valueWei,
+      from: "0xZZZ",
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "INVALID_INPUT",
+    );
+    expect(result.content[0]?.text ?? "").toMatch(/from/i);
+
+    expect(createHandleSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("omitted → byte-identical to today; PREPARE RECEIPT does NOT include `from:` line", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+
+    const result = await callTool({ to: FIXTURE_A.to, valueWei: FIXTURE_A.valueWei });
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+    expect(text).not.toMatch(/^\s*from:/im);
+    // Receipt is the unmodified Phase 4 + Plan 08-02 shape (3 substitutions
+    // only); byte-identity asserted by the matching test in the verbatim-
+    // receipt describe block above.
+    const sc = result.structuredContent as { from: string };
+    expect(sc.from).toBe(PRIMARY_ADDRESS);
+  });
+
+  it("fixture re-anchor: payloadFingerprint with `from` supplied == without `from` for same {to, valueWei, chain}", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const withFrom = await callTool({
+      to: FIXTURE_A.to,
+      valueWei: FIXTURE_A.valueWei,
+      from: NON_DEFAULT,
+    });
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const withoutFrom = await callTool({
+      to: FIXTURE_A.to,
+      valueWei: FIXTURE_A.valueWei,
+    });
+
+    const fpWith = (withFrom.structuredContent as { payloadFingerprint: string })
+      .payloadFingerprint;
+    const fpWithout = (withoutFrom.structuredContent as { payloadFingerprint: string })
+      .payloadFingerprint;
+    expect(fpWith).toBe(fpWithout);
+    expect(fpWith).toBe(FIXTURE_A.payloadFingerprint);
+  });
+
+  it("demo mode + `from` matches active persona → succeeds; PREPARE RECEIPT includes `from:` line", async () => {
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    setActivePersona("whale");
+    const WHALE_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+
+    const result = await callTool({
+      to: FIXTURE_A.to,
+      valueWei: FIXTURE_A.valueWei,
+      from: WHALE_ADDRESS,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { from: string };
+    expect(sc.from).toBe(WHALE_ADDRESS);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain(`from:     ${WHALE_ADDRESS}`);
+    // T-DEMO-1 still holds — getStatus never called in demo arm.
+    expect(getStatusSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("demo mode + `from` does NOT match active persona → WRONG_MODE", async () => {
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    setActivePersona("whale");
+
+    const result = await callTool({
+      to: FIXTURE_A.to,
+      valueWei: FIXTURE_A.valueWei,
+      from: NON_DEFAULT,
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "WRONG_MODE",
+    );
+    expect(result.content[0]?.text ?? "").toMatch(/persona/i);
+    expect(getStatusSpy).toHaveBeenCalledTimes(0);
+    expect(createHandleSpy).toHaveBeenCalledTimes(0);
   });
 });
