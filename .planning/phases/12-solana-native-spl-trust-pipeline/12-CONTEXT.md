@@ -8,7 +8,7 @@
 
 Full prepare → preview → send flow works for native SOL and SPL transfers. Solana-specific `payloadFingerprint` (over serialized transaction message bytes pre-signature) lands here, distinct from EVM's preimage shape. Mandatory `simulateTransaction` preview gate refuses on program-error or insufficient-lamports. Per-wallet durable-nonce account setup tools land here so prepare → sign flows survive past the 150-slot recent-blockhash window. Ledger SOL-app blind-sign hash recompute mirrors the EVM `LEDGER BLIND-SIGN HASH` block.
 
-This is the load-bearing milestone for v2.0 — the Solana trust-pipeline mirror of Phase 4's Ethereum one. New fixture literals (I native SOL, J SPL transfer) anchor the Solana-side cryptographic-binding chain.
+This is the load-bearing milestone for v2.0 — the Solana trust-pipeline mirror of Phase 4's Ethereum one. New fixture literals (**K** native SOL, **L** SPL transfer) anchor the Solana-side cryptographic-binding chain. *(Originally drafted as Fixtures I + J in this context doc; renamed at execute time per Phase 12 plan-check FLAG-3 — Phase 8's chain-distinctness PROPERTY test had already claimed J, and I was a reserved next-shape slot. Solana fixtures shifted up two letters. See ROADMAP Phase 12 SC #7 for the close-out reasoning.)*
 
 </domain>
 
@@ -21,7 +21,7 @@ Pending — to be gathered during `/gsd-discuss-phase 12`. Anchor candidates:
 - **Serialized message bytes**: Solana uses `TransactionMessage.compileToV0Message()` or legacy `Message`; researcher to lock the message-format choice (v0 with Address Lookup Tables — DF) at planning gate.
 - **Simulation gate placement**: Layer 0.7 — sits between v1.3 canonical-dispatch Layer 0.5 and v1.2 chain-mismatch Layer 2. Refusal on program-error returns the simulation logs verbatim in `CHECKS PERFORMED`.
 - **Durable-nonce setup**: `prepare_solana_nonce_init` creates the nonce account + sets NonceAuthorized; `prepare_solana_nonce_close` reclaims rent. Both go through the standard preview → send gates.
-- **Fixture anchoring**: I (native SOL transfer) + J (SPL transfer) as hardcoded `0x...` literals in `test/signing-fingerprint.test.ts`; cross-link from `prepare-solana-*` consumer tests. NO `beforeAll`-snapshot per CLAUDE.md convention.
+- **Fixture anchoring**: **K** (native SOL transfer) + **L** (SPL transfer) as hardcoded `0x...` literals in `test/signing-fingerprint-solana.test.ts` (NEW sibling file, NOT the existing `test/signing-fingerprint.test.ts` — Solana fixture decode shape is structurally distinct enough to warrant the carve; final shape per execute-time decision). Cross-link from `prepare-solana-*` consumer tests. NO `beforeAll`-snapshot per CLAUDE.md convention. *(Original I + J names shifted to K + L per Phase 12 plan-check FLAG-3 — Phase 8 chain-distinctness PROPERTY test claimed J; I was a reserved next-shape slot.)*
 - **Persona-cycle integration test shape**: native SOL = sender-independent fingerprint (only `to` + `lamports` + nonce in preimage); SPL = sender-dependent because the source SPL token account is derived from the sender (pattern matches Phase 7 Aave `T-INTEGRATION-FROM-DRIFT-2` shape).
 - **Ledger blind-sign hash**: SOL app v1.4+ clear-signs native + SPL transfers; conditional LEDGER NOTICE block only when CAL coverage absent (pattern matches Phase 6 WETH9.withdraw).
 - **SECURITY.md update**: Solana threat-model section names the USB-HID vs WC transport trust shape, durable-nonce TTL extension as accepted residual, simulation gate as Layer 0.7 defense.
@@ -47,7 +47,7 @@ Pending — to be gathered during `/gsd-discuss-phase 12`. Anchor candidates:
 - `src/signing/handle-store.ts` — handle state machine + 15-min TTL (reused unchanged)
 - `src/tools/send_transaction.ts` — three-gate region (FROZEN; Solana branch is additive)
 - `src/signing/blocks.ts` — `LEDGER BLIND-SIGN HASH` / `PREPARE RECEIPT` / `CHECKS PERFORMED` templates (Solana variant follows same shape)
-- `test/signing-fingerprint.test.ts` — Fixtures A-H literal anchors (Solana adds I + J)
+- `test/signing-fingerprint.test.ts` — Fixtures A-H literal anchors; `test/signing-fingerprint-solana.test.ts` (NEW sibling file) — Fixtures K + L literal anchors *(renamed from I + J at execute time per plan-check FLAG-3)*
 - `test/trust-pipeline.integration.test.ts` (v1.0) + `test/erc20-lifecycle.integration.test.ts` (v1.1) — persona-cycle integration test shape
 
 ### External
