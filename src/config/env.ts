@@ -62,6 +62,24 @@ export function getOptimismRpcUrl(): string | undefined {
   return read("OPTIMISM_RPC_URL");
 }
 
+// Phase 11 Plan 11-02 — Solana RPC URL reader. Mirrors `getEthereumRpcUrl()`
+// shape via the in-tree `read(name)` helper (trims whitespace, returns
+// `undefined` for empty/missing). The resolution priority lives in
+// `src/chains/solana/registry.ts::getConnection()`:
+//   (1) `SOLANA_RPC_URL` env override wins
+//   (2) Public RPC fallback (`https://api.mainnet-beta.solana.com`) with
+//       once-per-process stderr warn
+// No `RPC_PROVIDER` shorthand fan-out — Solana is URL-config-only in v2.0
+// (Helius / QuickNode shorthand deferred to v2.1+ per § Topic 5 lock).
+//
+// Plan signature: `string | null` per the plan's `<plan>` step 3 contract
+// (mirrors `null`-on-unset shape downstream consumers can pattern-match
+// against). The shared `read()` helper returns `undefined`; we normalize
+// to `null` at this boundary so the public surface stays plan-locked.
+export function getSolanaRpcUrl(): string | null {
+  return read("SOLANA_RPC_URL") ?? null;
+}
+
 // Plan 08-05 — multi-chain WalletConnect pairing.
 //
 // Returns the list of EVM chains this v1.2 build supports. Drives
