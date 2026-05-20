@@ -23,6 +23,7 @@ import {
   isDemoMode,
   getRpcProvider,
   getSolanaRpcUrl,
+  getTronRpcUrl,
 } from "../config/env.js";
 import { getConfigPath, readConfigFile } from "../config/config-file.js";
 import { getNonEvmStorageMode } from "../config/non-evm-storage.js";
@@ -66,7 +67,7 @@ const DESCRIPTION = [
   "Returns a summary of vaultpilot-mcp's current configuration state — demo mode flag, env-var presence (as booleans), paired-account count, WC session-topic suffix (last 8 chars only), WC session persistence flag (boolean), config-file path + presence/malformed flags, Node version, package version, active persona slug, update-check suppression flag, companion-skill integrity state.",
   "Use this when debugging install configuration — 'why is demo mode active?', 'is my RPC URL set?', 'what version am I on?', 'which persona is active?', 'is my Ledger session persisted across restarts?', 'is the vaultpilot-preflight companion skill installed and intact?'.",
   "Do NOT use this to retrieve the actual config values (RPC URL, WC project ID, full session topic) — those are NEVER returned by this tool. For RPC URL: read the `ETHEREUM_RPC_URL` env var directly via your shell. For WC project ID: same — `WALLETCONNECT_PROJECT_ID`.",
-  "Returns `{ demoMode, isAutoDemo, activePersonaSlug, walletConnectProjectIdPresent, ethereumRpcUrlPresent, etherscanApiKeyPresent, rpcProvider, configuredChains, solanaRpcConfigured, pairedAccountCount, pairedNonEvmChains, pairedNonEvmAccountCount, nonEvmStoragePersistent, wcSessionTopicSuffix, walletConnectStoragePersistent, configFilePath, configFileExists, configFileMalformed, nodeVersion, packageVersion, updateCheckSuppressed, skillIntegrity }`. `rpcProvider` is the verbatim shorthand name (`infura` / `alchemy`) or null when `RPC_PROVIDER` is unset — the API key VALUE is NEVER surfaced. `configuredChains` is a per-chain map (`ethereum / arbitrum / polygon / base / optimism`) of booleans reflecting whether a chain-specific override OR the shorthand resolves a URL (false ⇒ PublicNode fallback for that chain). `solanaRpcConfigured` is true ONLY when `SOLANA_RPC_URL` is explicitly set; the public-RPC fallback does NOT count as configured (mirrors Phase 8 `configuredChains` boolean semantics). `pairedNonEvmChains` is the sorted unique list of non-EVM chains with at least one paired account (chain names only, NEVER raw addresses). `pairedNonEvmAccountCount` is the total record count across all non-EVM chains. `nonEvmStoragePersistent` reflects `VAULTPILOT_NON_EVM_STORAGE`. `skillIntegrity` is a discriminated union: `{ kind: 'ok', path, sha256 }` when the companion `vaultpilot-preflight` skill SHA-256 matches the MCP-pinned value; `{ kind: 'missing' }` when the skill is not installed at any probe path; `{ kind: 'tampered', path }` when the SHA differs (the actual computed vs expected hex is surfaced via the `VAULTPILOT NOTICE` dispatcher block, never via this tool — secret-safe).",
+  "Returns `{ demoMode, isAutoDemo, activePersonaSlug, walletConnectProjectIdPresent, ethereumRpcUrlPresent, etherscanApiKeyPresent, rpcProvider, configuredChains, solanaRpcConfigured, tronRpcConfigured, pairedAccountCount, pairedNonEvmChains, pairedNonEvmAccountCount, nonEvmStoragePersistent, wcSessionTopicSuffix, walletConnectStoragePersistent, configFilePath, configFileExists, configFileMalformed, nodeVersion, packageVersion, updateCheckSuppressed, skillIntegrity }`. `rpcProvider` is the verbatim shorthand name (`infura` / `alchemy`) or null when `RPC_PROVIDER` is unset — the API key VALUE is NEVER surfaced. `configuredChains` is a per-chain map (`ethereum / arbitrum / polygon / base / optimism`) of booleans reflecting whether a chain-specific override OR the shorthand resolves a URL (false ⇒ PublicNode fallback for that chain). `solanaRpcConfigured` is true ONLY when `SOLANA_RPC_URL` is explicitly set; the public-RPC fallback does NOT count as configured (mirrors Phase 8 `configuredChains` boolean semantics). `tronRpcConfigured` is true ONLY when `TRON_RPC_URL` is explicitly set; the public TronGrid fallback does NOT count as configured (same semantics as `solanaRpcConfigured`). `pairedNonEvmChains` is the sorted unique list of non-EVM chains with at least one paired account (chain names only, NEVER raw addresses); includes `'tron'` automatically when a TRON pairing exists (Phase 17 wiring reuses Phase 11's chain-agnostic aggregation). `pairedNonEvmAccountCount` is the total record count across all non-EVM chains. `nonEvmStoragePersistent` reflects `VAULTPILOT_NON_EVM_STORAGE`. `skillIntegrity` is a discriminated union: `{ kind: 'ok', path, sha256 }` when the companion `vaultpilot-preflight` skill SHA-256 matches the MCP-pinned value; `{ kind: 'missing' }` when the skill is not installed at any probe path; `{ kind: 'tampered', path }` when the SHA differs (the actual computed vs expected hex is surfaced via the `VAULTPILOT NOTICE` dispatcher block, never via this tool — secret-safe).",
   "Secret-safety: response contains only booleans, counts, suffixes, paths, and PUBLIC values (Node version, package version, persona slug, config file path, skill-integrity kind/path). No secret values are returned — verifiable by the agent via JSON inspection.",
 ].join(" ");
 
@@ -161,6 +162,10 @@ registerTool(
     const pairedNonEvmAccountCount = nonEvmRecords.length;
     const nonEvmStoragePersistent = getNonEvmStorageMode() === "persist";
     const solanaRpcConfigured = getSolanaRpcUrl() !== null;
+    // Phase 17 Plan 17-03 — TRON RPC configured boolean. Mirror of
+    // `solanaRpcConfigured` semantics: TRUE iff `TRON_RPC_URL` is
+    // explicitly set; the public TronGrid fallback does NOT count.
+    const tronRpcConfigured = getTronRpcUrl() !== null;
 
     // Q-CONFIG-LEAK lock: surface presence + malformed flags ONLY; the file
     // CONTENT (and the parse-error `cause` string, which may quote raw file
@@ -196,6 +201,7 @@ registerTool(
       rpcProvider,
       configuredChains,
       solanaRpcConfigured,
+      tronRpcConfigured,
       pairedAccountCount,
       pairedNonEvmChains,
       pairedNonEvmAccountCount,
@@ -226,6 +232,7 @@ registerTool(
       `  configuredChains:                ethereum=${configuredChains.ethereum} arbitrum=${configuredChains.arbitrum} polygon=${configuredChains.polygon} base=${configuredChains.base} optimism=${configuredChains.optimism}`,
     );
     lines.push(`  solanaRpcConfigured:             ${solanaRpcConfigured}`);
+    lines.push(`  tronRpcConfigured:               ${tronRpcConfigured}`);
     lines.push(`  pairedAccountCount:              ${pairedAccountCount}`);
     lines.push(
       `  pairedNonEvmChains:              [${pairedNonEvmChains.join(", ")}]`,

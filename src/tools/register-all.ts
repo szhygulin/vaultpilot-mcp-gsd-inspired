@@ -17,6 +17,11 @@ import "./pair_ledger_live_wait.js";
 import "./get_ledger_status.js";
 import "./pair_solana_ledger.js";
 import "./get_solana_status.js";
+import "./pair_tron_ledger.js"; // Phase 17 Plan 17-03 (TRON-PAIR-01)
+import "./get_tron_status.js"; // Phase 17 Plan 17-03 (TRON-PAIR-02)
+import "./get_tron_balance.js"; // Phase 17 Plan 17-03 (TRON-READ-01)
+import "./get_tron_token_balance.js"; // Phase 17 Plan 17-03 (TRON-READ-02)
+import "./get_tron_block_tip.js"; // Phase 17 Plan 17-03 (TRON-READ-03)
 import "./list_paired_non_evm_accounts.js";
 import "./remove_paired_non_evm_account.js";
 import "./prepare_native_send.js";
