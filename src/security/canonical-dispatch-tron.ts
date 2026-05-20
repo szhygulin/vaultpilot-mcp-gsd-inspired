@@ -20,11 +20,25 @@
 // These match the TRX-app bundled clear-sign registry entries, so the user
 // gets decoded-args display on-device. Adding a contract here without the
 // corresponding TRX-app registry analysis defeats the Layer 0.5 defense.
+//
+// **Phase 19 Plan 19-02 — CALLER-SIDE SKIP for Stake 2.0 kinds:**
+// TRON Stake 2.0 contracts (`FreezeBalanceV2Contract`, `UnfreezeBalanceV2Contract`,
+// `WithdrawExpireUnfreezeContract`) are Protobuf-native — they have NO `contract_address`
+// Protobuf field. `checkTronDispatchTarget` is NOT called for these kinds by the caller
+// (`preview_send.ts` TRON branch). The caller discriminates via `record.tx.kind`:
+//   - `"trc20"` → checkTronDispatchTarget (allowlist gate + simulation gate)
+//   - `"native"` → skip (TransferContract; no contract address)
+//   - `"stake-freeze"` | `"stake-unfreeze"` | `"stake-withdraw-expire"` → skip
+//       (Protobuf-native; no contract_address; Layer 0.5 is not applicable by design)
+//
+// This skip is CALLER-SIDE ONLY — `checkTronDispatchTarget` itself is BYTE-IDENTICAL;
+// the existing 4-stablecoin allowlist is NOT extended for Stake 2.0 (Protobuf-native
+// kinds route around it by design, per D-11a ADDITIVE list).
+//
 // Future phases widen:
 //
-//   - Phase 19 — SunSwap / JustLend lending contract addresses.
 //   - Phase 20 — LiFi + Across bridging contract addresses.
-//   - Phase 21 — TRON Stake 2.0 + TRC-20 approve / revoke approve.
+//   - Phase 21 — SunSwap DEX contract addresses.
 //
 // **SOURCE OF TRUTH**: addresses loaded from `src/tokens/tron-top-25.json`
 // (Phase 17 curated list) filtered by symbol. This avoids hardcoding literals
