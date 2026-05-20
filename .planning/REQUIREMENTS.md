@@ -193,7 +193,43 @@ Introduced in v2.0 Phase 11 and reused by v2.1 TRON + v2.2 BTC/LTC. Mirrors the 
 
 ### v2.1 TRON
 
-- **TRON-01..N**: TRX + canonical TRC-20 stablecoin (USDT/USDC/USDD/TUSD) balances + transfers; Stake 2.0 (freeze/unfreeze/withdraw-expire-unfreeze/vote/claim); SunSwap (`prepare_sunswap_swap`) for same-chain TRX↔TRC-20 swaps; LiFi-routed TRON↔EVM bridging; TRC-20 approve via `prepare_tron_token_approve`; Ledger TRON app clear-signs every supported action over USB-HID
+Adds TRON support via USB-HID Ledger transport (no WalletConnect — TRON has no WC v2 bridge to Ledger). Reuses the v2.0 prepare → preview → send trust pipeline with TRON-specific primitives: serialized Protobuf raw_data `payloadFingerprint` (domain-tagged `"VaultPilot-trontx-v1:"`), SHA-256 blind-sign hash recompute (TRON consensus hash, not keccak256), TRC-20 approve with `⚠ UNLIMITED APPROVAL` surfacing, Stake 2.0 (freeze/unfreeze/withdraw-expire-unfreeze/vote/claim), SunSwap V2 same-chain swap, and LiFi-routed TRON↔EVM bridging. Reuses v2.0 Phase 11's `non-evm-account-store.ts` cache infrastructure under `chain: "tron"` record key.
+
+#### Read + Pair (TRON-PAIR-* + TRON-READ-*)
+
+- [ ] **TRON-PAIR-01**: `pair_tron_ledger()` opens the Ledger TRON app over USB-HID via `@ledgerhq/hw-transport-node-hid` + `@ledgerhq/hw-app-trx`, returns the base58check (T-prefixed) address verbatim plus a `VERIFY-ON-DEVICE` block instructing the user to confirm the address on the Ledger screen
+- [ ] **TRON-PAIR-02**: `get_tron_status()` returns `{ paired: true, address, derivationPath, rpcEndpoint, ledgerTrxAppVersion? }` after a successful pair; integrates with PAIR-NEV-* (v2.0 Phase 11) for restored sessions
+- [ ] **TRON-READ-01**: `get_tron_balance({ wallet })` returns native TRX balance (sun + TRX-formatted) against a free public node (default TronGrid; override via `TRON_RPC_URL`)
+- [ ] **TRON-READ-02**: `get_tron_token_balance({ wallet, tokenAddress })` returns TRC-20 token balance + decimals + USD value (DefiLlama `tron:<address>` keying); `get_tron_token_metadata` mirrors EVM `get_token_metadata` shape
+- [ ] **TRON-READ-03**: `get_tron_block_tip()` returns the current TRON block height + timestamp (TRON-specific diagnostic — analogous to Bitcoin Core's `get_btc_block_tip` in v2.2)
+- [ ] **TRON-READ-04**: `get_portfolio_summary` extends to include TRON when configured; per-row `chain: "tron"` field follows the v1.2 multi-EVM + v2.0 Solana convention; aggregates TRX + canonical TRC-20 stablecoin balances + USD totals via a curated top-30 TRC-20 mint registry at `src/tokens/tron-top-30.json`
+
+#### Prepare → Preview → Send (TRON-PREP-*)
+
+- [ ] **TRON-PREP-01**: TRON `payloadFingerprint = keccak256("VaultPilot-trontx-v1:" ‖ <serialized Protobuf raw_data bytes>)` — domain-tagged, prepare-time stable, distinct domain tag from EVM `"VaultPilot-txverify-v1:"` and Solana `"VaultPilot-soltx-v1:"` so cross-chain fingerprint reuse is impossible by construction
+- [ ] **TRON-PREP-02**: `preview_send` TRON branch runs `triggerconstantcontract` simulation gate for TRC-20 calls (native sends skip — no simulation API); on success surfaces decoded args + Ledger TRX-app blind-sign hash recompute (SHA-256 over raw_data per TRON consensus) in `LEDGER BLIND-SIGN HASH` block
+- [ ] **TRON-PREP-03**: `send_transaction` TRON branch enforces `previewToken` + `userDecision: "send"` gates identically to the EVM/Solana paths; rejects on `payloadFingerprint` drift between prepare and send
+- [ ] **TRON-PREP-04**: TRON branch USB-HID transport surfaces in `get_tron_status` (`transport: "usb-hid"`) and `get_vaultpilot_config_status`; USB-HID device-not-found errors surface as structured refusal with troubleshooting hint, never as silent failures
+- [ ] **TRON-PREP-05**: `prepare_tron_token_approve({ tokenAddress, spender, amount })` produces a TRC-20 `approve(spender, amount)` TriggerSmartContract; `amount: "max"` accepted as `2^256-1`; preview labels unlimited approvals `⚠ UNLIMITED APPROVAL` and points at `prepare_tron_revoke_approval` (mirrors v1.1 PREP-29 strict-equality surfacing)
+
+#### Writes (TRON-W-*)
+
+- [ ] **TRON-W-01**: `prepare_tron_native_send({ to, sun })` produces an unsigned TRON `TransferContract` Protobuf transaction; decimal-string sun per v1.x decimal-handling convention
+- [ ] **TRON-W-02**: `prepare_tron_trc20_send({ to, tokenAddress, amount })` produces an unsigned `TriggerSmartContract` with `transfer(to, amount)` calldata; decimal-string amount resolved via `get_tron_token_metadata` decimals lookup (`parseTronAmountStrict` mirrors `parseAmountStrict` from v1.1 + `parseSolanaAmountStrict` from v2.0)
+- [ ] **TRON-W-03**: `prepare_tron_revoke_approval({ tokenAddress, spender })` is a `prepare_tron_token_approve` shortcut producing `approve(spender, 0)` — distinct tool name so the agent can refer to it by intent (mirrors v1.1 PREP-27)
+- [ ] **TRON-W-04**: `prepare_tron_stake_freeze({ amount, resource: "ENERGY"|"BANDWIDTH" })` produces a `FreezeBalanceV2Contract` (Stake 2.0 — distinct from legacy `FreezeBalanceContract`); resource enum surfaced verbatim in `CHECKS PERFORMED`
+- [ ] **TRON-W-05**: `prepare_tron_stake_unfreeze({ amount, resource })` + `prepare_tron_withdraw_expire_unfreeze` cover the 14-day unfreeze waiting-period lifecycle
+- [ ] **TRON-W-06**: `prepare_tron_stake_vote({ votes: [{ srAddress, count }] })` produces a `VoteWitnessContract` for super-representative voting; best-effort SR-registry lookup labels each candidate
+- [ ] **TRON-W-07**: `prepare_tron_stake_claim_rewards` produces a `WithdrawBalanceContract` for accumulated voting rewards
+- [ ] **TRON-W-08**: TRON-specific spender-label table extends `src/config/contracts.ts` — SunSwap V2 router + LiFi TRON facet + canonical TRC-20 stablecoin contracts (USDT/USDC/USDD/TUSD) as KnownSpender entries; unknown spender → `(unknown spender — no prior interaction recorded)` label
+- [ ] **TRON-W-09**: `get_sunswap_quote({ inputToken, outputToken, amount, slippageBps? })` returns the SunSwap V2 router quote (out amount, route plan, slippage); `prepare_sunswap_swap({ inputToken, outputToken, amount, slippageBps })` returns an unsigned TriggerSmartContract for the SunSwap V2 router
+- [ ] **TRON-W-10**: Sandwich-MEV defense — `prepare_sunswap_swap` default slippage hint = 50 bps; refuses without explicit `slippageBps` when price impact > 2% (mirrors v2.0 SOL-W-13 Jupiter + v2.6 MEV-01 EVM equivalent)
+- [ ] **TRON-W-11**: `prepare_tron_lifi_swap({ fromChain, fromToken, toChain, toToken, amount, toAddress })` produces an unsigned LiFi-routed bridge transaction; works both directions (TRON → EVM AND EVM → TRON); server-side `decodedFinalRecipient == userSuppliedToAddress` assertion at preview time (Inv #6b extension — mirrors v2.0 SOL-W-21 and v2.6 BRIDGE-T1)
+- [ ] **TRON-W-12**: SunSwap V2 router + LiFi TRON facet program IDs added to `src/security/canonical-dispatch.ts` TRON arm (Layer 0.5 — mirrors v1.3 SEC-35 EVM dispatch-target enforcement + v2.0 SOL-W-09 Solana arm); mismatch refuses at preview time
+
+#### Diagnostics (TRON-DIAG-*)
+
+- [ ] **TRON-DIAG-01**: `get_tron_setup_status({ wallet })` returns `{ ledgerTrxAppVersion?, walletAddressOnDevice, resourceAccountPresent (Stake 2.0), frozenEnergyAmount, frozenBandwidthAmount }` — probes per-wallet Stake 2.0 state + on-device status (analogous to v2.0 SOL-DIAG-01 `get_solana_setup_status`)
 
 ### v2.2 Bitcoin + Litecoin (one milestone)
 
