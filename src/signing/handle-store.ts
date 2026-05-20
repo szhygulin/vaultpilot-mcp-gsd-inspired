@@ -223,7 +223,14 @@ export interface HandleRecord {
   createdAt: number;
   pinned?: PreviewPinned;
   sentAt?: number;
-  txHash?: Hex;
+  /**
+   * Broadcast result identifier. Widened from `Hex` to `string` in Plan 12-05
+   * for cross-chain compatibility: EVM stores `0x`-prefixed 32-byte tx hashes,
+   * Solana stores base58-encoded 64-byte Ed25519 signatures (~88 chars; NOT
+   * `0x`-prefixed). Both wire-format identifiers consumers receive verbatim;
+   * the field name `txHash` is kept for API symmetry with the v1.x EVM surface.
+   */
+  txHash?: string;
   cancelledAt?: number;
 }
 
@@ -305,7 +312,7 @@ export function transitionToPreviewed(handle: string, pinned: PreviewPinned): Tr
  * Transition a handle to `sent`. Only legal from `previewed`. Stamps
  * `txHash` and `sentAt`. The send is final — `sent → cancelled` is rejected.
  */
-export function transitionToSent(handle: string, txHash: Hex): TransitionResult {
+export function transitionToSent(handle: string, txHash: string): TransitionResult {
   const result = lookup(handle);
   if (!result.ok) return result;
   const record = result.record;
