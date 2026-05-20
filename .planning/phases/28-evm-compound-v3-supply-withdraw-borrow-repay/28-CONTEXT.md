@@ -1,7 +1,9 @@
 # Phase 28: Compound V3 — multi-Comet supply / withdraw / borrow / repay — Context
 
 **Gathered:** 2026-05-20
-**Status:** Placeholder — context-gathering pending (run `/gsd-discuss-phase 28`)
+**Status:** Locked — research/patterns/plans committed; ready for execution
+
+Decisions in `<decisions>` are LOCKED per research and patterns; execute-time changes require replan.
 
 <domain>
 ## Phase Boundary
