@@ -19,6 +19,7 @@
 //     the first read tool call works out of the box.
 
 import { PERSONAS, type Persona } from "./personas.js";
+import { findSolanaPersona } from "./solana-persona.js";
 
 /**
  * Phase 11 — Plan 11-05 carve. The full `SolanaPersona` interface +
@@ -91,6 +92,28 @@ export function setActiveSolanaPersona(persona: SolanaPersona): SolanaPersona {
   }
   activeSolanaPersona = persona;
   return persona;
+}
+
+/**
+ * Activate a Solana persona by slug — Plan 11-06 surface. Resolves the
+ * slug against the `SOLANA_PERSONAS` registry in
+ * `src/demo/solana-persona.ts`, then delegates to `setActiveSolanaPersona`.
+ *
+ * Throws on unknown slug as defense-in-depth behind the JSON-Schema enum
+ * gate at `src/tools/set_demo_wallet.ts` — unreachable in production
+ * through the MCP protocol boundary, but defensible when called from
+ * tests or from a hypothetical future caller. Mirrors the EVM
+ * `setActivePersona(slug)` shape (line 58).
+ *
+ * The `solana-persona.ts` registry uses `import type` for `SolanaPersona`,
+ * so there's no runtime cycle from this file's import of `findSolanaPersona`.
+ */
+export function setActiveSolanaPersonaBySlug(slug: string): SolanaPersona {
+  const persona = findSolanaPersona(slug);
+  if (!persona) {
+    throw new Error(`unknown Solana persona slug: ${String(slug)}`);
+  }
+  return setActiveSolanaPersona(persona);
 }
 
 /**

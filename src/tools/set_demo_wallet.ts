@@ -20,7 +20,11 @@
 
 import { isDemoMode } from "../config/env.js";
 import { PERSONAS } from "../demo/personas.js";
-import { setActivePersona } from "../demo/state.js";
+import { findSolanaPersona } from "../demo/solana-persona.js";
+import {
+  setActivePersona,
+  setActiveSolanaPersonaBySlug,
+} from "../demo/state.js";
 import {
   type ErrorCode,
   type StructuredError,
@@ -42,11 +46,12 @@ function errEnvelope(
 
 const DESCRIPTION = [
   "Activate a curated demo wallet persona for simulation flows.",
-  "Use this AFTER get_demo_wallet lists the four available personas and the user has picked one (whale / defi-degen / stable-saver / staking-maxi).",
+  "Use this AFTER get_demo_wallet lists the available personas and the user has picked one (4 EVM: whale / defi-degen / stable-saver / staking-maxi; 1 Solana: solana-whale).",
+  "EVM and Solana active personas are INDEPENDENT — setting an EVM slug does not affect the active Solana persona, and vice versa. Demo-mode EVM read tools route through the active EVM persona; Solana read tools route through the active Solana persona.",
   "Do NOT use this in real mode — refuses with WRONG_MODE when no demo-mode signal is active (VAULTPILOT_DEMO env or ~/.vaultpilot-mcp/config.json).",
-  "Do NOT pass arbitrary addresses — the schema enum locks the four slugs; unknown values are rejected at the protocol boundary with -32602 InvalidParams.",
-  "Returns `{ active: { slug, address, description } }` plus a confirmation text block.",
-  "State is process-local — restarting the server drops the active persona; re-call this tool to re-activate.",
+  "Do NOT pass arbitrary addresses — the schema enum locks the five slugs; unknown values are rejected at the protocol boundary with -32602 InvalidParams.",
+  "Returns `{ active: { chain, slug, address, description } }` plus a confirmation text block. `chain` is `\"ethereum\"` for EVM personas, `\"solana\"` for the Solana persona; `address` is 0x-hex for EVM, base58 for Solana.",
+  "State is process-local — restarting the server drops the active personas; re-call this tool to re-activate.",
   "Failure modes: WRONG_MODE in real mode, INVALID_INPUT for unknown slug (defense-in-depth behind the schema enum).",
 ].join(" ");
 
@@ -55,9 +60,15 @@ const INPUT_SCHEMA = {
   properties: {
     persona: {
       type: "string",
-      enum: ["whale", "defi-degen", "stable-saver", "staking-maxi"],
+      enum: [
+        "whale",
+        "defi-degen",
+        "stable-saver",
+        "staking-maxi",
+        "solana-whale",
+      ],
       description:
-        "Persona slug from get_demo_wallet's output. One of: whale, defi-degen, stable-saver, staking-maxi.",
+        "Persona slug from get_demo_wallet's output. EVM: whale, defi-degen, stable-saver, staking-maxi. Solana: solana-whale.",
     },
   },
   required: ["persona"],
@@ -88,11 +99,35 @@ registerTool("set_demo_wallet", DESCRIPTION, INPUT_SCHEMA, (args) => {
     }
 
     // Defense-in-depth slug validation. The JSON-Schema enum at the
-    // protocol boundary (src/server.ts:55-66) already rejects unknown
-    // slugs with JSON-RPC -32602 — this branch is unreachable in
-    // production. Test 5 in `test/set-demo-wallet.test.ts` exercises it
-    // via direct handler invocation.
+    // protocol boundary (src/server.ts) already rejects unknown slugs
+    // with JSON-RPC -32602 — this branch is unreachable in production.
+    // Test 5 in `test/set-demo-wallet.test.ts` exercises it via direct
+    // handler invocation. The Solana branch (Plan 11-06) routes
+    // `solana-whale` to the Solana persona registry; the existing 4 EVM
+    // slugs keep the existing path (back-compat).
     const slug = typeof args.persona === "string" ? args.persona : "";
+
+    const solanaPersona = findSolanaPersona(slug);
+    if (solanaPersona) {
+      const activated = setActiveSolanaPersonaBySlug(solanaPersona.slug);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `active persona set: ${activated.slug} (${activated.solanaAddress})`,
+          },
+        ],
+        structuredContent: {
+          active: {
+            chain: "solana",
+            slug: activated.slug,
+            address: activated.solanaAddress,
+            description: activated.description,
+          },
+        },
+      };
+    }
+
     const persona = PERSONAS.find((p) => p.slug === slug);
     if (!persona) {
       return {
@@ -100,7 +135,7 @@ registerTool("set_demo_wallet", DESCRIPTION, INPUT_SCHEMA, (args) => {
         content: [
           {
             type: "text",
-            text: `error: unknown persona slug "${slug}". Call get_demo_wallet to list the four valid slugs.`,
+            text: `error: unknown persona slug "${slug}". Call get_demo_wallet to list the valid slugs.`,
           },
         ],
         structuredContent: errEnvelope(
@@ -121,6 +156,7 @@ registerTool("set_demo_wallet", DESCRIPTION, INPUT_SCHEMA, (args) => {
       ],
       structuredContent: {
         active: {
+          chain: "ethereum",
           slug: activated.slug,
           address: activated.address,
           description: activated.description,
