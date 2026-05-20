@@ -55,8 +55,6 @@
 import { type Address, type Hex, getAddress } from "viem";
 
 import { chainIdFromName, type ChainName } from "../config/contracts.js";
-import { isDemoMode } from "../config/env.js";
-import { getActivePersona } from "../demo/state.js";
 import { PREPARE_RECEIPT_TEMPLATE } from "../signing/blocks.js";
 import {
   type ErrorCode,
@@ -65,7 +63,7 @@ import {
 } from "../signing/error-codes.js";
 import { createHandle } from "../signing/handle-store.js";
 import { computePayloadFingerprint } from "../signing/payload-fingerprint.js";
-import { getStatus } from "../wallet/session-manager.js";
+import { resolveFrom } from "../signing/resolve-from.js";
 import { registerTool } from "./index.js";
 
 // The shared `ToolHandlerResult.structuredContent` type is
@@ -92,11 +90,12 @@ const DESCRIPTION = [
   "`valueWei` is the amount in WEI (10^18 wei = 1 ETH), passed as a decimal string (e.g. \"1000000000000000000\" for 1 ETH).",
   "Do NOT pass human-readable ETH amounts — off-by-decimal is the most common user-facing bug class.",
   "`to` is the recipient address as a 0x-prefixed 20-byte hex string.",
+  "Pass `from` when the user wants to act from a non-default approved account (visible in `get_ledger_status.accountsByChain[chainId]`); otherwise omit and the active account is used. PREPARE RECEIPT surfaces `From:` only when caller-supplied.",
   "Requires a paired Ledger (call pair_ledger_live first if get_ledger_status shows paired: false).",
   "Returns `{ handle, chain, chainId, to, valueWei, payloadFingerprint, prepareReceipt }` plus a PREPARE RECEIPT text block surfacing the verbatim args.",
   "The agent MUST pass the handle to preview_send next — without preview + the resulting previewToken, send_transaction refuses.",
   "In demo mode, succeeds against the active persona's address (set via set_demo_wallet); send_transaction returns a simulation envelope instead of broadcasting.",
-  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona is set, INVALID_INPUT if chain/to/valueWei malformed.",
+  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona is set OR if `from` doesn't match the active persona, INVALID_INPUT if chain/to/valueWei/from malformed, INVALID_ACCOUNT if `from` is not in the per-chain approved set.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -118,6 +117,12 @@ const INPUT_SCHEMA = {
       type: "string",
       description:
         "Amount in WEI as a decimal string (10^18 wei = 1 ETH). Example: \"1000000000000000000\" for 1 ETH. Do NOT pass decimal ETH — Phase 6 adds decimal-aware ERC-20 sends.",
+    },
+    from: {
+      type: "string",
+      pattern: "^0x[0-9a-fA-F]{40}$",
+      description:
+        "Optional sender address — must be one of the per-chain approved accounts in `get_ledger_status.accountsByChain[chainId]`. Omit to use the active account. In demo mode, must match the active persona's address (no multi-account surface in demo).",
     },
   },
   required: ["chain", "to", "valueWei"],
@@ -187,64 +192,22 @@ registerTool("prepare_native_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       };
     }
 
-    // SENDER resolution (Plan 05-02 / Q-CONTRADICTION-PREP Option B):
-    // In demo mode, the active persona's address is `from`; in real mode,
-    // the paired Ledger's address is `from`. T-DEMO-1 + T-NULL-PERSONA-1
-    // mitigation: demo branch SKIPS `getStatus()` (no WC pairing exists in
-    // demo), so the `getStatus` spy observes zero calls in the demo arm.
-    // The `WRONG_MODE` refusal here is defense-in-depth — auto-demo seeds
-    // `whale` so `getActivePersona()` is non-null in practice; the explicit
-    // `VAULTPILOT_DEMO=true` arm without a prior `set_demo_wallet` call is
-    // the only way to reach the null branch.
-    //
-    // T-DEMO-FROM-LEAK-1 mitigation: persona address surfaces in the
-    // receipt + structuredContent as `from`; the simulation banner in
-    // `send_transaction` (Plan 04-04 — locked here) AND the auto-demo
-    // NOTICE (Plan 05-03) make clear the user is NOT signing — they have
-    // no key for this address.
-    let fromAddress: Address;
-    if (isDemoMode()) {
-      const persona = getActivePersona();
-      if (persona === null) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text:
-                "error: demo mode is active but no persona set. Call `set_demo_wallet({ persona: \"whale\" | \"defi-degen\" | \"stable-saver\" | \"staking-maxi\" })` first.",
-            },
-          ],
-          structuredContent: errEnvelope(
-            "WRONG_MODE",
-            "demo mode active but no persona set; call set_demo_wallet first",
-          ),
-        };
-      }
-      fromAddress = persona.address;
-    } else {
-      // T-PAIR-1: confirm pairing. `getStatus()` returns `LedgerStatus | null`;
-      // null means no live session. NO handle is created on the unpaired
-      // branch (defense against state-pollution attacks).
-      const status = await getStatus();
-      if (status === null) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text:
-                "error: no live Ledger session. Call `pair_ledger_live` to pair a Ledger via WalletConnect, then retry.",
-            },
-          ],
-          structuredContent: errEnvelope(
-            "WALLET_NOT_PAIRED",
-            "no live Ledger session",
-          ),
-        };
-      }
-      fromAddress = status.activeAccount;
+    // SENDER resolution (Plan 05-02 + Issue #62): delegated to the shared
+    // `resolveFrom` helper. Real mode + omitted `from` falls back to
+    // `status.activeAccount` (byte-identical to pre-#62 behavior; fixture
+    // tests stay green). Real mode + supplied `from` validates against
+    // `status.accountsByChain[chainId]` and refuses INVALID_ACCOUNT on
+    // mismatch. Demo mode requires `from` (if supplied) to match the active
+    // persona; WRONG_MODE otherwise. T-DEMO-1 invariant preserved — the
+    // helper's demo branch never calls `getStatus()` (so the spy observes
+    // zero calls in the demo arm).
+    const rawFrom = typeof args.from === "string" ? args.from : undefined;
+    const fromResolution = await resolveFrom({ rawFrom, chainId });
+    if (fromResolution.kind === "error") {
+      return fromResolution.result;
     }
+    const fromAddress: Address = fromResolution.fromAddress;
+    const fromCallerSupplied = fromResolution.callerSupplied;
 
     // Phase 8 — Plan 08-02: chainId from `args.chain` enum (above).
     const tx = {
@@ -285,10 +248,16 @@ registerTool("prepare_native_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // Phase 8 — Plan 08-02: `{CHAIN}` slot widening surfaces the chain name +
     // chainId verbatim in the receipt body (the on-device clear-sign display
     // shows the same chain — the receipt is the cross-check anchor).
-    const receipt = PREPARE_RECEIPT_TEMPLATE
+    // Issue #62 — append a `From:` line ONLY when the caller supplied `from`.
+    // When omitted, the receipt is byte-identical to today (back-compat for
+    // fixture tests + the format-fanout-sentinel byte-identity assertion).
+    const baseReceipt = PREPARE_RECEIPT_TEMPLATE
       .replace("{CHAIN}", `${chainName} (chainId ${chainId})`)
       .replace("{TO}", to)
       .replace("{VALUE_WEI}", rawValueWei);
+    const receipt = fromCallerSupplied
+      ? `${baseReceipt}\n  from:     ${rawFrom}`
+      : baseReceipt;
 
     return {
       content: [{ type: "text", text: receipt }],
