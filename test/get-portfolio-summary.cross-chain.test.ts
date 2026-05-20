@@ -341,6 +341,42 @@ describe("get_portfolio_summary cross-chain fan-out (chain OMITTED, Plan 08-03 R
     expect(out.chainErrors).toEqual([]);
   });
 
+  it("Test 11 (Phase 11 Plan 11-05 back-compat regression): EVM rows continue emitting `erc20Balances` field with byte-identical content alongside the new `fungibleBalances` alias", async () => {
+    state[1].nativeBalance = 1_000_000_000_000_000_000n;
+    state[1].erc20 = [
+      {
+        token: { address: USDC_BY_CHAIN.ethereum, symbol: "USDC", decimals: 6, name: "USD Coin" },
+        balance: 100_000_000n,
+      },
+    ];
+    vi.stubGlobal("fetch", makeChainPricedFetch(defaultAllChainPrices(3000)));
+
+    const result = await callTool({ wallet: WALLET });
+    const out = result.structuredContent as {
+      perChain: Record<
+        string,
+        {
+          erc20Balances: Array<Record<string, unknown>>;
+          fungibleBalances?: Array<Record<string, unknown>>;
+        }
+      >;
+    };
+    const eth = out.perChain.ethereum!;
+    // Deprecated alias still present.
+    expect(eth.erc20Balances).toBeDefined();
+    expect(eth.erc20Balances.length).toBe(1);
+    // New widened field also present.
+    expect(eth.fungibleBalances).toBeDefined();
+    expect(eth.fungibleBalances!.length).toBe(1);
+    // Byte-identical content (same tokenAddress, symbol, decimals, balance).
+    const a = eth.erc20Balances[0]!;
+    const b = eth.fungibleBalances![0]!;
+    expect(b.tokenAddress).toBe(a.tokenAddress);
+    expect(b.symbol).toBe(a.symbol);
+    expect(b.decimals).toBe(a.decimals);
+    expect(b.balance).toBe(a.balance);
+  });
+
   it("Test 10: chat-friendly render — content text names 5 chains + per-chain rows", async () => {
     state[1].nativeBalance = 1_000_000_000_000_000_000n;
     state[42161].nativeBalance = 1_000_000_000_000_000_000n;
