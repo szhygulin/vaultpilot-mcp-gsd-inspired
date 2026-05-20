@@ -27,6 +27,8 @@ import "./prepare_revoke_approval.js";
 import "./prepare_weth_unwrap.js";
 import "./prepare_aave_supply.js";
 import "./prepare_aave_withdraw.js";
+import "./prepare_compound_supply.js";   // Phase 28 Plan 28-02 (CMP-03) — Compound V3 supply
+import "./prepare_compound_withdraw.js"; // Phase 28 Plan 28-02 (CMP-04) — Compound V3 withdraw
 import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";
