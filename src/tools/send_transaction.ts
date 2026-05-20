@@ -1082,7 +1082,7 @@ async function buildTronDemoSimulationResponse(
     simResult = _simulationTron.emitNoSimulationAvailable();
   }
   const simulatedAt = new Date().toISOString();
-  const kindLabel = tronTx.kind === "native" ? "native TRX" : "TRC-20";
+  const kindLabel = tronTx.kind === "native" ? "native TRX" : tronTx.kind === "sunswap-swap" ? "SunSwap V2 swap" : "TRC-20";
   const text = [
     `SIMULATION (TRON — demo mode)`,
     `  kind:   ${kindLabel}`,

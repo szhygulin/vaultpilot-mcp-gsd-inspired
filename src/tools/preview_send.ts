@@ -81,7 +81,7 @@ import { _tronStake } from "../protocols/tron-stake.js";
 import { WETH9_SELECTORS } from "../protocols/weth9.js";
 import { _canonicalDispatch } from "../security/canonical-dispatch.js";
 import { _canonicalDispatchSolana } from "../security/canonical-dispatch-solana.js";
-import { _canonicalDispatchTron } from "../security/canonical-dispatch-tron.js";
+import { SUNSWAP_V2_ROUTER_TRON_ADDRESS, _canonicalDispatchTron } from "../security/canonical-dispatch-tron.js";
 import {
   AGENT_TASK_TEMPLATE,
   CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE,
@@ -114,6 +114,7 @@ import {
   PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE,
   PREPARE_RECEIPT_TRON_STAKE_FREEZE_TEMPLATE,
   PREPARE_RECEIPT_TRON_STAKE_UNFREEZE_TEMPLATE,
+  PREPARE_RECEIPT_TRON_SUNSWAP_TEMPLATE,
   PREPARE_RECEIPT_TRON_VOTE_TEMPLATE,
   PREPARE_RECEIPT_TRON_WITHDRAW_EXPIRE_TEMPLATE,
   PREPARE_RECEIPT_TRON_TRC20_TEMPLATE,
@@ -1293,6 +1294,14 @@ function shouldEmitTronLedgerNotice(tx: PreparedTxTron):
       reason: "Protobuf-native contract distinct from TriggerSmartContract — blind-sign only on TRX app",
     };
   }
+  // Phase 20: SunSwap V2 router TriggerSmartContract — NOT in TRX app bundled clear-sign registry.
+  if (tx.kind === "sunswap-swap") {
+    return {
+      emit: true,
+      instructionName: "TRON SunSwap V2 swap (TriggerSmartContract — swapExactTokensForTokens)",
+      reason: "SunSwap V2 router not in TRX app v0.5+ bundled clear-sign registry — blind-sign only",
+    };
+  }
   return { emit: false, reason: "Phase 18 TRC-20 set in TRX app v0.5+ bundled registry" };
 }
 
@@ -1718,7 +1727,135 @@ async function previewSendTronBranch(
       },
     };
   }
-  // End Phase 19 approve/revoke arm — fall through to Phase 18 trc20-transfer + native arms.
+  // End Phase 19 approve/revoke arm — fall through to Phase 20 sunswap-swap arm.
+
+  // ---- Phase 20 — SunSwap V2 swap arm (EARLY RETURN before Layer 0.5 + Layer 0.7) ----
+  // Placement is LOAD-BEARING: fires BEFORE the trc20-transfer-only Layer 0.5 stablecoin
+  // allowlist (checkTronDispatchTarget uses a different allowlist than the router check).
+  // Layer 0.5 for sunswap-swap uses checkTronSmartContractDispatchTarget (router allowlist),
+  // NOT checkTronDispatchTarget (stablecoin allowlist) — run inline here.
+  // Layer 0.7 simulation: NO_SIMULATION_AVAILABLE_TRON_TEMPLATE advisory (not a refusal).
+  if (tronTx.kind === "sunswap-swap") {
+    // 1. Layer 0.5 — SmartContract dispatch allowlist (router, not stablecoin set).
+    const routerCheck = _canonicalDispatchTron.checkTronSmartContractDispatchTarget([
+      tronTx.contractAddress ?? SUNSWAP_V2_ROUTER_TRON_ADDRESS,
+    ]);
+    if (routerCheck.kind === "refused") {
+      const message = `SunSwap swap contract ${tronTx.contractAddress} is not in the TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST (1-entry router set per Phase 20). Expected: ${SUNSWAP_V2_ROUTER_TRON_ADDRESS}.`;
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${message}` }],
+        structuredContent: errEnvelope(
+          "DISPATCH_TARGET_REFUSED",
+          message,
+        ) as Record<string, unknown>,
+      };
+    }
+
+    // 2. Layer 0.7 simulation: advisory (NO_SIMULATION_AVAILABLE) — not a refusal.
+    const simulationResultSwap = _simulationTron.emitNoSimulationAvailable();
+
+    // 3. Recompute presignHash (SHA-256 of rawDataBytes).
+    const rawDataBytesSwap = Buffer.from(tronTx.rawDataHex, "hex");
+    const { presignHash: presignHashSwap } = _tronPresign.computeTronPresignHash({
+      rawDataBytes: new Uint8Array(rawDataBytesSwap),
+    });
+
+    // 4. Mint fresh previewToken.
+    const previewTokenSwap = crypto.randomUUID();
+
+    // 5. Pin via transitionToPreviewed — selector 0x38ed1739 (swapExactTokensForTokens).
+    const transSwap = transitionToPreviewed(record.handle, {
+      nonce: 0,
+      gas: 0n,
+      maxFeePerGas: 0n,
+      maxPriorityFeePerGas: 0n,
+      previewToken: previewTokenSwap,
+      presignHash: presignHashSwap,
+      selector: "0x38ed1739",
+    });
+    if (!transSwap.ok) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `error: handle state changed during preview (${transSwap.errorCode})`,
+          },
+        ],
+        structuredContent: errEnvelope(
+          transSwap.errorCode,
+          `handle transition failed: ${transSwap.errorCode}`,
+        ) as Record<string, unknown>,
+      };
+    }
+
+    // 6. Render PREPARE RECEIPT from sunswap template.
+    const summarySwap = tronTx.instructionSummary?.[0];
+    const prepareReceiptSwap = PREPARE_RECEIPT_TRON_SUNSWAP_TEMPLATE
+      .replace("{CHAIN}", "TRON mainnet")
+      .replace("{INPUT_TOKEN}", record.args.inputToken ?? "")
+      .replace("{OUTPUT_TOKEN}", record.args.outputToken ?? "")
+      .replace("{IN_AMOUNT}", record.args.amount ?? "")
+      .replace("{OUT_AMOUNT}", summarySwap && "outAmount" in summarySwap ? String(summarySwap.outAmount) : "")
+      .replace("{PRICE_IMPACT_BPS}", summarySwap && "priceImpactBps" in summarySwap ? String(summarySwap.priceImpactBps) : "")
+      .replace("{SLIPPAGE_BPS}", record.args.slippageBps ?? "")
+      .replace("{PATH}", summarySwap && "path" in summarySwap ? (summarySwap.path as string[]).join(" → ") : "")
+      .replace("{DEADLINE}", summarySwap && "deadline" in summarySwap ? String(summarySwap.deadline) : "")
+      .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+      .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+      .replace("{EXPIRATION}", String(tronTx.expiration));
+
+    // 7. Render LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE.
+    const blindSignHashBlockSwap = LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE
+      .replace("{HASH_FULL_64HEX}", presignHashSwap)
+      .replace("{HASH_CHUNKED_4_CHAR_GROUPS}", chunkTronHash(presignHashSwap));
+
+    // 8. NO_SIMULATION_AVAILABLE_TRON_TEMPLATE advisory.
+    const simulationBlockSwap = NO_SIMULATION_AVAILABLE_TRON_TEMPLATE;
+
+    // 9. LEDGER_NOTICE_TRON_TEMPLATE — UNCONDITIONALLY emitted for sunswap-swap.
+    const noticeDecisionSwap = shouldEmitTronLedgerNotice(tronTx);
+    const ledgerNoticeBlockSwap = noticeDecisionSwap.emit
+      ? LEDGER_NOTICE_TRON_TEMPLATE
+          .replace("{INSTRUCTION_NAME}", noticeDecisionSwap.instructionName)
+          .replace("{REGISTRY_STATUS}", noticeDecisionSwap.reason)
+      : "";
+
+    // 10. Concatenate response text.
+    const responseTextPartsSwap = [
+      prepareReceiptSwap,
+      ...(ledgerNoticeBlockSwap ? [ledgerNoticeBlockSwap] : []),
+      blindSignHashBlockSwap,
+      simulationBlockSwap,
+      VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
+      `\nPreview token: ${previewTokenSwap}`,
+      `\nNext step: send_transaction({ handle: "${record.handle}", previewToken: "${previewTokenSwap}", userDecision: "send" })`,
+    ];
+    const responseTextSwap = responseTextPartsSwap.filter(Boolean).join("\n\n");
+
+    return {
+      content: [{ type: "text", text: responseTextSwap }],
+      structuredContent: {
+        handle: record.handle,
+        chain: "tron",
+        kind: tronTx.kind,
+        previewToken: previewTokenSwap,
+        presignHash: presignHashSwap,
+        simulation: simulationResultSwap,
+        payloadFingerprint: record.payloadFingerprint,
+        decodedArgs: tronTx.instructionSummary,
+        blockHeader: {
+          refBlockBytes: tronTx.refBlockBytes,
+          refBlockHash: tronTx.refBlockHash,
+          expiration: tronTx.expiration,
+        },
+        rawDataHex: tronTx.rawDataHex,
+        sessionTopicLast8: null,
+      },
+    };
+  }
+  // End Phase 20 sunswap-swap arm — fall through to Phase 18 trc20-transfer + native arms.
 
   // ---- Layer 0.5 — canonical-dispatch-tron (TRC-20 only) ---------------
   if (tronTx.kind === "trc20") {

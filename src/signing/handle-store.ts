@@ -76,6 +76,12 @@ export interface PrepareArgs {
   /** Phase 18 — pinned ref-block fields (server-derived at prepare time; surfaced in PREPARE RECEIPT). */
   refBlockBytes?: string;
   refBlockHash?: string;
+  /** Phase 20 — SunSwap V2 swap input token TRC-20 address (raw agent string; surfaced in PREPARE RECEIPT). */
+  inputToken?: string;
+  /** Phase 20 — SunSwap V2 swap output token TRC-20 address (raw agent string; surfaced in PREPARE RECEIPT). */
+  outputToken?: string;
+  /** Phase 20 — SunSwap V2 slippage tolerance in basis points as decimal string (e.g. "50"). */
+  slippageBps?: string;
 }
 
 /**
