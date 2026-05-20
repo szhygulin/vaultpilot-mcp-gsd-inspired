@@ -51,13 +51,14 @@ Built fresh from product specs using GSD. Same product space as the upstream `va
 
 ### Future Milestones
 
-<!-- In-scope eventually — each is its own milestone in ROADMAP.md. Not Out of Scope, not Active. -->
+<!-- In-scope eventually — each is its own milestone in ROADMAP.md. Not Out of Scope, not Active. v2.1-v2.6 scaffolded (full phase breakdown + requirement enumeration) on 2026-05-20; planned but not in-flight. -->
 
-- v2.1 TRON, v2.2 Bitcoin + Litecoin — each a separate milestone because the signing transport, address scheme, and Ledger-app behavior differ per chain. Reuses v2.0 Phase 11's persistent non-EVM account cache (PAIR-NEV-*).
-- v2.3 EVM lending+staking expansion (Compound V3 / Morpho Blue / Lido wrap / EigenLayer / Rocket Pool)
-- v2.4 EVM DEX + LP + escape hatch (Uniswap V3 swap+LP / Curve / `prepare_custom_call`)
-- v2.5 Safe (Gnosis) multisig three-step flow (propose → approve → execute)
-- v2.6 Bridge facet decoders + cross-chain hardening (Tier-1 Wormhole / Mayan / NEAR Intents / Across V3; Tier-2 deferred)
+- **v2.1 TRON** (Phases 17-21, scaffolded) — TRX + TRC-20 trust pipeline + Stake 2.0 + SunSwap + LiFi bridging. Reuses v2.0 Phase 11's persistent non-EVM account cache (PAIR-NEV-*).
+- **v2.2 Bitcoin + Litecoin** (Phases 22-27, scaffolded — one milestone per the "shared Esplora + Ledger BTC infra" decision) — UTXO-model trust pipeline (PSBT-based); native segwit + taproot + RBF + BIP-137 + PSBT multisig + LiFi BTC bridging + optional Core RPC forensic reads.
+- **v2.3 EVM lending+staking expansion** (Phases 28-31, scaffolded) — Compound V3 / Morpho Blue / Lido / EigenLayer / Rocket Pool.
+- **v2.4 EVM DEX + LP + escape hatch** (Phases 32-35, scaffolded) — Uniswap V3 swap+LP / Curve / `prepare_custom_call`.
+- **v2.5 Safe (Gnosis) multisig** (Phases 36-38, scaffolded) — three-step flow (propose → approve → execute) + `enableModule`/`delegateCall` hard-trigger second-LLM check (Inv #12.5).
+- **v2.6 Bridge facet decoders + cross-chain hardening** (Phases 39-40, scaffolded) — Tier-1 Wormhole / Mayan / NEAR Intents / Across V3; Tier-2 deferred; sandwich-MEV per-L2 thresholds.
 - v3.0 Hosted MCP (HTTP/SSE + OAuth 2.1) — unblocks claude.ai web/desktop
 - v3.1 NFT reads, v3.2 contacts + read-only sharing, v3.3 device-trust attestation, v3.4 ergonomics surface, v3.5 multi-hardware-wallet (Trezor / Keystone / GridPlus Lattice)
 
@@ -117,7 +118,7 @@ Built fresh from product specs using GSD. Same product space as the upstream `va
 | Bitcoin / Litecoin support is one milestone, not two | Esplora client + Ledger BTC app + LiFi BTC routing share enough infrastructure that splitting BTC and LTC into separate milestones would force two duplicated `pair_ledger_*` flows and two Esplora wrappers. Ship them together at v2.2 with LTC riding the BTC scaffolding. | — Pending |
 
 ---
-*Last updated: 2026-05-12 after upstream docs sync (PR #672 — tool surface ~80→~190, NFT reads in scope, BTC/LTC fully shipped, honest-model-error class added)*
+*Last updated: 2026-05-20 — v2.1-v2.6 milestone scaffolding (chore/v2-1-thru-6-scaffolding); 24 new phases (17-40) + ~110 new requirements across TRON / BTC+LTC / EVM lending+staking / DEX+LP+escape / Safe / Bridge+MEV.*
 
 ## Evolution
 

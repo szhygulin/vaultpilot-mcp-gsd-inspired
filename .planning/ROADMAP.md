@@ -12,12 +12,12 @@ The journey: a working trust pipeline first (one chain, one signing flow, end-to
 - 🟡 **v1.3 Hardening + skill** — Phase 9 **code-complete** (companion skill in sister repo, three verification tools, dispatch allowlist); v1.3 verify-phase open
 - 🟡 **v1.4 Distribution** — Phase 10 **code-complete** (per-platform binaries + install scripts + setup wizard + `request_capability` tool); v1.4 verify-phase open; v1.4.1 follow-up for pkg ESM subpath-exports resolution
 - 📋 **v2.0 Solana** — Phases 11-16 planned (USB-HID transport + persistent non-EVM account cache / SOL + SPL trust pipeline / MarginFi + Kamino lending / Jupiter v6 swaps / Marinade + Jito + native staking / LiFi bridging + diagnostics)
-- 📋 **v2.1** — TRON (TRX / TRC-20 / Stake 2.0 / SunSwap / LiFi bridging)
-- 📋 **v2.2** — Bitcoin + Litecoin (Esplora reads / RBF / PSBT multisig / BIP-137 / LiFi BTC routing / optional Core RPC)
-- 📋 **v2.3** — EVM lending+staking expansion (Compound / Morpho / Lido wrap / EigenLayer / Rocket Pool)
-- 📋 **v2.4** — EVM DEX + LP + escape hatch (Uniswap V3 LP / Curve / `prepare_custom_call`)
-- 📋 **v2.5** — Safe (Gnosis) multisig
-- 📋 **v2.6** — Bridge facet decoders + cross-chain hardening (Tier-1 + Tier-2 / sandwich-MEV per-L2)
+- 📋 **v2.1 TRON** — Phases 17-21 planned (USB-HID + TRX reads / native + TRC-20 trust pipeline / TRC-20 approve + Stake 2.0 / SunSwap + LiFi bridging / diagnostics + multi-chain portfolio)
+- 📋 **v2.2 Bitcoin + Litecoin** — Phases 22-27 planned (Esplora reads + USB-HID / native segwit + taproot PSBT trust pipeline / BIP-125 RBF + BIP-137 / PSBT multisig / LTC + LiFi BTC bridging / Core RPC + incident report)
+- 📋 **v2.3 EVM lending + staking expansion** — Phases 28-31 planned (Compound V3 / Morpho Blue / Lido wrap / EigenLayer + Rocket Pool)
+- 📋 **v2.4 EVM DEX + LP + escape hatch** — Phases 32-35 planned (Uniswap V3 swap / Uniswap V3 LP / Curve / `prepare_custom_call`)
+- 📋 **v2.5 Safe (Gnosis) multisig** — Phases 36-38 planned (Safe positions + Tx Service / three-step signing flow / `enableModule` + `delegateCall` hard-trigger second-LLM)
+- 📋 **v2.6 Bridge facet decoders + cross-chain hardening** — Phases 39-40 planned (Tier-1 facet decoders + Inv #6b final-recipient assertion / sandwich-MEV per-L2 thresholds; Tier-2 facets explicitly deferred)
 - 📋 **v3.0** — Hosted MCP (HTTP/SSE / OAuth)
 - 📋 **v3.1** — NFT reads (portfolio / collection / history / listings)
 - 📋 **v3.2** — Contacts + read-only sharing
@@ -392,16 +392,487 @@ Plans:
 
 ---
 
-### 📋 v2.1+ Future Milestones (Planned)
+### 📋 v2.1 TRON (Phases 17-21)
 
-Each is sized as one milestone (4-6 phases). All blocked on v2.0 maturity.
+**Milestone Goal:** A user can pair a Ledger over USB-HID for TRON (no WalletConnect — TRON has no WC v2 bridge to Ledger), read TRX + canonical TRC-20 stablecoin balances (USDT / USDC / USDD / TUSD), send TRX and TRC-20 tokens, manage Stake 2.0 freeze/unfreeze/withdraw-expire-unfreeze/vote/claim, swap TRX↔TRC-20 on SunSwap, and bridge TRON↔EVM via LiFi. The full prepare → preview → send trust pipeline is reused, with TRON-specific primitives layered in: serialized-Protobuf-transaction-bytes `payloadFingerprint` (domain-tagged `"VaultPilot-trontx-v1:"`), TRC-20 approve via `prepare_tron_token_approve`, and the persistent non-EVM account cache (PAIR-NEV-*) from Phase 11 reused for TRON address persistence. The Ledger TRON app clear-signs every supported action over USB-HID.
 
-- **v2.1 TRON** — TRX + canonical TRC-20 balances + transfers + Stake 2.0 + SunSwap (same-chain swap) + LiFi-routed TRON↔EVM bridging + TRC-20 approve. USB-HID transport. Ledger TRON app clear-signs every supported action. Reuses Phase 11's `src/wallet/non-evm-account-store.ts` for TRON account persistence (PAIR-NEV-* requirements).
-- **v2.2 Bitcoin + Litecoin** (one milestone — shared Esplora + Ledger BTC infra) — Native + segwit + taproot sends, BIP-125 RBF, PSBT multisig (combine / sign / finalize), BIP-137 message signing, LiFi-routed BTC→EVM/Solana, optional Bitcoin Core / Litecoin Core JSON-RPC for forensic chain reads (chain tips, mempool census, fee percentiles), `build_incident_report` chain-tip + mempool-anomaly bundle. USB-HID via Ledger BTC app.
-- **v2.3 EVM lending + staking expansion** — Compound V3 (multi-Comet), Morpho Blue, Lido (stake / unstake / wrap stETH↔wstETH), EigenLayer, Rocket Pool. Each protocol as a phase.
-- **v2.4 EVM DEX + LP + escape hatch** — Uniswap V3 swap + full LP verb set (mint / increase / decrease / collect / burn / rebalance), Curve (swap + add liquidity, v0.2 follow-ups deferred), `prepare_custom_call({ acknowledgeNonProtocolTarget: true })` escape hatch with `get_contract_abi` + `read_contract` companions.
-- **v2.5 Safe (Gnosis) multisig** — `prepare_safe_tx_propose` / `_approve` / `_execute` + `submit_safe_tx_signature`; Tx Service API integration; `enableModule` / `delegateCall: true` flagged for hard-trigger second-LLM check.
-- **v2.6 Bridge facet decoders + cross-chain hardening** — Tier-1 (Wormhole / Mayan / NEAR Intents / Across V3) facet decoders for Inv #6b; Tier-2 (deBridge / Stargate composeMsg / Hop / Symbiosis) deferred until usage data justifies; sandwich-MEV slippage hint per-L2 thresholds.
+#### Phase 17: TRON scaffolding — USB-HID transport + TRX reads + persistent TRON account
+**Goal**: USB-HID Ledger pairing for TRON works; TRX balance readable via TronGrid (or `TRON_RPC_URL` override); paired TRON account persists via the v2.0 Phase 11 `non-evm-account-store.ts` infrastructure under `chain: "tron"` record key.
+**Depends on**: Phase 16 (v2.0 complete — PAIR-NEV-* cache infrastructure live)
+**Requirements**: PAIR-NEV-* reuse, TRON-PAIR-01, TRON-PAIR-02, TRON-READ-01, TRON-READ-02, TRON-READ-03
+**Success Criteria** (what must be TRUE):
+  1. `pair_tron_ledger()` opens the Ledger TRON app over USB-HID via `@ledgerhq/hw-transport-node-hid` + `@ledgerhq/hw-app-trx`, returns the base58check (T-prefixed) address verbatim plus a `VERIFY-ON-DEVICE` block
+  2. `get_tron_status()` returns `{ paired: true, address, derivationPath, rpcEndpoint, ledgerTrxAppVersion? }` after a successful pair; integrates with PAIR-NEV-* for restored sessions
+  3. `get_tron_balance({ wallet })` returns native TRX balance (sun + TRX-formatted) against a free public node (default TronGrid; override via `TRON_RPC_URL`)
+  4. `get_tron_block_tip()` returns the current TRON block height + timestamp (TRON-specific diagnostic)
+  5. Paired TRON account persists to `~/.vaultpilot-mcp/non-evm-accounts.json` under `chain: "tron"` record key (PAIR-NEV-* cache reuse — zero infrastructure change)
+  6. On MCP restart, eager-loaded TRON account restores via `loadNonEvmAccounts()` before `server.connect(transport)`; `get_tron_status()` returns `paired: true` on first call without re-pair
+  7. `get_vaultpilot_config_status` extends `pairedNonEvmChains` to include `"tron"` when present; `tronRpcConfigured` boolean surfaces alongside `solanaRpcConfigured`
+**Plans**: 4 plans (estimate)
+
+Plans:
+- [ ] 17-01: `tronweb` (DF — researcher to scope-probe vs `@tronprotocol/sdk` at execute time per `rnd`) + `@ledgerhq/hw-app-trx` + USB-HID transport reuse from Phase 11; `src/chains/tron/` shelf (rpc-client + registry + types); `TRON_RPC_URL` env reader + TronGrid fallback
+- [ ] 17-02: `pair_tron_ledger` tool + USB-HID transport open + TRON app detection + ed25519-on-secp256k1 pubkey → base58check (T-prefixed) address derivation + `VERIFY-ON-DEVICE` block; PAIR-NEV-* cache reuse (no schema change — `chain: "tron"` is the only delta)
+- [ ] 17-03: `get_tron_balance` + `get_tron_block_tip` read tools + `get_tron_status` diagnostic; eager-init at `startServer()` via existing PR #61 + Phase 11 pattern (no new infrastructure)
+- [ ] 17-04: `get_vaultpilot_config_status` TRON surfacing (`tronRpcConfigured`, `pairedNonEvmChains` extension) + demo persona registry extension (TRON whale persona — known top-50 TRX holder)
+
+#### Phase 18: TRON native + TRC-20 trust pipeline
+**Goal**: Full prepare → preview → send flow works for native TRX and TRC-20 transfers, with TRON-specific `payloadFingerprint` (over serialized Protobuf transaction bytes pre-signature), TRON-specific blind-sign hash recompute (SHA-256 over the Protobuf raw_data per TRON consensus), and Ledger TRX-app clear-sign coverage.
+**Depends on**: Phase 17
+**Requirements**: TRON-PREP-01, TRON-PREP-02, TRON-PREP-03, TRON-PREP-04, TRON-W-01, TRON-W-02
+**Success Criteria** (what must be TRUE):
+  1. `prepare_tron_native_send({ to, sun })` returns `{ handle, to, sun, blockHeader, payloadFingerprint, prepareReceipt }` with the TRON `payloadFingerprint` over serialized Protobuf raw_data bytes (domain-tagged `"VaultPilot-trontx-v1:"`, distinct from EVM and Solana tags)
+  2. `prepare_tron_trc20_send({ to, tokenAddress, amount })` produces a `TriggerSmartContract` with `transfer(to, amount)` calldata; decimal-string amount resolved via `get_tron_token_metadata`
+  3. `preview_send` TRON branch surfaces decoded args + Ledger TRX-app blind-sign hash recompute (SHA-256 over raw_data) in `LEDGER BLIND-SIGN HASH` block
+  4. `send_transaction` TRON branch enforces `previewToken` + `userDecision: "send"` + `payloadFingerprint` drift gate identically to EVM/Solana paths
+  5. Ledger TRX app clear-signs both native and TRC-20 transfers (per TRX app v0.5+ default); user sees decoded `Recipient` + `Amount` on-device
+  6. Fixture K (native TRX transfer fingerprint) + Fixture L (TRC-20 transfer fingerprint) hardcoded as `0x...` literals in `test/signing-fingerprint.test.ts`; cross-linked from `prepare-tron-*` consumer tests
+  7. SECURITY.md updated for TRON threat model — Protobuf raw_data hash vs EVM RLP keccak256, TRX blind-sign mode behavior, TRC-20 plugin coverage gap (if any) as accepted-residual
+**Plans**: 4 plans (estimate)
+
+Plans:
+- [ ] 18-01: `src/signing/tron-fingerprint.ts` — `payloadFingerprint` over serialized Protobuf raw_data (domain-tagged `"VaultPilot-trontx-v1:"`); Fixture K literal anchor in `test/signing-fingerprint.test.ts`; FROZEN-area discipline asserts EVM-side + Solana-side fingerprint modules byte-untouched
+- [ ] 18-02: `prepare_tron_native_send` + TRON `PREPARE RECEIPT` template + `src/protocols/tron-native.ts` (TransferContract Protobuf encoder via tronweb); blockHeader-pinning + ref-block timeout handling (TRON's 1-hour ref-block window)
+- [ ] 18-03: `prepare_tron_trc20_send` + `src/protocols/tron-trc20.ts` (TriggerSmartContract `transfer(to, amount)` calldata encoder); `parseTronAmountStrict` mirroring `parseAmountStrict` + `parseSolanaAmountStrict`; `get_tron_token_metadata` decimals lookup via TRC-20 contract read; Fixture L literal anchor
+- [ ] 18-04: `preview_send` + `send_transaction` TRON branches — Layer 0.7 simulation gate (TRON `triggerconstantcontract` for TRC-20; native sends skip — no simulation API); Ledger TRX-app blind-sign hash recompute (SHA-256 over raw_data); full TRON trust-pipeline integration test (persona-cycle byte-identity); SECURITY.md TRON section
+
+#### Phase 19: TRC-20 approve + Stake 2.0 (freeze/unfreeze/withdraw-expire-unfreeze/vote/claim)
+**Goal**: User can approve TRC-20 spenders (with the `⚠ UNLIMITED APPROVAL` surfacing pattern from Phase 6) and run the full TRON Stake 2.0 lifecycle — freeze TRX for resources, unfreeze, withdraw-expire-unfreeze, vote for super representatives, claim rewards.
+**Depends on**: Phase 18
+**Requirements**: TRON-PREP-05, TRON-W-03, TRON-W-04, TRON-W-05, TRON-W-06, TRON-W-07, TRON-W-08
+**Success Criteria** (what must be TRUE):
+  1. `prepare_tron_token_approve({ tokenAddress, spender, amount })` produces a TRC-20 `approve(spender, amount)` TriggerSmartContract; `amount: "max"` accepted as `2^256-1`; `⚠ UNLIMITED APPROVAL` strict-equality label at preview (mirrors Phase 6 PREP-29)
+  2. `prepare_tron_revoke_approval({ tokenAddress, spender })` produces `approve(spender, 0)` — distinct named tool the agent calls by intent
+  3. `prepare_tron_stake_freeze({ amount, resource: "ENERGY"|"BANDWIDTH" })` produces a `FreezeBalanceV2Contract` (Stake 2.0 — distinct from legacy `FreezeBalanceContract`); resource enum surfaced verbatim in `CHECKS PERFORMED`
+  4. `prepare_tron_stake_unfreeze` + `prepare_tron_withdraw_expire_unfreeze` cover the 14-day unfreeze waiting-period lifecycle
+  5. `prepare_tron_stake_vote({ votes: [{ srAddress, count }] })` produces a `VoteWitnessContract` for super-representative voting
+  6. `prepare_tron_stake_claim_rewards` produces a `WithdrawBalanceContract` for accumulated voting rewards
+  7. TRON-specific spender-label table extends `src/config/contracts.ts` — SunSwap router + LiFi + canonical TRC-20 stablecoins as KnownSpender entries
+**Plans**: 4 plans (estimate)
+
+Plans:
+- [ ] 19-01: `prepare_tron_token_approve` + `prepare_tron_revoke_approval` (shared `prepareTronApproveInternal` helper for byte-identity; mirrors Phase 6 `prepareApproveInternal` shape); `⚠ UNLIMITED APPROVAL` strict-equality surfacing; TRON spender table extension in `src/config/contracts.ts`
+- [ ] 19-02: `prepare_tron_stake_freeze` + `prepare_tron_stake_unfreeze` + `prepare_tron_withdraw_expire_unfreeze` (Stake 2.0 Protobuf contracts; resource enum); CHECKS PERFORMED surfacing for 14-day waiting period
+- [ ] 19-03: `prepare_tron_stake_vote` + `prepare_tron_stake_claim_rewards` (VoteWitnessContract + WithdrawBalanceContract); super-representative validation (best-effort registry lookup)
+- [ ] 19-04: Lifecycle integration test (freeze → unfreeze → withdraw — multi-tx flow with simulated time advance); Fixture M (TRC-20 approve) + Fixture N (FreezeBalanceV2) literal anchors
+
+#### Phase 20: SunSwap + LiFi-routed TRON↔EVM bridging
+**Goal**: User can swap TRX↔TRC-20 on SunSwap (same-chain) and bridge TRON↔EVM via LiFi. `prepare_sunswap_swap` consumes the SunSwap V2 router; `prepare_tron_lifi_swap` consumes the LiFi quote API and serializes the returned transaction.
+**Depends on**: Phase 19
+**Requirements**: TRON-W-09, TRON-W-10, TRON-W-11
+**Success Criteria** (what must be TRUE):
+  1. `get_sunswap_quote({ inputToken, outputToken, amount, slippageBps? })` returns the SunSwap V2 router quote (out amount, route plan, slippage)
+  2. `prepare_sunswap_swap({ inputToken, outputToken, amount, slippageBps })` returns an unsigned TriggerSmartContract for the SunSwap V2 router; user signs via the standard TRON trust pipeline (Phase 18)
+  3. Default slippage hint = 50 bps; refuses without explicit `slippageBps` when price impact > 2% (sandwich-MEV defense — mirrors Phase 14 Jupiter + v2.6 MEV-01 EVM)
+  4. `prepare_tron_lifi_swap({ fromChain: "tron", fromToken, toChain, toToken, amount, toAddress })` produces an unsigned LiFi-routed bridge transaction; works both directions (TRON → EVM AND EVM → TRON)
+  5. Server-side `decodedFinalRecipient == userSuppliedToAddress` assertion at preview time (Inv #6b extension — mirrors v2.0 SOL-W-21 + v2.6 BRIDGE-T1)
+  6. SunSwap V2 router + LiFi TRON facet addresses added to TRON-specific canonical-dispatch allowlist (`src/security/canonical-dispatch.ts` TRON arm)
+**Plans**: 2 plans (estimate)
+
+Plans:
+- [ ] 20-01: `src/clients/sunswap.ts` (HTTP client mirroring `jupiter.ts` shape; never-throws, LRU cache); `get_sunswap_quote` + `prepare_sunswap_swap`; sandwich-MEV >2% refusal; canonical-dispatch TRON arm wiring
+- [ ] 20-02: `prepare_tron_lifi_swap` + LiFi TRON-side decoder + Inv #6b `decodedFinalRecipient` assertion at preview; cross-chain `toChain` Zod enum widening (`"tron"` joins existing EVM + Solana enum). **Shared `src/clients/lifi.ts` shelf** (consumed by v2.0 SOL-W-21, v2.1 TRON-W-11, v2.2 BTC-LIFI-01) — refactor opportunity if not already factored at Phase 16.
+
+#### Phase 21: TRON diagnostics + multi-chain portfolio extension
+**Goal**: `get_tron_setup_status` probes TRX-app version + on-device address verify (analogous to v2.0 SOL-DIAG-01); `get_portfolio_summary` extends to include TRON when configured.
+**Depends on**: Phase 20
+**Requirements**: TRON-DIAG-01, TRON-READ-04
+**Success Criteria** (what must be TRUE):
+  1. `get_tron_setup_status({ wallet })` returns `{ ledgerTrxAppVersion?, walletAddressOnDevice, resourceAccountPresent (Stake 2.0), frozenEnergyAmount, frozenBandwidthAmount }`
+  2. `get_portfolio_summary` fan-out adds TRON when configured; per-row `chain: "tron"` field follows the v1.2 multi-EVM + v2.0 Solana convention
+  3. TRON branch in `get_portfolio_summary` aggregates TRX + canonical TRC-20 stablecoin balances + USD totals; SPL-equivalent TRC-20 discovery via a curated top-30-by-volume TRC-20 mint registry at `src/tokens/tron-top-30.json` (smaller than EVM/Solana — TRON's relevant token surface is narrower)
+  4. SECURITY.md updated with TRON-side bridge facet-decode rationale + multi-chain portfolio scope extension
+**Plans**: 2 plans (estimate)
+
+Plans:
+- [ ] 21-01: `get_tron_setup_status` diagnostic — Stake 2.0 resource probe + Ledger TRX app version probe + on-device pubkey verify
+- [ ] 21-02: `get_portfolio_summary` TRON branch + curated top-30 TRC-20 registry at `src/tokens/tron-top-30.json` + DefiLlama pricing (`tron:<address>` keying) + v2.1 milestone close-out (SECURITY.md TRON threat-model finalization)
+
+**Status**: planning; v2.1 verify-phase requires a physical Ledger with TRON app installed + USB-HID connectivity + small TRX balance for return-able test broadcasts.
+
+---
+
+### 📋 v2.2 Bitcoin + Litecoin (Phases 22-27)
+
+**Milestone Goal:** A user can pair a Ledger over USB-HID for BTC (and LTC), read BTC balances via Esplora (no API keys), send native segwit + taproot transactions, bump fees via BIP-125 RBF, sign BIP-137 messages, participate in PSBT-based multisig workflows (combine / sign / finalize), bridge BTC→EVM/Solana via LiFi, and (optionally) probe forensic chain reads via Bitcoin Core / Litecoin Core JSON-RPC. LTC mirrors BTC scaled down (shared Esplora + Ledger BTC infra — same `src/wallet/non-evm-account-store.ts` cache). The UTXO-model trust pipeline is structurally distinct from account-model chains (EVM / Solana / TRON) — PSBT serialization replaces the single-transaction-blob payloadFingerprint shape; each input commits independently via BIP-143 sighashes.
+
+#### Phase 22: BTC scaffolding — Esplora reads + USB-HID + persistent BTC account
+**Goal**: USB-HID Ledger pairing for BTC works; BTC balance + UTXO + history readable via Esplora (mempool.space or blockstream.info); paired BTC account persists via the v2.0 Phase 11 cache under `chain: "bitcoin"` record key.
+**Depends on**: Phase 21 (v2.1 complete — PAIR-NEV-* cache + USB-HID transport patterns mature)
+**Requirements**: PAIR-NEV-* reuse, BTC-PAIR-01, BTC-PAIR-02, BTC-READ-01, BTC-READ-02, BTC-READ-03, BTC-READ-04, BTC-READ-05
+**Success Criteria** (what must be TRUE):
+  1. `pair_btc_ledger()` opens the Ledger BTC app over USB-HID via `@ledgerhq/hw-app-btc`, returns the first segwit (bc1q…) AND first taproot (bc1p…) addresses verbatim plus a `VERIFY-ON-DEVICE` block
+  2. `get_btc_status()` returns `{ paired: true, addresses: { segwit, taproot }, derivationPath, esploraEndpoint, ledgerBtcAppVersion? }`
+  3. `get_btc_balance({ wallet })` returns sat + BTC-formatted balance via Esplora `/address/{addr}` endpoint
+  4. `get_btc_balances({ wallet })` returns segwit + taproot balances separately (UTXOs live at distinct script types per derivation)
+  5. `get_btc_account_balance({ xpub })` aggregates across all derived addresses under an xpub (gap-limit-respecting scan)
+  6. `get_btc_tx_history({ wallet, limit })` returns recent transactions via Esplora `/address/{addr}/txs`
+  7. `get_btc_fee_estimates()` returns Esplora's fee-rate estimates (sat/vB) for 1/2/3/6/144-block confirmation targets
+  8. Paired BTC account persists to `~/.vaultpilot-mcp/non-evm-accounts.json` under `chain: "bitcoin"` record key (PAIR-NEV-* cache reuse — multi-derivation-path slots supported via the v2.0 multi-record-per-chain provision)
+**Plans**: 4 plans (estimate)
+
+Plans:
+- [ ] 22-01: `bitcoinjs-lib` (DF — researcher to scope-probe `@noble/curves/secp256k1` for taproot key-spending vs full library at execute time) + `@ledgerhq/hw-app-btc` + USB-HID transport reuse; `src/chains/bitcoin/` shelf (esplora-client + registry + types); `BTC_ESPLORA_URL` env reader (default `https://blockstream.info/api`; mempool.space alt-default DF) + Bitcoin Core RPC env reader (deferred to Phase 27)
+- [ ] 22-02: `pair_btc_ledger` tool + USB-HID transport open + BTC app detection + segwit (bc1q…) + taproot (bc1p…) address derivation under BIP-84 (segwit) + BIP-86 (taproot); `VERIFY-ON-DEVICE` block; PAIR-NEV-* cache reuse with multi-derivation-path record slots
+- [ ] 22-03: `get_btc_balance` + `get_btc_balances` + `get_btc_account_balance` + `get_btc_tx_history` + `get_btc_fee_estimates` read tools; Esplora HTTP client (mirrors `fourbyte.ts` / `etherscan.ts` shape — never-throws, LRU cache, AbortController timeout); UTXO-shape `BalanceReport` discriminated union
+- [ ] 22-04: `get_btc_status` + `get_vaultpilot_config_status` BTC surfacing (`btcEsploraConfigured`, `pairedNonEvmChains` extension); demo persona registry extension (BTC whale persona — known top-50 BTC holder)
+
+#### Phase 23: BTC native + segwit + taproot trust pipeline (PSBT-based)
+**Goal**: Full prepare → preview → send flow works for native BTC sends. The BTC trust pipeline is structurally distinct: PSBT serialization replaces the EVM/Solana single-blob shape; `payloadFingerprint` is computed over the BIP-143 sighashes per input (not the whole tx); the Ledger BTC app signs each input via the PSBT workflow.
+**Depends on**: Phase 22
+**Requirements**: BTC-PREP-01, BTC-PREP-02, BTC-PREP-03, BTC-PSBT-01, BTC-PSBT-02, BTC-W-01
+**Success Criteria** (what must be TRUE):
+  1. `prepare_btc_send({ to, sats, feeRate? })` returns `{ handle, psbt, inputs[], outputs[], feeSats, payloadFingerprint, prepareReceipt }`; coin-selection via branch-and-bound (BnB) with manual override; `payloadFingerprint` over the BIP-143 sighashes of all inputs (domain-tagged `"VaultPilot-btctx-v1:"`)
+  2. `preview_send` BTC branch surfaces decoded inputs/outputs + per-input sighash + Ledger BTC-app PSBT-signing flow expectation in `LEDGER BLIND-SIGN HASH` block (multi-hash for multi-input)
+  3. `send_transaction` BTC branch enforces `previewToken` + `userDecision: "send"` + `payloadFingerprint` drift gate
+  4. Native segwit (bc1q…) AND taproot (bc1p…) sends both work; the Ledger BTC app handles both script types per BTC app v2.1+
+  5. Mixed-script-type inputs supported (some segwit + some taproot) — common case for users with derived addresses across both script types
+  6. Fixture O (BTC native segwit send fingerprint, single-input single-output) + Fixture P (BTC taproot send fingerprint) + Fixture Q (mixed-script-type send) hardcoded as `0x...` literals in `test/signing-fingerprint.test.ts`
+  7. SECURITY.md updated for BTC threat model — PSBT serialization trust shape, per-input BIP-143 sighash binding, multi-input sighash recompute as Layer 1 (preview) defense
+**Plans**: 4 plans (estimate)
+
+Plans:
+- [ ] 23-01: `src/signing/btc-fingerprint.ts` — `payloadFingerprint` over BIP-143 sighashes per input concat (domain-tagged `"VaultPilot-btctx-v1:"`); UTXO-shape preimage assembly; Fixture O literal anchor; FROZEN discipline for EVM/Solana/TRON fingerprint modules
+- [ ] 23-02: `src/protocols/btc-psbt.ts` — PSBT-v0 (and PSBT-v2 if researcher recommends per `rnd` scope-probe of `bitcoinjs-lib` PSBT support); coin-selection (BnB with manual override DF); fee-rate sanity bounds + dust-threshold enforcement
+- [ ] 23-03: `prepare_btc_send` + BTC `PREPARE RECEIPT` template + segwit + taproot script-type support; mixed-input handling; Fixture P + Q literal anchors
+- [ ] 23-04: `preview_send` + `send_transaction` BTC branches — Ledger BTC-app PSBT signing flow; per-input sighash recompute at preview; full BTC trust-pipeline integration test (multi-persona-cycle byte-identity for UTXO-derived from-set); SECURITY.md BTC section
+
+#### Phase 24: BIP-125 RBF + BIP-137 message signing
+**Goal**: User can bump fees on confirmed-pending BTC transactions via BIP-125 RBF, and sign arbitrary messages with their BTC keys per BIP-137 (canonical signature shape for wallet ownership proof).
+**Depends on**: Phase 23
+**Requirements**: BTC-W-02, BTC-W-03
+**Success Criteria** (what must be TRUE):
+  1. `prepare_btc_rbf_bump({ txid, newFeeRate })` produces an unsigned RBF replacement PSBT with the higher fee rate; original input set preserved; BIP-125 sequence-number rules enforced
+  2. Preview surfaces the original-vs-new fee rate diff + the absolute fee increase in `CHECKS PERFORMED`
+  3. RBF refused on confirmed transactions (mempool-only); refused if original tx didn't signal RBF (sequence < `0xfffffffe`)
+  4. `sign_message_btc({ wallet, message })` produces a BIP-137 compact signature over `magic_bytes + varint_length + message`; works against the segwit address by default (taproot follows BIP-322 — separate tool, deferred)
+  5. Ledger BTC app clear-signs message text under blind-sign mode; user sees the message bytes on-device
+**Plans**: 2 plans (estimate)
+
+Plans:
+- [ ] 24-01: `prepare_btc_rbf_bump` + BIP-125 sequence-number validation + fee-rate sanity bounds; original-vs-new diff surfacing in CHECKS PERFORMED
+- [ ] 24-02: `sign_message_btc` + BIP-137 magic-bytes + compact-signature shape; Ledger message-signing flow; BIP-322 taproot message-signing deferred (separate `sign_message_btc_bip322` future tool)
+
+#### Phase 25: PSBT multisig flow (combine / sign / finalize + multisig wallet registry)
+**Goal**: User can participate in M-of-N multisig PSBT workflows — combine partially-signed PSBTs from co-signers, sign their input contribution, finalize the fully-signed PSBT for broadcast. Multisig wallet registry tracks known M-of-N descriptors.
+**Depends on**: Phase 24
+**Requirements**: BTC-PSBT-03, BTC-PSBT-04, BTC-PSBT-05, BTC-PSBT-06, BTC-W-04
+**Success Criteria** (what must be TRUE):
+  1. `register_btc_multisig_wallet({ name, descriptor, threshold })` records a known multisig descriptor (sortedmulti or musig-aware); descriptors validated against bitcoin script rules
+  2. `get_btc_multisig_balance({ walletName })` aggregates UTXOs at the multisig descriptor's derived addresses via Esplora
+  3. `get_btc_multisig_utxos({ walletName })` lists raw UTXOs available for spending
+  4. `combine_btc_psbts({ psbts: [...] })` merges partially-signed PSBTs from multiple co-signers; conflicts surfaced as structured errors
+  5. `sign_btc_multisig_psbt({ psbt, walletName })` adds the user's signature to each input they're a signer on; preview surfaces the inputs being signed
+  6. `finalize_btc_psbt({ psbt })` builds the final witness data; refuses if signature threshold not met
+  7. Each multisig PSBT signing operation flows through the standard prepare → preview → send pipeline (same trust pipeline; the PSBT being signed is the artifact)
+**Plans**: 3 plans (estimate)
+
+Plans:
+- [ ] 25-01: `register_btc_multisig_wallet` + `src/wallet/btc-multisig-registry.ts` (descriptor parsing + storage at `~/.vaultpilot-mcp/btc-multisig.json`, 0o600 file); `get_btc_multisig_balance` + `get_btc_multisig_utxos` read tools
+- [ ] 25-02: `combine_btc_psbts` + PSBT-merging logic + conflict detection (input-by-input + key-by-key); validation against descriptor
+- [ ] 25-03: `sign_btc_multisig_psbt` + `finalize_btc_psbt` + threshold-check + Ledger multisig PSBT signing flow (BTC app v2.1+ supports multisig); preview-time signer-key surfacing in CHECKS PERFORMED
+
+#### Phase 26: LTC scaffolding + LiFi BTC→EVM/Solana bridging
+**Goal**: LTC mirrors BTC scaffolding scaled down — `prepare_litecoin_native_send` + `sign_message_ltc` + Esplora via litecoinspace.org. LiFi-routed BTC bridging to EVM and Solana lands here (shared `src/clients/lifi.ts` shelf reused from v2.0 Phase 16 + v2.1 Phase 20).
+**Depends on**: Phase 25
+**Requirements**: LTC-PAIR-01, LTC-READ-01, LTC-READ-02, LTC-W-01, LTC-W-02, BTC-LIFI-01
+**Success Criteria** (what must be TRUE):
+  1. `pair_litecoin_ledger()` opens the Ledger Litecoin app (or BTC app with LTC mode per Ledger's account-config) over USB-HID; LTC base58 address (M-prefixed or ltc1q-prefixed segwit) returned verbatim
+  2. `get_litecoin_balance({ wallet })` + `get_litecoin_tx_history` + `get_litecoin_fee_estimates` read tools against litecoinspace.org Esplora-compatible endpoint
+  3. `prepare_litecoin_native_send({ to, litoshi })` mirrors `prepare_btc_send` PSBT-based shape; same `payloadFingerprint` shape with LTC domain tag `"VaultPilot-ltctx-v1:"`
+  4. `sign_message_ltc` mirrors `sign_message_btc` with LTC magic bytes
+  5. `prepare_btc_lifi_swap({ fromToken: "BTC", toChain, toToken, amount, toAddress })` produces an unsigned LiFi-routed bridge transaction; BTC → EVM and BTC → Solana both supported
+  6. Server-side `decodedFinalRecipient == userSuppliedToAddress` assertion at preview time (Inv #6b extension — same shape as SOL-W-21 + TRON-W-11)
+**Plans**: 3 plans (estimate)
+
+Plans:
+- [ ] 26-01: `pair_litecoin_ledger` + LTC address derivation (BIP-44 m/44'/2'/0'; BIP-84 ltc1q-segwit alt — researcher to scope-probe at execute time) + PAIR-NEV-* `chain: "litecoin"` record key reuse
+- [ ] 26-02: `prepare_litecoin_native_send` + `sign_message_ltc` + LTC Esplora client (litecoinspace.org); LTC-specific fingerprint domain tag in `src/signing/btc-fingerprint.ts` (or extract to shared `utxo-fingerprint.ts` if symmetry warrants)
+- [ ] 26-03: `prepare_btc_lifi_swap` + LiFi BTC-side decoder + Inv #6b `decodedFinalRecipient` assertion; cross-chain `fromToken: "BTC"` enum extension in shared `src/clients/lifi.ts`
+
+#### Phase 27: Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics
+**Goal**: Optional Bitcoin Core / Litecoin Core JSON-RPC support unlocks forensic chain reads that Esplora can't serve (chain tips, full mempool, fee percentiles, block stats). `build_incident_report` bundles BTC/LTC chain-tip + mempool-anomaly signals with EVM market-incident bits.
+**Depends on**: Phase 26
+**Requirements**: BTC-FORENSIC-01, BTC-FORENSIC-02, BTC-FORENSIC-03, BTC-FORENSIC-04, BTC-FORENSIC-05, BTC-INC-01
+**Success Criteria** (what must be TRUE):
+  1. `BITCOIN_CORE_RPC_URL` (with optional `_USER`/`_PASS` basic-auth) enables Bitcoin Core JSON-RPC reads when set; absent → forensic tools return `coreNotConfigured` envelope (never silent failure)
+  2. `get_btc_block_tip()` returns chain tip + timestamp + difficulty (Core RPC if configured; Esplora fallback)
+  3. `get_btc_block_stats({ blockHeight })` returns per-block tx count + fee percentiles + size + segwit/taproot adoption
+  4. `get_btc_blocks_recent({ count })` returns the last N block summaries
+  5. `get_btc_chain_tips()` returns all known chain tips (reorg detection)
+  6. `get_btc_mempool_summary()` returns mempool size + fee-rate histogram (Core RPC only; Esplora API doesn't expose full mempool)
+  7. `LITECOIN_CORE_RPC_URL` enables the LTC-equivalent forensic suite
+  8. `build_incident_report({ wallet?, includeChains?: string[] })` bundles chain-tip + mempool-anomaly signals across configured BTC/LTC/EVM chains; surfaces unexplained mempool spikes, reorg events, large unconfirmed-balance changes
+**Plans**: 3 plans (estimate)
+
+Plans:
+- [ ] 27-01: `src/clients/bitcoin-core-rpc.ts` (JSON-RPC client mirroring `etherscan.ts` shape — never-throws, basic-auth handling, 5-arm discriminated union); `BITCOIN_CORE_RPC_URL` env reader; `get_btc_block_tip` + `get_btc_block_stats` + `get_btc_blocks_recent` + `get_btc_chain_tips` tools
+- [ ] 27-02: `get_btc_mempool_summary` + LTC-equivalent forensic suite (`LITECOIN_CORE_RPC_URL` env + read tools mirroring BTC)
+- [ ] 27-03: `build_incident_report` bundling logic + cross-chain anomaly-signal aggregation; v2.2 milestone close-out (SECURITY.md BTC/LTC threat-model finalization)
+
+**Status**: planning; v2.2 verify-phase requires a physical Ledger with BTC app installed + USB-HID connectivity + small BTC + LTC balances for return-able test broadcasts. PSBT multisig flow needs a second cooperating signer (could be a second VaultPilot install or any PSBT-compatible wallet).
+
+---
+
+### 📋 v2.3 EVM lending + staking expansion (Phases 28-31)
+
+**Milestone Goal:** Expand EVM lending + staking surface to Compound V3 (multi-Comet), Morpho Blue, Lido (stake / unstake / wrap / unwrap), EigenLayer (restake), and Rocket Pool (stake / unstake). Each protocol gets read tools, prepare tools, canonical-dispatch allowlist entries, and contracts SOT extension. Multi-chain fan-out where the protocol is deployed multi-chain (Compound + Morpho); Lido + EigenLayer + Rocket Pool are Ethereum-write-only (Lido reads on Arbitrum + mainnet).
+
+#### Phase 28: Compound V3 — multi-Comet supply / withdraw / borrow / repay
+**Goal**: User can read Compound V3 positions per Comet (each Comet is a single-borrow-asset isolated market) and supply / withdraw / borrow / repay. Multi-Comet support means the agent specifies which Comet to interact with.
+**Depends on**: Phase 27 (or — if v2.3 dispatched parallel to v2.2 — Phase 16 v2.0 completion)
+**Requirements**: CMP-01, CMP-02, CMP-03, CMP-04, CMP-05, CMP-06
+**Success Criteria** (what must be TRUE):
+  1. `get_compound_positions({ wallet, chain? })` returns Compound V3 supplied + borrowed per Comet with health factor equivalent
+  2. `get_compound_market_info({ chain, cometAddress })` returns the Comet's supply APR + borrow APR + collateral factors + liquidation threshold
+  3. `prepare_compound_supply({ chain, cometAddress, asset, amount })` produces an unsigned Comet `supply(asset, amount)` call
+  4. `prepare_compound_withdraw` / `_borrow` / `_repay` cover the rest of the lifecycle
+  5. `prepare_compound_repay({ amount: "max" })` accepted as full-position close (resolved server-side to outstanding-debt amount + small buffer)
+  6. Compound V3 Comet addresses sourced from `src/config/contracts.ts` per-chain typed slots (Ethereum mainnet first; multi-chain — Arbitrum, Polygon, Base, Optimism — added in v2.3.x follow-up if Compound's per-chain Comet deployment is mature at planning time)
+  7. Compound V3 Comet addresses added to canonical-dispatch allowlist per chain
+**Plans**: 4 plans (estimate)
+
+Plans:
+- [ ] 28-01: `src/config/contracts.ts` Compound V3 Comet table extension (Ethereum first); canonical-dispatch allowlist Compound arm wiring
+- [ ] 28-02: `get_compound_positions` + `get_compound_market_info` + `src/chains/compound-v3.ts` (Comet contract ABI + position decoder)
+- [ ] 28-03: `prepare_compound_supply` + `prepare_compound_withdraw` (mechanical clones of `prepare_aave_supply` / `_withdraw`); `src/protocols/compound-v3.ts`
+- [ ] 28-04: `prepare_compound_borrow` + `prepare_compound_repay` (with `amount: "max"` close-position support); Compound-specific health-factor math in `src/signing/compound-health.ts`; Fixture R (Compound supply) + Fixture S (Compound repay-max) literal anchors
+
+#### Phase 29: Morpho Blue — supply / withdraw / borrow / repay
+**Goal**: User can read Morpho Blue isolated-market positions and supply / withdraw / borrow / repay. Morpho Blue's permissionless market creation means market-id is a per-call parameter (not a Comet-style address).
+**Depends on**: Phase 28
+**Requirements**: MOR-01, MOR-02, MOR-03, MOR-04, MOR-05
+**Success Criteria** (what must be TRUE):
+  1. `get_morpho_positions({ wallet, chain? })` returns Morpho Blue positions keyed by market-id (loanToken + collateralToken + oracle + IRM + LLTV)
+  2. `prepare_morpho_supply({ chain, marketId, amount })` produces an unsigned Morpho contract call
+  3. `prepare_morpho_withdraw` / `_borrow` / `_repay` cover the rest of the lifecycle
+  4. `prepare_morpho_repay({ amount: "max" })` accepted as full-position close
+  5. Morpho Blue contract addresses + known-market registry sourced from `src/config/contracts.ts` per-chain table
+**Plans**: 3 plans (estimate)
+
+Plans:
+- [ ] 29-01: `src/config/contracts.ts` Morpho Blue addresses + known-market registry (top 20-30 markets by TVL at planning time); canonical-dispatch allowlist Morpho arm wiring
+- [ ] 29-02: `get_morpho_positions` + `src/chains/morpho-blue.ts` (Morpho contract ABI + market-id-keyed position decoder)
+- [ ] 29-03: `prepare_morpho_supply/_withdraw/_borrow/_repay` (with `amount: "max"` close-position support); `src/protocols/morpho-blue.ts`; Fixture T (Morpho supply) + Fixture U (Morpho repay-max) literal anchors
+
+#### Phase 30: Lido — stake / unstake / wrap / unwrap (stETH↔wstETH)
+**Goal**: User can stake ETH (mints stETH), unstake stETH (queues withdrawal), wrap stETH→wstETH, and unwrap wstETH→stETH. Read tools work on Ethereum mainnet + Arbitrum (bridged stETH/wstETH); writes are Ethereum-only.
+**Depends on**: Phase 29
+**Requirements**: LIDO-01, LIDO-02, LIDO-03, LIDO-04, LIDO-05
+**Success Criteria** (what must be TRUE):
+  1. `get_lido_positions({ wallet, chain? })` returns stETH + wstETH balances + accrued rebase rewards (Ethereum mainnet + Arbitrum)
+  2. `prepare_lido_stake({ amount })` produces an unsigned `Lido.submit(referral)` call with `value` = `amount`
+  3. `prepare_lido_unstake({ stethAmount })` produces an unsigned `WithdrawalQueue.requestWithdrawals` call (returns NFT receipt — surfaced in CHECKS PERFORMED)
+  4. `prepare_lido_wrap({ stethAmount })` produces an unsigned `WstETH.wrap(amount)` call
+  5. `prepare_lido_unwrap({ wstethAmount })` produces an unsigned `WstETH.unwrap(amount)` call
+  6. Lido contracts (stETH + WstETH + WithdrawalQueue) sourced from `src/config/contracts.ts` Ethereum slots; canonical-dispatch allowlist Lido arm wiring
+**Plans**: 3 plans (estimate)
+
+Plans:
+- [ ] 30-01: `src/config/contracts.ts` Lido slot extension (stETH + WstETH + WithdrawalQueue); canonical-dispatch allowlist Lido arm wiring
+- [ ] 30-02: `get_lido_positions` + `src/chains/lido.ts` (multi-chain balance reader — Ethereum + Arbitrum bridged variants)
+- [ ] 30-03: `prepare_lido_stake/_unstake/_wrap/_unwrap` + `src/protocols/lido.ts`; Fixtures V/W/X for each shape
+
+#### Phase 31: EigenLayer + Rocket Pool
+**Goal**: User can deposit LSTs into EigenLayer for restaking, and stake / unstake on Rocket Pool (rETH). EigenLayer is Ethereum-only; Rocket Pool is Ethereum-only.
+**Depends on**: Phase 30
+**Requirements**: EIG-01, EIG-02, RP-01, RP-02
+**Success Criteria** (what must be TRUE):
+  1. `get_eigenlayer_positions({ wallet })` returns EigenLayer strategy-level deposits (per LST or native restaking)
+  2. `prepare_eigenlayer_deposit({ strategy, lst, amount })` produces an unsigned `StrategyManager.depositIntoStrategy` call
+  3. `get_rocketpool_positions({ wallet })` returns rETH balance + accrued value
+  4. `prepare_rocketpool_stake({ amount })` produces an unsigned `RocketDepositPool.deposit` call
+  5. `prepare_rocketpool_unstake({ rethAmount })` produces an unsigned `rETH.burn(amount)` call
+  6. EigenLayer + Rocket Pool contracts sourced from `src/config/contracts.ts`; canonical-dispatch allowlist extensions
+**Plans**: 3 plans (estimate)
+
+Plans:
+- [ ] 31-01: `src/config/contracts.ts` EigenLayer (StrategyManager + per-strategy addresses) + Rocket Pool (RocketDepositPool + rETH) slot extension; canonical-dispatch allowlist wiring
+- [ ] 31-02: `get_eigenlayer_positions` + `prepare_eigenlayer_deposit` + `src/chains/eigenlayer.ts` + `src/protocols/eigenlayer.ts`
+- [ ] 31-03: `get_rocketpool_positions` + `prepare_rocketpool_stake` + `prepare_rocketpool_unstake` + `src/chains/rocketpool.ts` + `src/protocols/rocketpool.ts`
+
+**Status**: planning; v2.3 verify-phase requires real-Ledger smoke against mainnet across all four protocols. Could be split into per-protocol verify-phases if scope warrants.
+
+---
+
+### 📋 v2.4 EVM DEX + LP + escape hatch (Phases 32-35)
+
+**Milestone Goal:** Uniswap V3 swap + full LP verb set, Curve swap + add-liquidity, and the `prepare_custom_call` escape hatch for arbitrary verified-contract interactions. The escape hatch is intentionally outside the canonical-dispatch allowlist — `acknowledgeNonProtocolTarget: true` is the user-acknowledgment they're operating outside the protocol-aware safety net.
+
+#### Phase 32: Uniswap V3 swap (auto-fee-tier, same-chain)
+**Goal**: User can swap ERC-20↔ERC-20 (and WETH-wrapped ETH) on Uniswap V3 with auto-fee-tier selection (best price across 0.01% / 0.05% / 0.30% / 1.00% pools). Multi-hop routing through Uniswap V3's Quoter.
+**Depends on**: Phase 31 (or v2.3 completion)
+**Requirements**: UNI-01, UNI-02, UNI-03
+**Success Criteria** (what must be TRUE):
+  1. `get_uniswap_quote({ chain, tokenIn, tokenOut, amount, slippageBps? })` returns the Uniswap V3 Quoter V2 quote envelope (out amount, fee tier, route plan, price impact)
+  2. `prepare_uniswap_swap({ chain, tokenIn, tokenOut, amount, slippageBps })` returns an unsigned SwapRouter02 transaction; auto-fee-tier from Quoter best-price selection
+  3. Default slippage hint = 50 bps; refuses without explicit `slippageBps` when price impact > 2% (sandwich-MEV defense — pre-loaded by v2.6 MEV-01)
+  4. Multi-hop routing supported when single-hop has worse price; CHECKS PERFORMED surfaces the route path
+  5. Uniswap V3 SwapRouter02 + Quoter V2 addresses sourced from `src/config/contracts.ts` per-chain table; canonical-dispatch allowlist Uniswap arm
+**Plans**: 2 plans (estimate)
+
+Plans:
+- [ ] 32-01: `src/config/contracts.ts` Uniswap V3 SwapRouter02 + Quoter V2 per-chain slots; `src/chains/uniswap-v3.ts` (Quoter integration + auto-fee-tier selector); canonical-dispatch allowlist wiring
+- [ ] 32-02: `get_uniswap_quote` + `prepare_uniswap_swap` + `src/protocols/uniswap-v3.ts`; sandwich-MEV >2% refusal gate (mirrors Phase 14 Jupiter); Fixture Y (Uniswap V3 single-hop swap) literal anchor
+
+#### Phase 33: Uniswap V3 full LP verb set + `get_lp_positions` with IL estimate
+**Goal**: User can manage Uniswap V3 LP positions end-to-end — mint new position, increase liquidity, decrease liquidity, collect fees, burn (close) position, rebalance (close + re-mint at new range). `get_lp_positions` returns positions with current price + range + accrued fees + impermanent-loss estimate.
+**Depends on**: Phase 32
+**Requirements**: UNI-04, UNI-05, UNI-06, UNI-07, UNI-08, UNI-09, UNI-10
+**Success Criteria** (what must be TRUE):
+  1. `get_lp_positions({ wallet, chain? })` returns Uniswap V3 positions per NFT-id; includes current price, tick range, in-range/out-of-range flag, accrued fees, IL estimate (relative to a hodl baseline)
+  2. `prepare_uniswap_v3_mint({ chain, token0, token1, fee, tickLower, tickUpper, amount0, amount1 })` produces an unsigned NonfungiblePositionManager `mint` call
+  3. `prepare_uniswap_increase_liquidity` + `_decrease_liquidity` + `_collect` + `_burn` cover the rest of the position lifecycle
+  4. `prepare_uniswap_v3_rebalance({ tokenId, newTickLower, newTickUpper })` is a composite tool that builds a multicall (decrease all + collect + mint at new range); preview surfaces the multi-step decoded view
+  5. Tick math + price ↔ tick conversions handled server-side; agent supplies prices and decimals, server resolves to ticks
+  6. NonfungiblePositionManager address sourced from `src/config/contracts.ts`; canonical-dispatch allowlist extension
+**Plans**: 3 plans (estimate)
+
+Plans:
+- [ ] 33-01: `src/chains/uniswap-v3-lp.ts` (position reader via NonfungiblePositionManager; IL estimate math); `get_lp_positions`; tick ↔ price helpers in `src/signing/uniswap-tick.ts`
+- [ ] 33-02: `prepare_uniswap_v3_mint` + `_increase_liquidity` + `_decrease_liquidity` + `_collect` + `_burn` (5 prepare tools as mechanical clones of `prepare_aave_supply` shape); `src/protocols/uniswap-v3-lp.ts`
+- [ ] 33-03: `prepare_uniswap_v3_rebalance` (multicall builder — decrease + collect + mint); composite-tx preview surfacing pattern (new shape — agent + on-device need to see the multi-step decoded view)
+
+#### Phase 34: Curve swap + add liquidity
+**Goal**: User can swap on Curve stETH/ETH legacy + stable_ng plain pools, and add liquidity to Ethereum stable_ng plain pools. v0.2 follow-ups (3-coin meta-pools, Curve metaregistry-driven discovery) deferred per upstream issue [#321](https://github.com/szhygulin/vaultpilot-mcp-gsd-inspired/issues/321) (or equivalent).
+**Depends on**: Phase 33
+**Requirements**: CRV-01, CRV-02, CRV-03
+**Success Criteria** (what must be TRUE):
+  1. `get_curve_positions({ wallet, chain? })` returns Curve LP token balances + pool composition (stETH/ETH + stable_ng plain pools only)
+  2. `prepare_curve_swap({ chain, poolAddress, inputToken, outputToken, amount, slippageBps })` produces an unsigned `exchange` call on the named pool
+  3. `prepare_curve_add_liquidity({ chain, poolAddress, amounts: [...], slippageBps })` produces an unsigned `add_liquidity` call for stable_ng plain pools (Ethereum first)
+  4. Curve pool addresses sourced from `src/config/contracts.ts` curated registry (stETH/ETH legacy + top 10 stable_ng pools at planning time); canonical-dispatch allowlist Curve arm wiring
+**Plans**: 2 plans (estimate)
+
+Plans:
+- [ ] 34-01: `src/config/contracts.ts` Curve curated pool registry + `src/chains/curve.ts` (pool decoder + LP balance reader); canonical-dispatch allowlist wiring
+- [ ] 34-02: `prepare_curve_swap` + `prepare_curve_add_liquidity` + `src/protocols/curve.ts`; stable_ng + stETH/ETH legacy support; v0.2 (3-coin meta + metaregistry-driven) explicitly deferred
+
+#### Phase 35: Escape hatch — `prepare_custom_call` + `get_contract_abi` + `read_contract`
+**Goal**: User can prepare arbitrary verified-contract calls outside the protocol-aware safety net. `acknowledgeNonProtocolTarget: true` is the user-acknowledgment. Companion tools `get_contract_abi` (Etherscan-sourced) and `read_contract` (eth_call to a view function) give the agent the visibility needed to construct the call.
+**Depends on**: Phase 34
+**Requirements**: CUSTOM-01, CUSTOM-02, CUSTOM-03
+**Success Criteria** (what must be TRUE):
+  1. `get_contract_abi({ chain, address })` returns the verified ABI from Etherscan (or per-chain explorer); `not-verified` arm surfaced verbatim
+  2. `read_contract({ chain, address, functionName, args })` calls a view function via `eth_call`; encodes/decodes via the verified ABI
+  3. `prepare_custom_call({ chain, to, data, value?, acknowledgeNonProtocolTarget: true })` produces an unsigned transaction that BYPASSES the canonical-dispatch allowlist by design
+  4. Missing `acknowledgeNonProtocolTarget: true` → structured refusal naming the safety implication and the canonical-dispatch tools the user could use instead
+  5. Preview surfaces a `[WARN — NON-PROTOCOL TARGET]` block above the standard preview blocks; `payloadFingerprint` over the full tx bytes per v1.x PREP-03 shape
+  6. Per-call ABI-decode best-effort surfacing in CHECKS PERFORMED (when ABI fetched via `get_contract_abi`); blind-sign-only when ABI unavailable
+**Plans**: 3 plans (estimate)
+
+Plans:
+- [ ] 35-01: `get_contract_abi` + Etherscan ABI client extension (mirrors `src/clients/etherscan.ts` shape — the existing client has the per-chain `chainid` plumbing gap from v1.2, may need widening at planning time)
+- [ ] 35-02: `read_contract` + ABI-driven eth_call helper; `src/chains/contract-read.ts`
+- [ ] 35-03: `prepare_custom_call` + `acknowledgeNonProtocolTarget: true` gate + `[WARN — NON-PROTOCOL TARGET]` block + best-effort ABI-decode at preview; v2.4 milestone close-out
+
+**Status**: planning; v2.4 verify-phase requires real-Ledger smoke for Uniswap V3 swap + LP mint + Curve swap + escape-hatch custom call.
+
+---
+
+### 📋 v2.5 Safe (Gnosis) multisig (Phases 36-38)
+
+**Milestone Goal:** User can read Safe (Gnosis) multisig positions, participate in the three-step propose → approve → execute signing flow, and submit signatures to the Safe Tx Service API for cross-signer coordination. `enableModule` and `delegateCall: true` operations get hard-trigger second-LLM check wiring (Inv #12.5) — Safe modules and delegate calls expand the multisig's authority beyond signed-tx execution and need extra-careful agent attention.
+
+#### Phase 36: Safe positions + Tx Service API integration + `get_safe_positions`
+**Goal**: User can list their Safe addresses (where they're an owner), read per-Safe owner-set + threshold + pending transactions + module list. Safe Tx Service API integration is the read-side foundation.
+**Depends on**: Phase 35 (or v2.4 completion)
+**Requirements**: SAFE-01, SAFE-02, SAFE-03, SAFE-04
+**Success Criteria** (what must be TRUE):
+  1. `get_safe_positions({ wallet, chain? })` returns Safes where the wallet is an owner; per-Safe surfaces address + owners[] + threshold + nonce + pendingTransactions[] + enabledModules[]
+  2. `get_safe_transaction({ chain, safeAddress, safeTxHash })` returns full transaction details + collected signatures + required threshold
+  3. Safe Tx Service API client (`src/clients/safe-tx-service.ts`) mirrors `etherscan.ts` shape per-chain (Ethereum + Arbitrum + Polygon + Base + Optimism endpoints documented at safe-global.com)
+  4. Safe ProxyFactory + Singleton addresses sourced from `src/config/contracts.ts` per-chain table; canonical-dispatch allowlist Safe arm wiring (Singleton is the dispatch target for all Safe operations)
+**Plans**: 2 plans (estimate)
+
+Plans:
+- [ ] 36-01: `src/clients/safe-tx-service.ts` + per-chain endpoint registry; `src/config/contracts.ts` Safe slot extension; canonical-dispatch allowlist wiring
+- [ ] 36-02: `get_safe_positions` + `get_safe_transaction` + `src/chains/safe.ts` (per-Safe state reader)
+
+#### Phase 37: Safe three-step signing flow — `prepare_safe_tx_propose` + `_approve` + `_execute` + `submit_safe_tx_signature`
+**Goal**: User can propose a Safe transaction (off-chain — signs a SafeTx hash, submits to Tx Service for co-signer collection), approve a pending transaction (signs the SafeTx hash they didn't propose), execute a fully-signed transaction (on-chain), and submit individual signatures to the Tx Service.
+**Depends on**: Phase 36
+**Requirements**: SAFE-05, SAFE-06, SAFE-07, SAFE-08
+**Success Criteria** (what must be TRUE):
+  1. `prepare_safe_tx_propose({ chain, safeAddress, to, value, data, operation })` builds the SafeTx hash + the EIP-712 typed-data structure; user signs the SafeTx hash via Ledger (typed-data signing required — depends on Ledger ETH app clear-sign-typed-data coverage, accepted-residual otherwise)
+  2. `prepare_safe_tx_approve({ chain, safeAddress, safeTxHash })` fetches the pending SafeTx from Tx Service, surfaces the decoded operation in CHECKS PERFORMED, prepares the user's signature
+  3. `submit_safe_tx_signature({ chain, safeAddress, safeTxHash, signature })` submits the user's signature to the Tx Service (off-chain coordination — no on-chain tx)
+  4. `prepare_safe_tx_execute({ chain, safeAddress, safeTxHash })` builds the on-chain execution transaction once enough signatures collected; signatures-bytes assembled from Tx Service state
+  5. Three-step flow surfaces explicitly in agent-facing tool descriptions: propose (typed-data sign) → approve (typed-data sign + submit signature) → execute (on-chain tx). Each step is a distinct named tool the agent can route by intent.
+  6. SafeTx hash computation in `src/signing/safe-tx-hash.ts` (EIP-712 typed-data digest); regression-tested with fixture Safe transactions
+**Plans**: 3 plans (estimate)
+
+Plans:
+- [ ] 37-01: `src/signing/safe-tx-hash.ts` (EIP-712 typed-data digest computation for SafeTx); `prepare_safe_tx_propose` + typed-data signing flow integration with Ledger ETH app
+- [ ] 37-02: `prepare_safe_tx_approve` + `submit_safe_tx_signature` + Tx Service signature-submission integration
+- [ ] 37-03: `prepare_safe_tx_execute` + on-chain execution transaction builder; signature-bytes assembly from Tx Service state; full three-step integration test (propose → approve → execute simulated end-to-end)
+
+#### Phase 38: `enableModule` + `delegateCall: true` hard-trigger second-LLM check (Inv #12.5)
+**Goal**: When a Safe transaction calls `enableModule(...)` or uses `operation: 1` (delegateCall), the prepare flow hard-triggers the second-LLM verification check (v1.3 SEC-34 `get_verification_artifact` is opt-in; here it becomes mandatory for these high-blast-radius operations). Inv #12.5 codifies this defense layer.
+**Depends on**: Phase 37
+**Requirements**: SAFE-09
+**Success Criteria** (what must be TRUE):
+  1. `prepare_safe_tx_propose` (and `_approve`) detect `enableModule(...)` calldata pattern at preview time and emit a hard-trigger block `[HARD-TRIGGER — MODULE ENABLE]` instructing the agent to run `get_verification_artifact` AND surface the result to the user before requesting `userDecision`
+  2. `operation: 1` (delegateCall) hard-triggers a similar `[HARD-TRIGGER — DELEGATECALL]` block
+  3. The hard-trigger blocks are NOT structured refusals — the operations are legitimate. But the second-LLM check becomes a precondition the agent MUST surface to the user before signing.
+  4. SECURITY.md updated with Inv #12.5 — high-blast-radius Safe operations route through second-LLM defense by construction
+  5. Skill-side Inv #12.5 encoded in companion `vaultpilot-preflight` skill (sister-repo update — coordinated v1.3.x bump or v1.4 minor)
+**Plans**: 2 plans (estimate)
+
+Plans:
+- [ ] 38-01: `enableModule` selector detection at preview + `[HARD-TRIGGER — MODULE ENABLE]` block emission; `operation: 1` detection + `[HARD-TRIGGER — DELEGATECALL]` block; SECURITY.md Inv #12.5 codification
+- [ ] 38-02: Companion-skill Inv #12.5 encoding in sister `vaultpilot-preflight` repo (coordinated bump; mirrors v1.3 09-01 → 09-02 sister-repo coordination pattern); v2.5 milestone close-out
+
+**Status**: planning; v2.5 verify-phase requires a real Safe wallet on mainnet + a co-signer + small balance for execution. Could be exercised on a 1-of-1 Safe (single-owner Safes are common for personal use).
+
+---
+
+### 📋 v2.6 Bridge facet decoders + cross-chain hardening (Phases 39-40)
+
+**Milestone Goal:** Tier-1 bridge facet decoders land for Wormhole, Mayan, NEAR Intents, and Across V3 — server-side mechanical assertion of `decodedFinalRecipient == userSuppliedRecipient` at preview (Inv #6b). Sandwich-MEV slippage hint extends across EVM swap tools with per-L2 thresholds. Tier-2 facets (deBridge, Stargate `composeMsg`, Hop, Symbiosis) explicitly deferred until usage data justifies — they're documented as a planning artifact but no phase ships them.
+
+#### Phase 39: Tier-1 facet decoders + final-recipient assertion
+**Goal**: Tier-1 bridge facet decoders for Inv #6b. Each decoder extracts the final-recipient field from the bridge's calldata; the server mechanically asserts equality against the user-supplied `to` / `toAddress` before previewing. Mismatch → structured refusal.
+**Depends on**: Phase 38 (or v2.5 completion)
+**Requirements**: BRIDGE-T1-01, BRIDGE-T1-02, BRIDGE-T1-03, BRIDGE-T1-04, BRIDGE-T1-05
+**Success Criteria** (what must be TRUE):
+  1. Wormhole `transferTokensWithPayload(...)` decoder extracts the `recipient` field; server asserts equality against user-supplied recipient at preview
+  2. Mayan `nonEvmRecipient(...)` decoder extracts the non-EVM destination (Solana / TRON / etc.); server asserts equality
+  3. NEAR Intents `intent.receiver` decoder extracts the receiver field; server asserts equality
+  4. Across V3 `depositV3(...)` decoder extracts the `recipient` field; server asserts equality
+  5. Mismatch surfaces as `[REFUSED — DECODED RECIPIENT DRIFT]` structured error naming the decoded value, the user-supplied value, and the bridge name
+  6. Tier-2 facets (deBridge, Stargate composeMsg, Hop, Symbiosis) explicitly noted in REQUIREMENTS.md as deferred — no decoder shipped
+  7. Each Tier-1 decoder lives in `src/protocols/bridge-decoders/` with per-bridge module shape (mirrors `src/protocols/erc20.ts` / `src/protocols/aave-v3.ts` per-protocol convention)
+  8. Decoder regression tests pin known-good calldata fixtures per bridge — drift in upstream bridge ABI surface caught at test time
+**Plans**: 3 plans (estimate)
+
+Plans:
+- [ ] 39-01: `src/protocols/bridge-decoders/wormhole.ts` + `src/protocols/bridge-decoders/mayan.ts` + corresponding decoder regression tests (calldata fixtures per bridge); Inv #6b assertion at `preview_send` (after handle lookup, before chain-mismatch — same layer as v1.3 canonical-dispatch)
+- [ ] 39-02: `src/protocols/bridge-decoders/near-intents.ts` + `src/protocols/bridge-decoders/across-v3.ts` + decoder regression tests
+- [ ] 39-03: Inv #6b wiring across `prepare_swap` / `prepare_uniswap_swap` / `prepare_solana_lifi_swap` / `prepare_btc_lifi_swap` / `prepare_tron_lifi_swap` (existing tools opt into the assertion when the calldata matches a known Tier-1 facet); SECURITY.md Inv #6b codification; companion-skill update for Tier-1 coverage (sister-repo coordinated bump)
+
+#### Phase 40: Sandwich-MEV slippage hint per-L2 thresholds
+**Goal**: Sandwich-MEV slippage refusal extends from Ethereum mainnet (v2.4 Phase 32 default 50bps / >2% price-impact refusal) to per-L2 thresholds. Per-L2 thresholds reflect each chain's actual sandwich-MEV exposure (Arbitrum + Optimism + Base + Polygon have different mempool semantics from Ethereum).
+**Depends on**: Phase 39
+**Requirements**: MEV-01
+**Success Criteria** (what must be TRUE):
+  1. `prepare_uniswap_swap` / `prepare_curve_swap` / other EVM swap tools accept per-chain slippage thresholds — Ethereum mainnet stays at 50bps default / >2% refusal; L2 thresholds calibrated against actual sandwich-MEV exposure (most L2s tolerate smaller default slippage)
+  2. Default thresholds documented in `src/config/sandwich-mev-thresholds.ts` per-chain SOT; refusal mode is consistent (`SANDWICH_MEV_REFUSED` errorCode + structured refusal with chain-specific guidance)
+  3. Per-L2 thresholds are configurable via env (`MEV_THRESHOLD_<CHAIN>` override) for advanced users
+  4. SECURITY.md updated with per-L2 sandwich-MEV threat-model nuance
+**Plans**: 1 plan (estimate)
+
+Plans:
+- [ ] 40-01: `src/config/sandwich-mev-thresholds.ts` per-chain SOT + per-chain refusal-threshold wiring across `prepare_uniswap_swap` / `prepare_curve_swap` / future EVM swap tools; `MEV_THRESHOLD_<CHAIN>` env overrides; v2.6 milestone close-out (SECURITY.md per-L2 MEV section finalization)
+
+**Status**: planning; v2.6 verify-phase requires real-Ledger smoke for each Tier-1 facet decoder against a small mainnet bridge transaction (with a known-good final recipient) + a per-L2 swap against each configured chain to exercise the per-chain threshold.
+
+---
+
+### 📋 v3.0+ Future Milestones (Planned)
+
+Each is sized as one milestone (4-6 phases). All blocked on v2.x maturity.
+
 - **v3.0 Hosted MCP** — HTTP/SSE transport, OAuth 2.1, operator-supplied API keys, multi-tenant. Unblocks claude.ai chat (web + native desktop). TRON/Solana/BTC/LTC USB-HID signing stays on local-stdio path regardless.
 - **v3.1 NFT reads** — `get_nft_portfolio` (cross-chain, Helius DAS for Solana), `get_nft_collection`, `get_nft_history`, `get_nft_listings` (EVM only); floor pricing via Magic Eden + Tensor (Solana) / Reservoir + OpenSea (EVM). Read-only browsing — marketplace fills (Seaport / Blur) deferred until typed-data signing surface lands.
 - **v3.2 Contacts + read-only sharing** — Local Ledger-signed address book, scoped read-only portfolio links, anonymized strategy sharing.
@@ -412,7 +883,7 @@ Each is sized as one milestone (4-6 phases). All blocked on v2.0 maturity.
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21 → 22 → 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -432,3 +903,27 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 14. Jupiter v6 swaps | v2.0 | 0/2 | Planning | - |
 | 15. Staking — Marinade + Jito + native SOL | v2.0 | 0/3 | Planning | - |
 | 16. LiFi-routed EVM↔Solana bridging + Solana diagnostics | v2.0 | 0/2 | Planning | - |
+| 17. TRON scaffolding — USB-HID + TRX reads + persistent TRON account | v2.1 | 0/4 | Not started | - |
+| 18. TRON native + TRC-20 trust pipeline | v2.1 | 0/4 | Not started | - |
+| 19. TRC-20 approve + Stake 2.0 (freeze/unfreeze/withdraw-expire-unfreeze/vote/claim) | v2.1 | 0/4 | Not started | - |
+| 20. SunSwap + LiFi-routed TRON↔EVM bridging | v2.1 | 0/2 | Not started | - |
+| 21. TRON diagnostics + multi-chain portfolio extension | v2.1 | 0/2 | Not started | - |
+| 22. BTC scaffolding — Esplora reads + USB-HID + persistent BTC account | v2.2 | 0/4 | Not started | - |
+| 23. BTC native + segwit + taproot trust pipeline (PSBT-based) | v2.2 | 0/4 | Not started | - |
+| 24. BIP-125 RBF + BIP-137 message signing | v2.2 | 0/2 | Not started | - |
+| 25. PSBT multisig flow (combine / sign / finalize + multisig wallet registry) | v2.2 | 0/3 | Not started | - |
+| 26. LTC scaffolding + LiFi BTC→EVM/Solana bridging | v2.2 | 0/3 | Not started | - |
+| 27. Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics | v2.2 | 0/3 | Not started | - |
+| 28. Compound V3 — multi-Comet supply/withdraw/borrow/repay | v2.3 | 0/4 | Not started | - |
+| 29. Morpho Blue — supply/withdraw/borrow/repay | v2.3 | 0/3 | Not started | - |
+| 30. Lido — stake/unstake/wrap/unwrap (stETH↔wstETH) | v2.3 | 0/3 | Not started | - |
+| 31. EigenLayer + Rocket Pool | v2.3 | 0/3 | Not started | - |
+| 32. Uniswap V3 swap (auto-fee-tier, same-chain) | v2.4 | 0/2 | Not started | - |
+| 33. Uniswap V3 full LP verb set + `get_lp_positions` with IL estimate | v2.4 | 0/3 | Not started | - |
+| 34. Curve swap + add liquidity | v2.4 | 0/2 | Not started | - |
+| 35. Escape hatch — `prepare_custom_call` + `get_contract_abi` + `read_contract` | v2.4 | 0/3 | Not started | - |
+| 36. Safe positions + Tx Service API integration + `get_safe_positions` | v2.5 | 0/2 | Not started | - |
+| 37. Safe three-step signing flow — propose + approve + execute + submit-signature | v2.5 | 0/3 | Not started | - |
+| 38. `enableModule` + `delegateCall: true` hard-trigger second-LLM check (Inv #12.5) | v2.5 | 0/2 | Not started | - |
+| 39. Tier-1 bridge facet decoders + final-recipient assertion (Inv #6b) | v2.6 | 0/3 | Not started | - |
+| 40. Sandwich-MEV slippage hint per-L2 thresholds | v2.6 | 0/1 | Not started | - |
