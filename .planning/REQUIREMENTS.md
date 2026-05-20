@@ -380,9 +380,26 @@ User can read Safe (Gnosis) multisig positions, participate in the three-step pr
 
 ### v2.6 Bridge facet decoders + cross-chain hardening
 
-- **BRIDGE-T1-01..N**: Tier-1 facet decoders (Inv #6b) — Wormhole `transferTokensWithPayload`, Mayan `nonEvmRecipient`, NEAR Intents `intent.receiver`, Across V3 `depositV3.recipient`; server-side mechanical assertion of `decodedFinalRecipient == userSuppliedRecipient`
-- **BRIDGE-T2-01..N**: Tier-2 (deferred until usage data justifies) — deBridge / DLN, Stargate `composeMsg`, Hop, Symbiosis
-- **MEV-01**: Sandwich-MEV slippage hint on `prepare_swap` / `prepare_uniswap_swap` (Ethereum mainnet first, then per-L2 thresholds)
+Tier-1 bridge facet decoders land for Wormhole, Mayan, NEAR Intents, and Across V3 — server-side mechanical assertion of `decodedFinalRecipient == userSuppliedRecipient` at preview (Inv #6b). Sandwich-MEV slippage hint extends across EVM swap tools with per-L2 thresholds. Tier-2 facets explicitly deferred — documented as planning artifact but no phase ships them.
+
+#### Tier-1 facet decoders (BRIDGE-T1-*)
+
+- [ ] **BRIDGE-T1-01**: Wormhole `transferTokensWithPayload(...)` decoder extracts the `recipient` field; server asserts equality against user-supplied recipient at preview
+- [ ] **BRIDGE-T1-02**: Mayan `nonEvmRecipient(...)` decoder extracts the non-EVM destination (Solana / TRON / etc.); server asserts equality
+- [ ] **BRIDGE-T1-03**: NEAR Intents `intent.receiver` decoder extracts the receiver field; server asserts equality
+- [ ] **BRIDGE-T1-04**: Across V3 `depositV3(...)` decoder extracts the `recipient` field; server asserts equality
+- [ ] **BRIDGE-T1-05**: Mismatch surfaces as `[REFUSED — DECODED RECIPIENT DRIFT]` structured error naming the decoded value, the user-supplied value, and the bridge name; each Tier-1 decoder lives in `src/protocols/bridge-decoders/` with per-bridge module shape (mirrors `src/protocols/erc20.ts` / `src/protocols/aave-v3.ts` per-protocol convention); decoder regression tests pin known-good calldata fixtures per bridge — drift in upstream bridge ABI surface caught at test time
+- [ ] **BRIDGE-T1-06**: Inv #6b wiring across existing prepare-swap tools (`prepare_swap` / `prepare_uniswap_swap` / `prepare_solana_lifi_swap` / `prepare_btc_lifi_swap` / `prepare_tron_lifi_swap`) — existing tools opt into the assertion when calldata matches a known Tier-1 facet; SECURITY.md Inv #6b codification; companion-skill update for Tier-1 coverage (sister-repo coordinated bump)
+
+#### Tier-2 facets (BRIDGE-T2-*)
+
+Explicitly deferred until usage data justifies. Documented in REQUIREMENTS.md but no phase ships them.
+
+- **BRIDGE-T2-01..N (DEFERRED)**: deBridge / DLN, Stargate `composeMsg`, Hop, Symbiosis. Bridge volume + user demand at v2.6 ship time drives whether to schedule a v2.6.x or v2.7 follow-up phase. Tier-2 bridges have less obvious blast-radius (Tier-1 covers the cross-VM + non-EVM-destination paths where final-recipient drift is hardest to detect).
+
+#### Sandwich-MEV per-L2 thresholds (MEV-*)
+
+- [ ] **MEV-01**: `prepare_uniswap_swap` / `prepare_curve_swap` / other EVM swap tools accept per-chain slippage thresholds — Ethereum mainnet stays at 50bps default / >2% refusal (v2.4 Phase 32 default); L2 thresholds calibrated against actual sandwich-MEV exposure (most L2s tolerate smaller default slippage). Default thresholds documented in `src/config/sandwich-mev-thresholds.ts` per-chain SOT; refusal mode is consistent (`SANDWICH_MEV_REFUSED` errorCode + structured refusal with chain-specific guidance). Per-L2 thresholds configurable via env (`MEV_THRESHOLD_<CHAIN>` override) for advanced users. SECURITY.md updated with per-L2 sandwich-MEV threat-model nuance
 
 ### v3.0 Hosted MCP
 
