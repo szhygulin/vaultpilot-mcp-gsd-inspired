@@ -290,13 +290,42 @@ Optional Bitcoin Core / Litecoin Core JSON-RPC unlocks forensic chain reads Espl
 
 ### v2.3 EVM lending + staking expansion
 
-Each protocol is a milestone with its own read tools, prepare tools, allowlist entries, and contract-table updates.
+Each protocol is a phase with its own read tools, prepare tools, allowlist entries, and contract-table updates. Multi-chain fan-out where the protocol is deployed multi-chain (Compound + Morpho); Lido/EigenLayer/Rocket Pool are Ethereum-write-only.
 
-- **CMP-01..N**: Compound V3 — `get_compound_positions`, `get_compound_market_info`, `prepare_compound_supply` / `_withdraw` / `_borrow` / `_repay`; multi-Comet support per chain
-- **MOR-01..N**: Morpho Blue — `get_morpho_positions`, `prepare_morpho_supply` / `_withdraw` / `_borrow` / `_repay`; `prepare_morpho_repay({ amount: "max" })` accepted as full-position close
-- **LIDO-01..N**: Lido — `prepare_lido_stake` / `_unstake` / `_wrap` (stETH→wstETH) / `_unwrap` (wstETH→stETH); read on Ethereum + Arbitrum, write Ethereum-only
-- **EIG-01..N**: EigenLayer — `prepare_eigenlayer_deposit`; restaking on top of an existing LST; Ethereum-only
-- **RP-01..N**: Rocket Pool — `prepare_rocketpool_stake` / `_unstake` (rETH); Ethereum-only
+#### Compound V3 (CMP-*)
+
+- [ ] **CMP-01**: `get_compound_positions({ wallet, chain? })` returns Compound V3 supplied + borrowed per Comet with health-factor equivalent
+- [ ] **CMP-02**: `get_compound_market_info({ chain, cometAddress })` returns the Comet's supply APR + borrow APR + collateral factors + liquidation threshold
+- [ ] **CMP-03**: `prepare_compound_supply({ chain, cometAddress, asset, amount })` produces an unsigned Comet `supply(asset, amount)` call
+- [ ] **CMP-04**: `prepare_compound_withdraw({ chain, cometAddress, asset, amount })` produces an unsigned `withdraw(asset, amount)` call
+- [ ] **CMP-05**: `prepare_compound_borrow` + `prepare_compound_repay` cover the borrow lifecycle; `prepare_compound_repay({ amount: "max" })` accepted as full-position close (resolved server-side to outstanding-debt amount + small buffer)
+- [ ] **CMP-06**: Compound V3 Comet addresses sourced from `src/config/contracts.ts` per-chain typed slots (Ethereum mainnet first; multi-chain — Arbitrum / Polygon / Base / Optimism — added in v2.3.x follow-up if Compound's per-chain Comet deployment is mature at planning time); canonical-dispatch allowlist Compound arm wiring
+
+#### Morpho Blue (MOR-*)
+
+- [ ] **MOR-01**: `get_morpho_positions({ wallet, chain? })` returns Morpho Blue positions keyed by market-id (loanToken + collateralToken + oracle + IRM + LLTV)
+- [ ] **MOR-02**: `prepare_morpho_supply({ chain, marketId, amount })` produces an unsigned Morpho contract call
+- [ ] **MOR-03**: `prepare_morpho_withdraw` + `prepare_morpho_borrow` cover the supply/borrow lifecycle
+- [ ] **MOR-04**: `prepare_morpho_repay({ chain, marketId, amount })` accepts `amount: "max"` as full-position close (resolved server-side)
+- [ ] **MOR-05**: Morpho Blue contract addresses + known-market registry (top 20-30 markets by TVL at planning time) sourced from `src/config/contracts.ts` per-chain table; canonical-dispatch allowlist Morpho arm wiring
+
+#### Lido (LIDO-*)
+
+- [ ] **LIDO-01**: `get_lido_positions({ wallet, chain? })` returns stETH + wstETH balances + accrued rebase rewards (Ethereum mainnet + Arbitrum)
+- [ ] **LIDO-02**: `prepare_lido_stake({ amount })` produces an unsigned `Lido.submit(referral)` call with `value` = `amount`
+- [ ] **LIDO-03**: `prepare_lido_unstake({ stethAmount })` produces an unsigned `WithdrawalQueue.requestWithdrawals` call (returns NFT receipt — surfaced in CHECKS PERFORMED)
+- [ ] **LIDO-04**: `prepare_lido_wrap({ stethAmount })` + `prepare_lido_unwrap({ wstethAmount })` produce `WstETH.wrap` + `WstETH.unwrap` calls for the stETH↔wstETH conversion
+- [ ] **LIDO-05**: Lido contracts (stETH + WstETH + WithdrawalQueue) sourced from `src/config/contracts.ts` Ethereum slots; reads work on Ethereum + Arbitrum (bridged variants); writes Ethereum-only; canonical-dispatch allowlist Lido arm wiring
+
+#### EigenLayer (EIG-*)
+
+- [ ] **EIG-01**: `get_eigenlayer_positions({ wallet })` returns EigenLayer strategy-level deposits (per LST or native restaking)
+- [ ] **EIG-02**: `prepare_eigenlayer_deposit({ strategy, lst, amount })` produces an unsigned `StrategyManager.depositIntoStrategy` call; Ethereum-only
+
+#### Rocket Pool (RP-*)
+
+- [ ] **RP-01**: `get_rocketpool_positions({ wallet })` returns rETH balance + accrued value
+- [ ] **RP-02**: `prepare_rocketpool_stake({ amount })` + `prepare_rocketpool_unstake({ rethAmount })` produce `RocketDepositPool.deposit` + `rETH.burn` calls; Ethereum-only
 
 ### v2.4 EVM DEX + LP + escape hatch
 
