@@ -915,22 +915,25 @@ export function lookupSpenderTron(address: string): KnownSpenderTron | undefined
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **LiFi TRON facet address**
    - What we know: LiFi Diamond is `0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE` on EVM; TRON is not EVM
    - What's unclear: Whether LiFi has a TRON deployment at all; if so, what address
    - Recommendation: Planner should add a `checkpoint:human-verify` task in Plan 19-01 before the LiFi address is committed to `contracts.ts`. If no TRON deployment is found, omit the LiFi entry from `KNOWN_SPENDERS_TRON` for Phase 19 and add it in Phase 20 (when LiFi TRON bridging ships). CONTEXT D-07a says "LiFi TRON facet (verified address from LiFi's deployment manifest at planning time)" — this must be done.
+   - **RESOLVED:** LiFi TRON facet deferred to Phase 20 per `checkpoint:decision` Task 0 in Plan 19-01. `KNOWN_SPENDERS_TRON` ships 5 entries in Phase 19 (SunSwap V2 router + 4 stablecoins). LiFi entry returns when Phase 20 ships LiFi TRON bridging.
 
 2. **`tron-srs.json` initial snapshot size and curation discipline**
    - What we know: `tron-top-25.json` has 25 entries; TRON has ~27 elected Super Representatives + ~100+ candidates
    - What's unclear: Whether to snapshot all 27 SRs or top N; how to determine "name" field for each
    - Recommendation: Snapshot the current top ~30 by voteCount from a live `listSuperRepresentatives()` call at plan-write time. Include `address`, `name` (from `url` parsing or known aliases), `url`, and `rank`. Name can be derived heuristically from the `url` field (e.g. `"binance.com"` → `"Binance Staking"`).
+   - **RESOLVED:** Top ~30 by voteCount snapshot per Plan 19-03 Task 1. Fields: `address` (base58), `name` (heuristic from `url`), `rank`, `url`, `voteCount`. Hybrid fallback at runtime: live `listSuperRepresentatives()` primary, snapshot secondary; `srSource` always surfaced.
 
 3. **`TronInstructionSummary` union extension for stake/approve/vote kinds**
    - What we know: Phase 18 defined `TronInstructionSummary` in `handle-store.ts` with `"native-transfer"` and `"trc20-transfer"` kinds
    - What's unclear: The exact new kinds and field shapes for approve/stake/vote/claim
    - Recommendation: Add 7 new kinds to `TronInstructionSummary`: `"trc20-approve"`, `"trc20-revoke"`, `"stake-freeze-v2"`, `"stake-unfreeze-v2"`, `"stake-withdraw-expire"`, `"stake-vote"`, `"stake-claim-rewards"`. This follows the `SolanaInstructionSummary` precedent of one kind per operation. The planner can define the exact field shapes at implementation time per Claude's Discretion.
+   - **RESOLVED:** 7 new `TronInstructionSummary` kinds adopted per CONTEXT D-11a amendment + Plan 19-01 Task 1 (`"trc20-approve"`, `"trc20-revoke"`), Plan 19-02 Task 1 (`"stake-freeze-v2"`, `"stake-unfreeze-v2"`, `"stake-withdraw-expire"`), Plan 19-03 Task 1 (`"stake-vote"`, `"stake-claim-rewards"`). Field shapes defined at implementation time per Claude's Discretion.
 
 ---
 
