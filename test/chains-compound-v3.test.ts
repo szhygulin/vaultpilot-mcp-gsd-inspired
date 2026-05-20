@@ -16,11 +16,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   _compoundChains,
   deriveIntent,
+  getAllCometStates,
+  getCometCollateralPositions,
+  getCometMarketInfo,
+  getCometState,
   readBaseBalance,
   readBaseToken,
   readBorrowBalance,
 } from "../src/chains/compound-v3.js";
 import {
+  getAllCompoundCometsForChain,
   getCompoundCometAddress,
 } from "../src/config/contracts.js";
 import { COMPOUND_V3_COMET_ABI } from "../src/protocols/compound-v3.js";
@@ -240,5 +245,183 @@ describe("chains/compound-v3::_compoundChains — ESM spy referential equality (
     expect(_compoundChains.readBorrowBalance).toBe(readBorrowBalance);
     expect(_compoundChains.readBaseBalance).toBe(readBaseBalance);
     expect(_compoundChains.deriveIntent).toBe(deriveIntent);
+  });
+
+  it("Plan 28-04: _compoundChains also exposes getCometState / getAllCometStates / getCometCollateralPositions / getCometMarketInfo", () => {
+    expect(_compoundChains.getCometState).toBe(getCometState);
+    expect(_compoundChains.getAllCometStates).toBe(getAllCometStates);
+    expect(_compoundChains.getCometCollateralPositions).toBe(getCometCollateralPositions);
+    expect(_compoundChains.getCometMarketInfo).toBe(getCometMarketInfo);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Plan 28-04 — multicall fan-out tests for getCometState + getAllCometStates +
+// getCometCollateralPositions + getCometMarketInfo.
+// ---------------------------------------------------------------------------
+
+const PRICE_FEED_FACTORY = (factor: number) => 10n ** 8n * BigInt(factor); // 1e8 * factor
+
+function makeStateMockClient(reads: {
+  baseToken?: Address;
+  balanceOf?: bigint;
+  borrowBalanceOf?: bigint;
+  isBorrowCollateralized?: boolean;
+  isLiquidatable?: boolean;
+  utilization?: bigint;
+  numAssets?: number;
+  baseTokenPriceFeed?: Address;
+  supplyRate?: bigint;
+  borrowRate?: bigint;
+  totalSupply?: bigint;
+  totalBorrow?: bigint;
+  getPrice?: bigint;
+}): { client: PublicClient; readContract: ReturnType<typeof vi.fn> } {
+  const readContract = vi.fn(async ({ functionName }: { functionName: string }) => {
+    switch (functionName) {
+      case "baseToken":
+        return reads.baseToken ?? USDC;
+      case "balanceOf":
+        return reads.balanceOf ?? 0n;
+      case "borrowBalanceOf":
+        return reads.borrowBalanceOf ?? 0n;
+      case "isBorrowCollateralized":
+        return reads.isBorrowCollateralized ?? true;
+      case "isLiquidatable":
+        return reads.isLiquidatable ?? false;
+      case "getUtilization":
+        return reads.utilization ?? 0n;
+      case "numAssets":
+        return reads.numAssets ?? 0;
+      case "baseTokenPriceFeed":
+        return reads.baseTokenPriceFeed ?? ("0xfeed00000000000000000000000000000000feed" as Address);
+      case "getSupplyRate":
+        return reads.supplyRate ?? 0n;
+      case "getBorrowRate":
+        return reads.borrowRate ?? 0n;
+      case "totalSupply":
+        return reads.totalSupply ?? 0n;
+      case "totalBorrow":
+        return reads.totalBorrow ?? 0n;
+      case "getPrice":
+        return reads.getPrice ?? PRICE_FEED_FACTORY(1);
+      default:
+        throw new Error(`unexpected readContract call: ${functionName}`);
+    }
+  });
+  const client = { readContract } as unknown as PublicClient;
+  return { client, readContract };
+}
+
+describe("chains/compound-v3::getCometState — multicall fan-out shape", () => {
+  it("returns a populated CometStateDecoded with all expected fields wired from multicall reads", async () => {
+    const { client } = makeStateMockClient({
+      baseToken: USDC,
+      balanceOf: 1_000_000_000n,
+      borrowBalanceOf: 500_000_000n,
+      isBorrowCollateralized: true,
+      isLiquidatable: false,
+      utilization: 5n * 10n ** 17n, // 50% utilization
+      numAssets: 3,
+      supplyRate: 1_000_000_000n,
+      borrowRate: 2_000_000_000n,
+      totalSupply: 100_000_000_000n,
+      totalBorrow: 50_000_000_000n,
+      getPrice: 10n ** 8n, // $1
+    });
+
+    const result = await getCometState(client, cUSDCv3, WALLET);
+    expect(result.comet).toBe(cUSDCv3);
+    expect(result.baseToken).toBe(USDC);
+    expect(result.baseSupplied).toBe(1_000_000_000n);
+    expect(result.baseBorrowed).toBe(500_000_000n);
+    expect(result.isBorrowCollateralized).toBe(true);
+    expect(result.isLiquidatable).toBe(false);
+    expect(result.utilization).toBe(5n * 10n ** 17n);
+    expect(result.numAssets).toBe(3);
+    expect(result.supplyRate).toBe(1_000_000_000n);
+    expect(result.borrowRate).toBe(2_000_000_000n);
+    expect(result.totalSupply).toBe(100_000_000_000n);
+    expect(result.totalBorrow).toBe(50_000_000_000n);
+    expect(result.baseTokenPriceUsd).toBe(10n ** 8n);
+    expect(result.collateral).toEqual([]);
+  });
+});
+
+describe("chains/compound-v3::getAllCometStates — chain fan-out", () => {
+  it("chainId=1 → 6 states (one per canonical Comet)", async () => {
+    // Spy on getCometState to return a fixed shape per Comet.
+    const fakeState = {
+      comet: cUSDCv3,
+      baseToken: USDC,
+      baseSupplied: 0n,
+      baseBorrowed: 0n,
+      isBorrowCollateralized: true,
+      isLiquidatable: false,
+      supplyRate: 0n,
+      borrowRate: 0n,
+      utilization: 0n,
+      totalSupply: 0n,
+      totalBorrow: 0n,
+      numAssets: 0,
+      baseTokenPriceFeed: "0xfeed00000000000000000000000000000000feed" as Address,
+      baseTokenPriceUsd: 10n ** 8n,
+      collateral: [],
+    };
+    const spy = vi
+      .spyOn(_compoundChains, "getCometState")
+      .mockImplementation(async (_client, comet, _user) => ({ ...fakeState, comet }));
+
+    const { client } = makeStateMockClient({});
+    const result = await getAllCometStates(client, 1, WALLET);
+
+    expect(result.length).toBe(6);
+    // Every canonical Comet appears in the result set.
+    const resultComets = new Set(result.map((r) => r.comet));
+    for (const c of getAllCompoundCometsForChain(1)) {
+      expect(resultComets.has(c)).toBe(true);
+    }
+    expect(spy).toHaveBeenCalledTimes(6);
+  });
+
+  it("chainId=42161 (Arbitrum) → [] (Phase 28 mainnet-only)", async () => {
+    const { client } = makeStateMockClient({});
+    const result = await getAllCometStates(client, 42161, WALLET);
+    expect(result).toEqual([]);
+  });
+});
+
+describe("chains/compound-v3::getCometCollateralPositions — zero-balance filtering", () => {
+  it("returns empty when numAssets === 0", async () => {
+    const { client } = makeStateMockClient({});
+    const result = await getCometCollateralPositions(client, cUSDCv3, WALLET, 0);
+    expect(result).toEqual([]);
+  });
+});
+
+describe("chains/compound-v3::getCometMarketInfo — per-Comet metadata shape", () => {
+  it("returns market info with rates + base price + collateralAssets array", async () => {
+    const { client } = makeStateMockClient({
+      baseToken: USDC,
+      utilization: 5n * 10n ** 17n,
+      supplyRate: 1_000_000_000n,
+      borrowRate: 2_000_000_000n,
+      totalSupply: 100_000_000_000n,
+      totalBorrow: 50_000_000_000n,
+      numAssets: 0, // skip the collateral fan-out — tested at integration layer.
+      getPrice: 10n ** 8n,
+    });
+
+    const result = await getCometMarketInfo(client, cUSDCv3);
+    expect(result.comet).toBe(cUSDCv3);
+    expect(result.baseToken).toBe(USDC);
+    expect(result.supplyRate).toBe(1_000_000_000n);
+    expect(result.borrowRate).toBe(2_000_000_000n);
+    expect(result.utilization).toBe(5n * 10n ** 17n);
+    expect(result.totalSupply).toBe(100_000_000_000n);
+    expect(result.totalBorrow).toBe(50_000_000_000n);
+    expect(result.numAssets).toBe(0);
+    expect(result.baseTokenPriceUsd).toBe(10n ** 8n);
+    expect(result.collateralAssets).toEqual([]);
   });
 });

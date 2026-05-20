@@ -23,6 +23,7 @@ vi.mock("../src/chains/registry.js", () => {
 });
 
 import { _aaveChains } from "../src/chains/aave-v3.js";
+import { _compoundChains } from "../src/chains/compound-v3.js";
 import {
   _resetRegistryForTesting,
   getRegisteredTool,
@@ -120,6 +121,11 @@ const BASE_CURRENCY = {
 
 beforeEach(() => {
   publicNodeFallback = false;
+  // Phase 28 Plan 28-04 — get_lending_positions now reads Compound V3 on
+  // chainId=1 concurrently with Aave V3. Default to empty Compound state for
+  // every existing Aave-only test (the byte-identity regression anchor); the
+  // dedicated Compound-branch tests below override this spy per case.
+  vi.spyOn(_compoundChains, "getAllCometStates").mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -365,7 +371,9 @@ describe("get_lending_positions tool (READ-20)", () => {
     const result = await callTool({ wallet: WALLET });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/RPC down/);
-    expect(result.content[0]?.text).toMatch(/failed to read Aave V3 positions/);
+    // Phase 28 Plan 28-04: error message widened to "lending positions" since
+    // the tool now reads both Aave V3 + Compound V3 concurrently on mainnet.
+    expect(result.content[0]?.text).toMatch(/failed to read lending positions/);
   });
 
   it("zero-balance reserves dropped (one userReserve entry per system reserve; majority are 0/0)", async () => {
@@ -400,7 +408,14 @@ describe("get_lending_positions tool (READ-20)", () => {
     const tool = getRegisteredTool("get_lending_positions");
     expect(tool).toBeDefined();
     expect(tool?.name).toBe("get_lending_positions");
-    expect(tool?.description).toMatch(/Aave V3 lending positions/);
+    // Phase 28 Plan 28-04: description now leads with "DeFi lending positions"
+    // since the tool covers both Aave V3 + Compound V3 on Ethereum mainnet.
+    expect(tool?.description).toMatch(/DeFi lending positions/);
+    // Aave V3 still named explicitly — preserve discoverability for agents
+    // searching for the Aave surface.
+    expect(tool?.description).toMatch(/Aave V3/);
+    // Phase 28: Compound V3 named in the description (CMP-01 closure).
+    expect(tool?.description).toMatch(/Compound V3/);
   });
 
   it("SOT bypass guard: UiPoolDataProviderV3 address literal lives ONLY in src/config/contracts.ts (NOT inlined in tool / chains / signing)", () => {
@@ -416,5 +431,165 @@ describe("get_lending_positions tool (READ-20)", () => {
     // Defence in depth: read the canonical SOT file and assert the literal IS there.
     const contractsSrc = readFileSync(resolve(root, "src/config/contracts.ts"), "utf8");
     expect(contractsSrc).toContain("0x56b7A1012765C285afAC8b8F25C69Bf10ccfE978");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 28 Plan 28-04 — Compound V3 branch tests (CMP-01).
+//
+// The existing Aave-only tests above remain BYTE-IDENTICAL — the only field
+// added to each Aave position row is `protocol: "aave-v3"`. The
+// `_compoundChains.getAllCometStates` default-mock in beforeEach returns []
+// (no Compound state) so the Aave shape regression anchor holds.
+//
+// New tests below exercise the Compound branch + the sources zero-anchor
+// discipline (T-LENDING-MULTIPROTOCOL-1).
+// ---------------------------------------------------------------------------
+
+import { getCompoundCometAddress } from "../src/config/contracts.js";
+
+const cUSDCv3 = getCompoundCometAddress(1, "USDC")!;
+const PRICE_FEED = "0xfeed00000000000000000000000000000000feed" as Address;
+
+describe("Phase 28 Plan 28-04 — Compound V3 branch + sources zero-anchor (T-LENDING-MULTIPROTOCOL-1)", () => {
+  it("Aave rows carry protocol: \"aave-v3\" discriminator (only field added; all others byte-identical)", async () => {
+    vi.spyOn(_aaveChains, "getReservesData").mockResolvedValue({
+      reserves: [mkReserve({ underlyingAsset: USDC, symbol: "USDC" })],
+      baseCurrency: BASE_CURRENCY,
+    });
+    vi.spyOn(_aaveChains, "getUserReservesData").mockResolvedValue({
+      userReserves: [
+        mkUserReserve({
+          underlyingAsset: USDC,
+          scaledATokenBalance: 1000n * 10n ** 6n,
+          usageAsCollateralEnabledOnUser: true,
+        }),
+      ],
+      userEModeCategoryId: 0,
+    });
+
+    const result = await callTool({ wallet: WALLET });
+    expect(result.isError).toBeUndefined();
+    const out = result.structuredContent as {
+      positions: Array<{ protocol: string; symbol: string }>;
+      sources: { aave: { totalCollateralUsd: string; noDebt: boolean }; compound: { perComet: unknown[] } };
+    };
+    expect(out.positions).toHaveLength(1);
+    expect(out.positions[0]?.protocol).toBe("aave-v3");
+    expect(out.positions[0]?.symbol).toBe("USDC");
+    // sources zero-anchor: both arms surface; Compound is empty (mocked [] in beforeEach).
+    expect(out.sources.aave.totalCollateralUsd).toBe("1000.00");
+    expect(out.sources.aave.noDebt).toBe(true);
+    expect(out.sources.compound.perComet).toEqual([]);
+  });
+
+  it("Compound-only wallet on Ethereum: Aave arm zero-anchored; Compound positions surfaced with protocol discriminator", async () => {
+    vi.spyOn(_aaveChains, "getReservesData").mockResolvedValue({
+      reserves: [],
+      baseCurrency: BASE_CURRENCY,
+    });
+    vi.spyOn(_aaveChains, "getUserReservesData").mockResolvedValue({
+      userReserves: [],
+      userEModeCategoryId: 0,
+    });
+    vi.spyOn(_compoundChains, "getAllCometStates").mockResolvedValue([
+      {
+        comet: cUSDCv3,
+        baseToken: USDC,
+        baseSupplied: 1_000_000_000n, // 1000 USDC
+        baseBorrowed: 0n,
+        isBorrowCollateralized: true,
+        isLiquidatable: false,
+        supplyRate: 0n,
+        borrowRate: 0n,
+        utilization: 0n,
+        totalSupply: 0n,
+        totalBorrow: 0n,
+        numAssets: 0,
+        baseTokenPriceFeed: PRICE_FEED,
+        baseTokenPriceUsd: 10n ** 8n,
+        collateral: [],
+      },
+    ]);
+
+    const result = await callTool({ wallet: WALLET });
+    expect(result.isError).toBeUndefined();
+    const out = result.structuredContent as {
+      positions: Array<{ protocol: string }>;
+      sources: { aave: { noDebt: boolean }; compound: { perComet: unknown[] } };
+    };
+    expect(out.positions).toHaveLength(1);
+    expect(out.positions[0]?.protocol).toBe("compound-v3");
+    // Aave arm zero-anchored — noDebt: true, ratio null.
+    expect(out.sources.aave.noDebt).toBe(true);
+    // Compound arm surfaces the position.
+    expect(out.sources.compound.perComet).toHaveLength(1);
+  });
+
+  it("Multi-protocol wallet: 2 rows (1 Aave + 1 Compound) with distinct protocol discriminators", async () => {
+    vi.spyOn(_aaveChains, "getReservesData").mockResolvedValue({
+      reserves: [mkReserve({ underlyingAsset: USDC, symbol: "USDC" })],
+      baseCurrency: BASE_CURRENCY,
+    });
+    vi.spyOn(_aaveChains, "getUserReservesData").mockResolvedValue({
+      userReserves: [
+        mkUserReserve({
+          underlyingAsset: USDC,
+          scaledATokenBalance: 500n * 10n ** 6n,
+          usageAsCollateralEnabledOnUser: true,
+        }),
+      ],
+      userEModeCategoryId: 0,
+    });
+    vi.spyOn(_compoundChains, "getAllCometStates").mockResolvedValue([
+      {
+        comet: cUSDCv3,
+        baseToken: USDC,
+        baseSupplied: 2_000_000_000n,
+        baseBorrowed: 0n,
+        isBorrowCollateralized: true,
+        isLiquidatable: false,
+        supplyRate: 0n,
+        borrowRate: 0n,
+        utilization: 0n,
+        totalSupply: 0n,
+        totalBorrow: 0n,
+        numAssets: 0,
+        baseTokenPriceFeed: PRICE_FEED,
+        baseTokenPriceUsd: 10n ** 8n,
+        collateral: [],
+      },
+    ]);
+
+    const result = await callTool({ wallet: WALLET });
+    const out = result.structuredContent as {
+      positions: Array<{ protocol: string }>;
+    };
+    expect(out.positions).toHaveLength(2);
+    const protocols = out.positions.map((p) => p.protocol);
+    expect(protocols).toContain("aave-v3");
+    expect(protocols).toContain("compound-v3");
+  });
+
+  it("Non-mainnet chain (arbitrum): Compound arm empty (Phase 28 mainnet-only); only Aave path runs", async () => {
+    vi.spyOn(_aaveChains, "getReservesData").mockResolvedValue({
+      reserves: [mkReserve({ underlyingAsset: USDC, symbol: "USDC" })],
+      baseCurrency: BASE_CURRENCY,
+    });
+    vi.spyOn(_aaveChains, "getUserReservesData").mockResolvedValue({
+      userReserves: [],
+      userEModeCategoryId: 0,
+    });
+    const compoundSpy = vi.spyOn(_compoundChains, "getAllCometStates");
+
+    const result = await callTool({ chain: "arbitrum", wallet: WALLET });
+    expect(result.isError).toBeUndefined();
+    // Compound branch short-circuits on non-mainnet — getAllCometStates never
+    // called (Promise.resolve([])); proves the mainnet-only gate.
+    expect(compoundSpy).not.toHaveBeenCalled();
+    const out = result.structuredContent as {
+      sources: { compound: { perComet: unknown[] } };
+    };
+    expect(out.sources.compound.perComet).toEqual([]);
   });
 });

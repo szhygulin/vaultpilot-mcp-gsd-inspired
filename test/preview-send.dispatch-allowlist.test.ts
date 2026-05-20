@@ -435,3 +435,45 @@ describe("preview_send Layer 0.5 → Layer 2 fall-through", () => {
     expect(sc.errorCode).toBe("CHAIN_ID_MISMATCH");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 28 Plan 28-04 — Compound V3 Comet allowlist coverage. All 6 Comets
+// on Ethereum mainnet pass Layer 0.5; non-Comet `tx.to` still refused.
+// ---------------------------------------------------------------------------
+
+// Compound V3 supply calldata: selector 0xf2b9fdb8 + asset (USDC) + amount.
+const COMPOUND_SUPPLY_DATA =
+  ("0xf2b9fdb8" +
+    "000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48" +
+    "0000000000000000000000000000000000000000000000000000000005f5e100") as Hex;
+
+describe("preview_send Layer 0.5 — Compound V3 Comets pass on Ethereum (Phase 28 Plan 28-04)", () => {
+  it("(10) Every Compound V3 mainnet Comet (6 addresses) passes Layer 0.5 on Ethereum", async () => {
+    // Lazy import — getAllCompoundCometsForChain already imported in line 1.
+    const { getAllCompoundCometsForChain: getComets } = await import(
+      "../src/config/contracts.js"
+    );
+    const comets = getComets(1);
+    expect(comets.length).toBe(6);
+    for (const comet of comets) {
+      const handle = seedHandle(1, comet, COMPOUND_SUPPLY_DATA);
+      scriptHappyMocks();
+      const result = await callPreview({ handle });
+      // Layer 0.5 passes (Comet is canonical); the preview proceeds and the
+      // structuredContent surfaces the chainId.
+      expect(result.isError, `Comet ${comet} should pass Layer 0.5`).toBeFalsy();
+      const sc = result.structuredContent as { chainId: number };
+      expect(sc.chainId).toBe(1);
+    }
+  });
+
+  it("(11) Non-Comet Ethereum address with Compound calldata → DISPATCH_TARGET_REFUSED", async () => {
+    // Generic EOA with Compound calldata — selector is valid, but tx.to is
+    // off-list. Layer 0.5 still refuses.
+    const handle = seedHandle(1, OFF_LIST_TO, COMPOUND_SUPPLY_DATA);
+    const result = await callPreview({ handle });
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as { errorCode: string };
+    expect(sc.errorCode).toBe("DISPATCH_TARGET_REFUSED");
+  });
+});

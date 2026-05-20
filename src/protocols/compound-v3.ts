@@ -72,6 +72,7 @@ import { MAX_UINT256 } from "./erc20.js";
  *   - `isLiquidatable(address account) view returns (bool)` — health gate (Plan 28-04 read tool)
  */
 export const COMPOUND_V3_COMET_ABI = parseAbi([
+  // Plan 28-01 base 8 (BYTE-FROZEN — supply / withdraw / state-read primitives):
   "function supply(address asset, uint256 amount)",
   "function withdraw(address asset, uint256 amount)",
   "function baseToken() view returns (address)",
@@ -80,6 +81,21 @@ export const COMPOUND_V3_COMET_ABI = parseAbi([
   "function collateralBalanceOf(address account, address asset) view returns (uint128)",
   "function isBorrowCollateralized(address account) view returns (bool)",
   "function isLiquidatable(address account) view returns (bool)",
+  // Plan 28-04 additions (read-tool surface; research § Topic 6 + § Topic 7).
+  // APPEND-ONLY — order matters for viem's `parseAbi` dispatch tables, but the
+  // existing 8 are unchanged so the Plan 28-01 selectors (0xf2b9fdb8 / 0xf3fef3a3)
+  // stay byte-identical. View-only — no calldata-shape consumers in Plan 28-04.
+  "function getSupplyRate(uint256 utilization) view returns (uint64)",
+  "function getBorrowRate(uint256 utilization) view returns (uint64)",
+  "function getUtilization() view returns (uint256)",
+  "function numAssets() view returns (uint8)",
+  "function getAssetInfo(uint8 i) view returns ((uint8 offset, address asset, address priceFeed, uint64 scale, uint64 borrowCollateralFactor, uint64 liquidateCollateralFactor, uint64 liquidationFactor, uint128 supplyCap))",
+  "function getAssetInfoByAddress(address asset) view returns ((uint8 offset, address asset, address priceFeed, uint64 scale, uint64 borrowCollateralFactor, uint64 liquidateCollateralFactor, uint64 liquidationFactor, uint128 supplyCap))",
+  "function getPrice(address priceFeed) view returns (uint128)",
+  "function totalsCollateral(address asset) view returns (uint128 totalSupplyAsset, uint64 _reserved)",
+  "function totalSupply() view returns (uint256)",
+  "function totalBorrow() view returns (uint256)",
+  "function baseTokenPriceFeed() view returns (address)",
 ]);
 
 /**
