@@ -229,7 +229,7 @@ Adds TRON support via USB-HID Ledger transport (no WalletConnect — TRON has no
 
 #### Diagnostics (TRON-DIAG-*)
 
-- [ ] **TRON-DIAG-01**: `get_tron_setup_status({ wallet })` returns `{ ledgerTrxAppVersion?, walletAddressOnDevice, resourceAccountPresent (Stake 2.0), frozenEnergyAmount, frozenBandwidthAmount }` — probes per-wallet Stake 2.0 state + on-device status (analogous to v2.0 SOL-DIAG-01 `get_solana_setup_status`)
+- [x] **TRON-DIAG-01**: `get_tron_setup_status({ wallet })` returns `{ ledgerTrxAppVersion?, walletAddressOnDevice, resourceAccountPresent (Stake 2.0), frozenEnergyAmount, frozenBandwidthAmount }` — probes per-wallet Stake 2.0 state + on-device status (analogous to v2.0 SOL-DIAG-01 `get_solana_setup_status`)
 
 ### v2.2 Bitcoin + Litecoin (one milestone)
 
@@ -483,7 +483,7 @@ Updated during roadmap creation.
 | TRON-PREP-01..04, TRON-W-01/02 | Phase 18 (v2.1) | Pending |
 | TRON-PREP-05, TRON-W-03..08 | Phase 19 (v2.1) | Done (PR #106-#109) |
 | TRON-W-09..10, TRON-W-12 partial | Phase 20 (v2.1) | Done (PR #113); TRON-W-11 + TRON-W-12 LiFi portion deferred to v2.2.x per D-04b |
-| TRON-READ-04, TRON-DIAG-01 | Phase 21 (v2.1) | Pending |
+| TRON-READ-04, TRON-DIAG-01 | Phase 21 (v2.1) | Done (TRON-READ-04 in PR #91; TRON-DIAG-01 in PR #116) |
 | BTC-PAIR-01/02, BTC-READ-01..05, LTC-PAIR-01, LTC-READ-01/02 | Phase 22 (v2.2) | Pending |
 | BTC-PREP-01..03, BTC-PSBT-01/02, BTC-W-01 | Phase 23 (v2.2) | Pending |
 | BTC-W-02, BTC-W-03 | Phase 24 (v2.2) | Pending |
