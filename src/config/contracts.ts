@@ -219,6 +219,83 @@ export function getAaveV3IncentivesController(chainId: ChainId): Address {
 }
 
 // ---------------------------------------------------------------------------
+// Compound V3 Comet per-chain SOT — Phase 28 Plan 28-01.
+// ---------------------------------------------------------------------------
+//
+// Sibling sub-table (NOT a widening of `ContractsForChain`) per patterns-mapper
+// § 3: Compound V3 has 6 mainnet Comets that v2.3.x will extend to Polygon /
+// Arbitrum / Base / Optimism. A `Partial<Record<ChainId, Partial<Record<base,
+// Address>>>>` shape lets v2.3.x add chain rows incrementally without
+// breaking the (existing) Aave-V3-shaped `ContractsForChain` contract.
+//
+// Provenance: 6 mainnet Comets cross-verified against the canonical Compound
+// deployments registry — [compound-finance/comet/deployments/mainnet/*/roots.json](https://github.com/compound-finance/comet/tree/main/deployments)
+// at research-time 2026-05-20 (Phase 28 research § Topic 1). Each literal
+// `getAddress`-wrapped at the literal site so a corrupted snapshot — single
+// hex digit flipped at rest — throws EIP-55 at module load.
+
+/**
+ * The 6 base-asset symbols whose Compound V3 Comet markets ship on Ethereum
+ * mainnet as of research-time 2026-05-20. v2.3.x widens once additional
+ * chains land — but the type itself only grows when a new BASE asset (not a
+ * new chain) is added. Each Comet contract's `baseToken()` returns the
+ * specific ERC-20 corresponding to its symbol.
+ */
+export type CompoundCometBase = "USDC" | "USDT" | "WETH" | "USDS" | "wstETH" | "WBTC";
+
+/**
+ * Per-chain Compound V3 Comet contracts. Partial-on-chain AND partial-on-base
+ * because v2.3.x will add chains (Polygon, Arbitrum, Base, Optimism) whose
+ * Comet base-asset coverage is a STRICT SUBSET of Ethereum's. Getter helpers
+ * below return `Address | null` (single market) and `Address[]` (chain
+ * fan-out, empty for chains without rows).
+ *
+ * Format-fanout-sentinel: the 6 Comet addresses live ONLY here. Plan 28-04
+ * regression-test asserts `grep -n "0xc3d688B6\|0x3Afdc9BC\|..." src/ -r`
+ * outside of this file is empty.
+ */
+const COMPOUND_COMETS_RAW: Partial<Record<ChainId, Partial<Record<CompoundCometBase, Address>>>> = {
+  1: {
+    USDC: getAddress("0xc3d688B66703497DAA19211EEdff47f25384cdc3"),
+    USDT: getAddress("0x3Afdc9BCA9213A35503b077a6072F3D0d5AB0840"),
+    WETH: getAddress("0xA17581A9E3356d9A858b789D68B4d866e593aE94"),
+    USDS: getAddress("0x5D409e56D886231aDAf00c8775665AD0f9897b56"),
+    wstETH: getAddress("0x3D0bb1ccaB520A66e607822fC55BC921738fAFE3"),
+    WBTC: getAddress("0xe85Dc543813B8c2CFEaAc371517b925a166a9293"),
+  },
+};
+
+/**
+ * Get the canonical Compound V3 Comet address for `(chainId, base)`. Returns
+ * `null` when the market is not deployed on the given chain (v2.3.x will fill
+ * in Polygon / Arbitrum / Base / Optimism rows). Consumed by Plan 28-02's
+ * `prepare_compound_supply` / `prepare_compound_withdraw` and Plan 28-03's
+ * `prepare_compound_borrow` / `prepare_compound_repay` as `tx.to`. The same
+ * addresses are seeded in `KNOWN_SPENDERS_ETHEREUM` (6 new rows below) for
+ * approval-label discovery; the regression test asserts cross-view byte-
+ * identity (T-COMPOUND-COMET-ADDR-INLINE-1 anchor).
+ */
+export function getCompoundCometAddress(
+  chainId: ChainId,
+  base: CompoundCometBase,
+): Address | null {
+  return COMPOUND_COMETS_RAW[chainId]?.[base] ?? null;
+}
+
+/**
+ * Get every Compound V3 Comet deployed on `chainId`. Returns `[]` (NOT
+ * undefined / throw) for chains absent from `COMPOUND_COMETS_RAW` — Plan
+ * 28-04 canonical-dispatch allowlist builds the Compound arm by mapping over
+ * the result. Order follows `Object.values` iteration order; callers MUST
+ * NOT depend on it.
+ */
+export function getAllCompoundCometsForChain(chainId: ChainId): Address[] {
+  const row = COMPOUND_COMETS_RAW[chainId];
+  if (!row) return [];
+  return Object.values(row).filter((a): a is Address => !!a);
+}
+
+// ---------------------------------------------------------------------------
 // Known-spender table — PREP-30 surface for approval-class DECODED ARGS.
 // ---------------------------------------------------------------------------
 
@@ -250,6 +327,43 @@ export const KNOWN_SPENDERS_ETHEREUM: readonly KnownSpender[] = [
     address: getAddress("0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2"),
     label: "Aave V3 Pool",
     source: "https://aave.com/docs/resources/addresses",
+  },
+  // Compound V3 Ethereum Comets — Phase 28 Plan 28-01. Six rows
+  // alphabetical-by-label (cUSDCv3 / cUSDSv3 / cUSDTv3 / cWBTCv3 / cWETHv3 /
+  // cwstETHv3). Each `address` references the SOT getter so the two views are
+  // byte-identical by construction; the cross-view consistency regression
+  // (test/config-contracts.test.ts T-COMPOUND-COMET-ADDR-INLINE-1) re-asserts
+  // it. The `!` non-null assertion is safe — `getCompoundCometAddress(1, …)`
+  // is total over `CompoundCometBase` for chainId=1 by construction.
+  {
+    address: getCompoundCometAddress(1, "USDC")!,
+    label: "Compound V3 cUSDCv3",
+    source: "https://docs.compound.finance/#networks",
+  },
+  {
+    address: getCompoundCometAddress(1, "USDS")!,
+    label: "Compound V3 cUSDSv3",
+    source: "https://docs.compound.finance/#networks",
+  },
+  {
+    address: getCompoundCometAddress(1, "USDT")!,
+    label: "Compound V3 cUSDTv3",
+    source: "https://docs.compound.finance/#networks",
+  },
+  {
+    address: getCompoundCometAddress(1, "WBTC")!,
+    label: "Compound V3 cWBTCv3",
+    source: "https://docs.compound.finance/#networks",
+  },
+  {
+    address: getCompoundCometAddress(1, "WETH")!,
+    label: "Compound V3 cWETHv3",
+    source: "https://docs.compound.finance/#networks",
+  },
+  {
+    address: getCompoundCometAddress(1, "wstETH")!,
+    label: "Compound V3 cwstETHv3",
+    source: "https://docs.compound.finance/#networks",
   },
   {
     address: getAddress("0x9008D19f58AAbD9eD0D60971565AA8510560ab41"),

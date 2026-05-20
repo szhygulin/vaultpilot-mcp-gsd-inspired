@@ -5,6 +5,12 @@ import {
   FINGERPRINT_DOMAIN_TAG,
   computePayloadFingerprint,
 } from "../src/signing/payload-fingerprint.js";
+import { MAX_UINT256 } from "../src/protocols/erc20.js";
+import {
+  encodeCompoundSupply,
+  encodeCompoundWithdraw,
+} from "../src/protocols/compound-v3.js";
+import { getCompoundCometAddress } from "../src/config/contracts.js";
 
 describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
   it("Fixture A — native send → 0x7e1867b2... byte-for-byte", () => {
@@ -158,6 +164,123 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     });
 
     expect(fp).toBe("0x782dd9aa096d47a4036b2023c01c1306d3b325fbbbbd4da8a1a5cd3ce42be40d");
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 28 — Plan 28-01. Fixtures R / S / T / U pin the payloadFingerprint
+  // for the four canonical Compound V3 calldata shapes (USDC on cUSDCv3,
+  // mainnet). Computed once at write-time via `encodeCompoundSupply` /
+  // `encodeCompoundWithdraw` flowed through the FROZEN
+  // `computePayloadFingerprint`. NO `beforeAll`-snapshot per CLAUDE.md
+  // "Cryptographic-binding fixtures pinned as hardcoded literals".
+  //
+  // Computation script (recorded for reproducibility):
+  //   node -e "
+  //     const { encodeFunctionData, parseAbi } = require('viem');
+  //     const { computePayloadFingerprint } = require('./dist/signing/payload-fingerprint.js');
+  //     const ABI = parseAbi(['function supply(address,uint256)', 'function withdraw(address,uint256)']);
+  //     const USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+  //     const cUSDCv3 = '0xc3d688B66703497DAA19211EEdff47f25384cdc3';
+  //     const MAX = (1n << 256n) - 1n;
+  //     for (const [label, data] of [
+  //       ['R', encodeFunctionData({ abi: ABI, functionName: 'supply',   args: [USDC, 100000000n] })],
+  //       ['S', encodeFunctionData({ abi: ABI, functionName: 'withdraw', args: [USDC, 100000000n] })],
+  //       ['T', encodeFunctionData({ abi: ABI, functionName: 'withdraw', args: [USDC,  50000000n] })],
+  //       ['U', encodeFunctionData({ abi: ABI, functionName: 'supply',   args: [USDC, MAX] })],
+  //     ]) console.log(label, computePayloadFingerprint({ chainId: 1, to: cUSDCv3, valueWei: 0n, data }));
+  //   "
+  it("Fixture R — Compound V3 supply(USDC, 100e6) on cUSDCv3 fingerprint (hardcoded literal anchor, Phase 28 / Plan 28-01)", () => {
+    const cUSDCv3 = getCompoundCometAddress(1, "USDC")!;
+    const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as Address;
+    const supplyData = encodeCompoundSupply(USDC, 100_000_000n);
+    // 68 bytes = 4-byte selector + 2 × 32-byte args → 0x + 136 hex = 138 chars.
+    expect(supplyData.length).toBe(138);
+    expect(supplyData.slice(0, 10).toLowerCase()).toBe("0xf2b9fdb8");
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: cUSDCv3,
+      valueWei: 0n,
+      data: supplyData,
+    });
+
+    // Hardcoded literal anchor (Plan 28-01 hardening — execute-time
+    // computation pinned forever). Cross-linked from upcoming
+    // test/prepare-compound-supply.test.ts (Plan 28-02) and
+    // test/prepare-compound-repay.test.ts (Plan 28-03). Drift in the preimage
+    // assembly for Compound-supply-shape data breaks THIS exact assertion at
+    // PR-review time.
+    expect(fp).toBe("0x09410c3060d1da3b7434450f172e9951928c22b838193be3f7b9956a603dfa9d");
+  });
+
+  it("Fixture S — Compound V3 withdraw(USDC, 100e6) on cUSDCv3 fingerprint (hardcoded literal anchor, Phase 28 / Plan 28-01)", () => {
+    const cUSDCv3 = getCompoundCometAddress(1, "USDC")!;
+    const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as Address;
+    const withdrawData = encodeCompoundWithdraw(USDC, 100_000_000n);
+    expect(withdrawData.length).toBe(138);
+    expect(withdrawData.slice(0, 10).toLowerCase()).toBe("0xf3fef3a3");
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: cUSDCv3,
+      valueWei: 0n,
+      data: withdrawData,
+    });
+
+    // Hardcoded literal anchor. Cross-linked from upcoming
+    // test/prepare-compound-withdraw.test.ts (Plan 28-02).
+    expect(fp).toBe("0x75d0cc3b899579ed4a7e2d8e6cb36386dc105ed97d326c73bcdafeed5dcfd70c");
+  });
+
+  it("Fixture T — Compound V3 withdraw(USDC, 50e6) on cUSDCv3 fingerprint — borrow-path (same calldata shape as Fixture S, distinct amount; proves byte-identity is selector + tx-to + amount dependent regardless of agent intent; hardcoded literal anchor, Phase 28 / Plan 28-01)", () => {
+    const cUSDCv3 = getCompoundCometAddress(1, "USDC")!;
+    const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as Address;
+    const withdrawData = encodeCompoundWithdraw(USDC, 50_000_000n);
+    expect(withdrawData.length).toBe(138);
+    expect(withdrawData.slice(0, 10).toLowerCase()).toBe("0xf3fef3a3");
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: cUSDCv3,
+      valueWei: 0n,
+      data: withdrawData,
+    });
+
+    // Hardcoded literal anchor — distinct from Fixture S despite identical
+    // selector + tx-to because the amount slot differs. Plan 28-03's
+    // prepare_compound_borrow shipping the same calldata bytes (via the same
+    // encoder + asset) anchors against this fixture; the agent's INTENT
+    // (borrow vs withdraw) is orthogonal to the cryptographic binding.
+    expect(fp).toBe("0x7e31ff45686170495c8859b23712de665168bd53b44c248dc51459900246428c");
+  });
+
+  it("Fixture U — Compound V3 supply(USDC, MAX_UINT256) on cUSDCv3 fingerprint — repay full-position-close (hardcoded literal anchor, Phase 28 / Plan 28-01)", () => {
+    const cUSDCv3 = getCompoundCometAddress(1, "USDC")!;
+    const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as Address;
+    const supplyData = encodeCompoundSupply(USDC, MAX_UINT256);
+    expect(supplyData.length).toBe(138);
+    expect(supplyData.slice(0, 10).toLowerCase()).toBe("0xf2b9fdb8");
+    // The last 64 hex chars are the amount slot; MAX_UINT256 = 64 × 'f'.
+    // Re-asserting here in the fingerprint test (not just the protocol test)
+    // anchors the byte shape against any future preimage drift — a regression
+    // that drops the MAX_UINT256 bytes would shift the fingerprint AND fail
+    // this length-and-pattern check.
+    expect(supplyData.slice(-64)).toBe("f".repeat(64));
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: cUSDCv3,
+      valueWei: 0n,
+      data: supplyData,
+    });
+
+    // Hardcoded literal anchor — Compound V3 honors `supply(base, MAX_UINT256)`
+    // as "close the entire borrow position" (full-repay sentinel). The
+    // decoder's `isMax: boolean` arm surfaces this for preview_send.
+    // Cross-linked from upcoming test/prepare-compound-repay.test.ts
+    // (Plan 28-03) — the prepare tool emits this exact calldata when
+    // `amount: "max"`.
+    expect(fp).toBe("0x287f7b8731dbe64fbfcaf023382eb31c385a33938b52548887daef807f7e480c");
   });
 
   it("invalid `to` (not a 0x-prefixed 20-byte hex) → throws via viem.hexToBytes", () => {

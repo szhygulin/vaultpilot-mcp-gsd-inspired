@@ -28,10 +28,13 @@ import {
   getAaveV3PoolAddress,
   getAaveV3PoolAddressesProvider,
   getAaveV3UiPoolDataProvider,
+  getAllCompoundCometsForChain,
+  getCompoundCometAddress,
   getWethAddress,
   lookupSpender,
   type ChainId,
   type ChainName,
+  type CompoundCometBase,
 } from "../src/config/contracts.js";
 
 describe("src/config/contracts.ts — getWethAddress(1)", () => {
@@ -364,5 +367,120 @@ describe("src/config/contracts.ts — Phase 8 ChainId widening compile-time guar
     // @ts-expect-error — 'not-a-chain' not in ChainName union
     const _wrong = () => chainIdFromName("not-a-chain");
     expect(typeof _wrong).toBe("function");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Compound V3 Comet SOT (Phase 28 Plan 28-01) — 6 mainnet Comets +
+// KNOWN_SPENDERS_ETHEREUM cross-view consistency. Provenance:
+// [compound-finance/comet/deployments/mainnet](https://github.com/compound-finance/comet/tree/main/deployments)
+// research-time 2026-05-20 (research § Topic 1).
+// ---------------------------------------------------------------------------
+
+describe("src/config/contracts.ts — Compound V3 Comet SOT (Phase 28 Plan 28-01)", () => {
+  // T1-T6 — byte-identity per Comet getter (mainnet research § Topic 1).
+  it("Test 1 — getCompoundCometAddress(1, 'USDC') returns canonical cUSDCv3 address", () => {
+    expect(getCompoundCometAddress(1, "USDC")).toBe(
+      getAddress("0xc3d688B66703497DAA19211EEdff47f25384cdc3"),
+    );
+  });
+
+  it("Test 2 — getCompoundCometAddress(1, 'USDT') returns canonical cUSDTv3 address", () => {
+    expect(getCompoundCometAddress(1, "USDT")).toBe(
+      getAddress("0x3Afdc9BCA9213A35503b077a6072F3D0d5AB0840"),
+    );
+  });
+
+  it("Test 3 — getCompoundCometAddress(1, 'WETH') returns canonical cWETHv3 address", () => {
+    expect(getCompoundCometAddress(1, "WETH")).toBe(
+      getAddress("0xA17581A9E3356d9A858b789D68B4d866e593aE94"),
+    );
+  });
+
+  it("Test 4 — getCompoundCometAddress(1, 'USDS') returns canonical cUSDSv3 address", () => {
+    expect(getCompoundCometAddress(1, "USDS")).toBe(
+      getAddress("0x5D409e56D886231aDAf00c8775665AD0f9897b56"),
+    );
+  });
+
+  it("Test 5 — getCompoundCometAddress(1, 'wstETH') returns canonical cwstETHv3 address", () => {
+    expect(getCompoundCometAddress(1, "wstETH")).toBe(
+      getAddress("0x3D0bb1ccaB520A66e607822fC55BC921738fAFE3"),
+    );
+  });
+
+  it("Test 6 — getCompoundCometAddress(1, 'WBTC') returns canonical cWBTCv3 address", () => {
+    expect(getCompoundCometAddress(1, "WBTC")).toBe(
+      getAddress("0xe85Dc543813B8c2CFEaAc371517b925a166a9293"),
+    );
+  });
+
+  // T7 — getAllCompoundCometsForChain(1) returns exactly 6 entries (set
+  // equality, order-independent per JS Object.values stability).
+  it("Test 7 — getAllCompoundCometsForChain(1) returns the 6 mainnet Comet addresses (set-equality)", () => {
+    const comets = getAllCompoundCometsForChain(1);
+    expect(comets.length).toBe(6);
+    const expected = new Set(
+      ["USDC", "USDT", "WETH", "USDS", "wstETH", "WBTC"].map(
+        (b) => getCompoundCometAddress(1, b as CompoundCometBase)!,
+      ),
+    );
+    expect(new Set(comets)).toEqual(expected);
+  });
+
+  // T8 — Compound-absent chain returns []. Polygon (137) is a valid
+  // ChainId per Phase 8 widening but COMPOUND_COMETS_RAW has no row for it
+  // (v2.3.x extends). The runtime returns [], NOT undefined / throw — the
+  // canonical-dispatch allowlist in Plan 28-04 iterates this safely.
+  it("Test 8a — getAllCompoundCometsForChain(137) (Polygon — valid ChainId, no Comet row yet) returns []", () => {
+    expect(getAllCompoundCometsForChain(137)).toEqual([]);
+  });
+
+  // T8b — Compile-time narrowing: getAllCompoundCometsForChain(999) is a TS
+  // error (999 not in the 5-chain ChainId union). The @ts-expect-error
+  // directive proves the narrowing is enforced; if a future plan widens
+  // ChainId to include 999, this directive warns (signal to update test
+  // alongside the type change). The runtime call still returns [] (defensive
+  // — `COMPOUND_COMETS_RAW[999]` is undefined; the function falls through
+  // to the empty-array branch).
+  it("Test 8b — getAllCompoundCometsForChain(999) is a TS compile error (ChainId narrows to 5-chain union)", () => {
+    // @ts-expect-error — chainId 999 not in the ChainId union (1 | 42161 | 137 | 8453 | 10)
+    const _wrong = () => getAllCompoundCometsForChain(999);
+    expect(typeof _wrong).toBe("function");
+    // Defensive runtime check — the function still returns [] for an
+    // unknown chain (no throw; v2.3.x callers iterate safely).
+    // @ts-expect-error — chainId 999 not in the ChainId union (1 | 42161 | 137 | 8453 | 10)
+    expect(getAllCompoundCometsForChain(999)).toEqual([]);
+  });
+
+  // T9 — Cross-view consistency: KNOWN_SPENDERS_ETHEREUM rows match the SOT
+  // getters byte-identical for all 6 base assets. T-COMPOUND-COMET-ADDR-INLINE-1
+  // anchor — drift between the SOT and the spender row fails the test.
+  it("Test 9 — KNOWN_SPENDERS_ETHEREUM Compound rows ↔ Comet getters byte-identical (cross-view consistency)", () => {
+    const labelByBase: Record<CompoundCometBase, string> = {
+      USDC: "Compound V3 cUSDCv3",
+      USDS: "Compound V3 cUSDSv3",
+      USDT: "Compound V3 cUSDTv3",
+      WBTC: "Compound V3 cWBTCv3",
+      WETH: "Compound V3 cWETHv3",
+      wstETH: "Compound V3 cwstETHv3",
+    };
+    const bases: CompoundCometBase[] = ["USDC", "USDS", "USDT", "WBTC", "WETH", "wstETH"];
+    for (const base of bases) {
+      const spenderRow = KNOWN_SPENDERS_ETHEREUM.find((r) => r.label === labelByBase[base]);
+      expect(spenderRow).toBeDefined();
+      expect(getCompoundCometAddress(1, base)).toBe(spenderRow?.address);
+    }
+  });
+
+  // Defensive — every Comet address is EIP-55 checksummed (corrupted-snapshot
+  // guard fires at module load via `getAddress`).
+  it("Bonus — every Comet address is EIP-55 round-trip (corrupted-snapshot guard)", () => {
+    const bases: CompoundCometBase[] = ["USDC", "USDS", "USDT", "WBTC", "WETH", "wstETH"];
+    for (const base of bases) {
+      const addr = getCompoundCometAddress(1, base);
+      expect(addr).not.toBeNull();
+      expect(addr).toBe(getAddress(addr!));
+    }
   });
 });
