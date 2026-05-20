@@ -36,6 +36,8 @@ import "./prepare_tron_revoke_approval.js"; // Phase 19 Plan 19-01 (TRON-W-03) �
 import "./prepare_tron_stake_freeze.js";             // Phase 19 Plan 19-02 (TRON-W-04) — Stake 2.0 freeze
 import "./prepare_tron_stake_unfreeze.js";           // Phase 19 Plan 19-02 (TRON-W-05) — Stake 2.0 unfreeze
 import "./prepare_tron_withdraw_expire_unfreeze.js"; // Phase 19 Plan 19-02 (TRON-W-06) — Stake 2.0 withdraw-expire
+import "./prepare_tron_stake_vote.js";               // Phase 19 Plan 19-03 (TRON-W-06) — Stake 2.0 vote
+import "./prepare_tron_stake_claim_rewards.js";      // Phase 19 Plan 19-03 (TRON-W-07) — Stake 2.0 claim rewards
 import "./prepare_token_approve.js";
 import "./prepare_revoke_approval.js";
 import "./prepare_weth_unwrap.js";

@@ -63,11 +63,14 @@ import {
 } from "../signing/blocks-solana.js";
 import {
   LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE,
+  PREPARE_RECEIPT_TRON_CLAIM_REWARDS_TEMPLATE,
   PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE,
   PREPARE_RECEIPT_TRON_STAKE_FREEZE_TEMPLATE,
   PREPARE_RECEIPT_TRON_STAKE_UNFREEZE_TEMPLATE,
+  PREPARE_RECEIPT_TRON_VOTE_TEMPLATE,
   PREPARE_RECEIPT_TRON_WITHDRAW_EXPIRE_TEMPLATE,
   PREPARE_RECEIPT_TRON_TRC20_TEMPLATE,
+  SR_LABEL_TRON_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
 } from "../signing/blocks-tron.js";
 import { getStatus } from "../wallet/session-manager.js";
@@ -595,7 +598,32 @@ function getTxVerificationTronBranch(
               .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
               .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
               .replace("{EXPIRATION}", String(tronTx.expiration))
-          : PREPARE_RECEIPT_TRON_TRC20_TEMPLATE
+          : tronTx.kind === "stake-vote"
+            ? (() => {
+                // Phase 19-03: VoteWitnessContract — per-SR label rows embedded in {VOTE_ROWS}.
+                const voteRows0 = summary0Tron && "votes" in summary0Tron ? (summary0Tron as { votes: Array<{ srAddress: string; count: number; label: string }> }).votes : [];
+                const voteRows = voteRows0.map((v) =>
+                  SR_LABEL_TRON_TEMPLATE
+                    .replace("{SR_RANK}", "?")
+                    .replace("{SR_ADDRESS}", v.srAddress)
+                    .replace("{SR_LABEL}", v.label)
+                    .replace("{SR_COUNT}", String(v.count)),
+                ).join("\n");
+                const totalCountV = summary0Tron && "totalCount" in summary0Tron ? (summary0Tron as { totalCount: number }).totalCount : 0;
+                return PREPARE_RECEIPT_TRON_VOTE_TEMPLATE
+                  .replace("{TOTAL_COUNT}", String(totalCountV))
+                  .replace("{SR_SOURCE}", "live")
+                  .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+                  .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+                  .replace("{EXPIRATION}", String(tronTx.expiration))
+                  .replace("{VOTE_ROWS}", voteRows);
+              })()
+            : tronTx.kind === "stake-claim-rewards"
+              ? PREPARE_RECEIPT_TRON_CLAIM_REWARDS_TEMPLATE
+                  .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+                  .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+                  .replace("{EXPIRATION}", String(tronTx.expiration))
+              : PREPARE_RECEIPT_TRON_TRC20_TEMPLATE
               .replace("{TO}", record.args.to)
               .replace("{TOKEN_ADDRESS}", record.args.tokenAddress ?? "")
               .replace("{AMOUNT}", record.args.amount ?? "")

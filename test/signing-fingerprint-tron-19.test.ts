@@ -114,11 +114,75 @@ export const FIXTURE_TRON_19_B_REF_BLOCK_BYTES = "00ad";
 export const FIXTURE_TRON_19_B_REF_BLOCK_HASH = "8e5e7df4e3c8b9a2";
 export const FIXTURE_TRON_19_B_EXPIRATION = 1779268134000;
 
-// Placeholder constants for Plan 19-03 (it.todo below)
-/** TBD — will be pinned in Plan 19-03 (VoteWitnessContract). */
-export const FIXTURE_TRON_19_C_FINGERPRINT = "TBD-19-03";
-/** TBD — will be pinned in Plan 19-03 (WithdrawBalanceContract). */
-export const FIXTURE_TRON_19_D_FINGERPRINT = "TBD-19-03";
+// ============================================================================
+// Fixture Tron-19-C — VoteWitnessContract (Plan 19-03)
+//
+// Inputs (pinned — same ref_block_bytes/hash/expiration as Fixtures A/B):
+//   FROM    = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" (USDT deployer — reuse prior FROM)
+//   FROM_HEX = "41a614f803b6fd780986a42c78ec9c7f77e6ded13c"
+//   SR1     = "TLyqzVGLV1srkB7dToTAEqgDSfPtXRJZYH" (Binance Staking, rank 1) — 100 votes
+//   SR1_HEX = "4178c842ee63b253f8f0d2955bbc582c661a078c9d"
+//   SR2     = "TE7hnUtWRRBz3SkFrX8JESWUmEvxxAhoPt" (Huobi, rank 2)            — 200 votes
+//   SR2_HEX = "412d7bdb9846499a2e5e6c5a7e6fb05731c83107c7"
+//   ref_block_bytes = "00ad"
+//   ref_block_hash  = "8e5e7df4e3c8b9a2"
+//   expiration      = 1779268134000
+//   timestamp       = 1779268074000
+//
+// Computed at PR-write time via:
+//   NODE_PATH=./node_modules node /tmp/compute-fixtures-cd.cjs
+// ============================================================================
+
+/** Pinned raw_data_hex for Fixture Tron-19-C. Computed at PR-write time. */
+const FIXTURE_TRON_19_C_RAW_DATA_HEX =
+  "0a0200ad22088e5e7df4e3c8b9a240f0c894a5e4335a870108041282010a30747970652e676f6f676c65617069732e636f6d2f70726f746f636f6c2e566f74655769746e657373436f6e7472616374124e0a1541a614f803b6fd780986a42c78ec9c7f77e6ded13c12190a154178c842ee63b253f8f0d2955bbc582c661a078c9d1064121a0a15412d7bdb9846499a2e5e6c5a7e6fb05731c83107c710c8017090f490a5e433";
+
+/**
+ * Hardcoded payloadFingerprint literal for Fixture Tron-19-C (VoteWitnessContract).
+ * Computed at PR-write time via keccak256("VaultPilot-trontx-v1:" || rawDataBytes).
+ * Cross-linked from `test/prepare-tron-stake-vote.test.ts`.
+ */
+export const FIXTURE_TRON_19_C_FINGERPRINT =
+  "0x7e2402e3fdf03906c703c8bec9668412f6ae8bc5a483e12ff35cf157c6510d57";
+
+// ============================================================================
+// Fixture Tron-19-D — WithdrawBalanceContract (Plan 19-03)
+//
+// Inputs (pinned — same ref_block_bytes/hash/expiration as Fixtures A/B):
+//   FROM    = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" (USDT deployer — reuse prior FROM)
+//   FROM_HEX = "41a614f803b6fd780986a42c78ec9c7f77e6ded13c"
+//   ref_block_bytes = "00ad"
+//   ref_block_hash  = "8e5e7df4e3c8b9a2"
+//   expiration      = 1779268134000
+//   timestamp       = 1779268074000
+//
+// Computed at PR-write time via:
+//   NODE_PATH=./node_modules node /tmp/compute-fixtures-cd.cjs
+// ============================================================================
+
+/** Pinned raw_data_hex for Fixture Tron-19-D. Computed at PR-write time. */
+const FIXTURE_TRON_19_D_RAW_DATA_HEX =
+  "0a0200ad22088e5e7df4e3c8b9a240f0c894a5e4335a53080d124f0a34747970652e676f6f676c65617069732e636f6d2f70726f746f636f6c2e576974686472617742616c616e6365436f6e747261637412170a1541a614f803b6fd780986a42c78ec9c7f77e6ded13c7090f490a5e433";
+
+/**
+ * Hardcoded payloadFingerprint literal for Fixture Tron-19-D (WithdrawBalanceContract).
+ * Computed at PR-write time via keccak256("VaultPilot-trontx-v1:" || rawDataBytes).
+ * Cross-linked from `test/prepare-tron-stake-claim-rewards.test.ts`.
+ */
+export const FIXTURE_TRON_19_D_FINGERPRINT =
+  "0x041642262b24aa7605340383696bb8b9905d07041945ecc53673e1f55f748724";
+
+// Fixture Tron-19-C/D constants (re-exported for consumer tests)
+export const FIXTURE_TRON_19_C_FROM = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+export const FIXTURE_TRON_19_C_SR1 = "TLyqzVGLV1srkB7dToTAEqgDSfPtXRJZYH";
+export const FIXTURE_TRON_19_C_SR2 = "TE7hnUtWRRBz3SkFrX8JESWUmEvxxAhoPt";
+export const FIXTURE_TRON_19_C_REF_BLOCK_BYTES = "00ad";
+export const FIXTURE_TRON_19_C_REF_BLOCK_HASH = "8e5e7df4e3c8b9a2";
+export const FIXTURE_TRON_19_C_EXPIRATION = 1779268134000;
+export const FIXTURE_TRON_19_D_FROM = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
+export const FIXTURE_TRON_19_D_REF_BLOCK_BYTES = "00ad";
+export const FIXTURE_TRON_19_D_REF_BLOCK_HASH = "8e5e7df4e3c8b9a2";
+export const FIXTURE_TRON_19_D_EXPIRATION = 1779268134000;
 
 // ============================================================================
 // Fixture Tron-19-A address constants (re-exported for consumer tests)
@@ -281,8 +345,88 @@ describe("computeTronPayloadFingerprint — Phase 19 Fixture Tron-19-B (FreezeBa
   });
 });
 
-// Placeholder tests for Plan 19-03 (filled in when that plan ships).
-describe("computeTronPayloadFingerprint — Phase 19 Fixtures C/D (stubs)", () => {
-  it.todo("Fixture Tron-19-C — VoteWitnessContract vote fingerprint (Plan 19-03)");
-  it.todo("Fixture Tron-19-D — WithdrawBalanceContract claim fingerprint (Plan 19-03)");
+// ============================================================================
+// Fixture Tron-19-C — VoteWitnessContract vote fingerprint (Plan 19-03)
+// ============================================================================
+
+describe("computeTronPayloadFingerprint — Phase 19 Fixture Tron-19-C (VoteWitnessContract vote)", () => {
+  it("Fixture Tron-19-C — VoteWitnessContract vote fingerprint (hardcoded literal anchor)", () => {
+    const rawDataBytes = new Uint8Array(
+      Buffer.from(FIXTURE_TRON_19_C_RAW_DATA_HEX, "hex"),
+    );
+
+    // Byte-length anchor — VoteWitnessContract with 2 SRs = 166 bytes.
+    // If this fails, the Protobuf schema changed.
+    expect(rawDataBytes.length).toBe(166);
+
+    const fp = computeTronPayloadFingerprint({ rawDataBytes });
+
+    // Hardcoded literal — NO beforeAll snapshot. Drift MUST fail here.
+    expect(fp).toBe(FIXTURE_TRON_19_C_FINGERPRINT);
+    expect(fp).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+
+  it("Fixture Tron-19-C raw_data_hex contains VoteWitnessContract type_url bytes", () => {
+    // "566f74655769746e657373436f6e7472616374" is the hex of "VoteWitnessContract"
+    // Validates the Protobuf type_url is encoded as expected.
+    const rawDataHexLower = FIXTURE_TRON_19_C_RAW_DATA_HEX.toLowerCase();
+    expect(rawDataHexLower).toContain("566f74655769746e657373436f6e7472616374");
+  });
+
+  it("Fixture Tron-19-C vs Fixture Tron-19-B: vote and freeze produce different fingerprints", () => {
+    const fpC = computeTronPayloadFingerprint({
+      rawDataBytes: new Uint8Array(Buffer.from(FIXTURE_TRON_19_C_RAW_DATA_HEX, "hex")),
+    });
+    const fpB = computeTronPayloadFingerprint({
+      rawDataBytes: new Uint8Array(Buffer.from(FIXTURE_TRON_19_B_RAW_DATA_HEX, "hex")),
+    });
+
+    expect(fpC).not.toBe(fpB);
+    expect(fpC).toBe(FIXTURE_TRON_19_C_FINGERPRINT);
+    expect(fpB).toBe(FIXTURE_TRON_19_B_FINGERPRINT);
+    expect(fpC).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+});
+
+// ============================================================================
+// Fixture Tron-19-D — WithdrawBalanceContract claim fingerprint (Plan 19-03)
+// ============================================================================
+
+describe("computeTronPayloadFingerprint — Phase 19 Fixture Tron-19-D (WithdrawBalanceContract)", () => {
+  it("Fixture Tron-19-D — WithdrawBalanceContract claim fingerprint (hardcoded literal anchor)", () => {
+    const rawDataBytes = new Uint8Array(
+      Buffer.from(FIXTURE_TRON_19_D_RAW_DATA_HEX, "hex"),
+    );
+
+    // Byte-length anchor — WithdrawBalanceContract with 1 owner = 113 bytes.
+    // If this fails, the Protobuf schema changed.
+    expect(rawDataBytes.length).toBe(113);
+
+    const fp = computeTronPayloadFingerprint({ rawDataBytes });
+
+    // Hardcoded literal — NO beforeAll snapshot. Drift MUST fail here.
+    expect(fp).toBe(FIXTURE_TRON_19_D_FINGERPRINT);
+    expect(fp).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+
+  it("Fixture Tron-19-D raw_data_hex contains WithdrawBalanceContract type_url bytes", () => {
+    // "576974686472617742616c616e6365436f6e7472616374" is the hex of "WithdrawBalanceContract"
+    // Validates the Protobuf type_url is encoded as expected.
+    const rawDataHexLower = FIXTURE_TRON_19_D_RAW_DATA_HEX.toLowerCase();
+    expect(rawDataHexLower).toContain("576974686472617742616c616e6365436f6e7472616374");
+  });
+
+  it("Fixture Tron-19-D vs Fixture Tron-19-C: claim and vote produce different fingerprints", () => {
+    const fpD = computeTronPayloadFingerprint({
+      rawDataBytes: new Uint8Array(Buffer.from(FIXTURE_TRON_19_D_RAW_DATA_HEX, "hex")),
+    });
+    const fpC = computeTronPayloadFingerprint({
+      rawDataBytes: new Uint8Array(Buffer.from(FIXTURE_TRON_19_C_RAW_DATA_HEX, "hex")),
+    });
+
+    expect(fpD).not.toBe(fpC);
+    expect(fpD).toBe(FIXTURE_TRON_19_D_FINGERPRINT);
+    expect(fpC).toBe(FIXTURE_TRON_19_C_FINGERPRINT);
+    expect(fpD).toMatch(/^0x[0-9a-f]{64}$/);
+  });
 });
