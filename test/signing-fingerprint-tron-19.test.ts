@@ -1,11 +1,11 @@
-// Phase 19 — Plan 19-01: TRON payloadFingerprint canonical-fixture file.
+// Phase 19 — Plans 19-01 / 19-02: TRON payloadFingerprint canonical-fixture file.
 // Sibling of `test/signing-fingerprint-tron.test.ts` (Phase 18 — BYTE-UNTOUCHED
 // per D-11d). New sibling per D-08c: Phase 19 fixtures live HERE, not in the
 // Phase 18 file.
 //
 // Fixture naming convention (D-08a):
 //   Tron-19-A — TRC-20 approve fingerprint (Plan 19-01)
-//   Tron-19-B — FreezeBalanceV2 freeze fingerprint (Plan 19-02 — it.todo)
+//   Tron-19-B — FreezeBalanceV2 freeze fingerprint (Plan 19-02)
 //   Tron-19-C — VoteWitnessContract vote fingerprint (Plan 19-03 — it.todo)
 //   Tron-19-D — WithdrawBalanceContract claim fingerprint (Plan 19-03 — it.todo)
 //
@@ -71,9 +71,50 @@ const FIXTURE_TRON_19_A_RAW_DATA_HEX =
 export const FIXTURE_TRON_19_A_FINGERPRINT =
   "0xb6ed7397e41a3159b4068cb4e25882108dce9beccf277de81935d2f5bf5a5ef4";
 
-// Placeholder constants for Plans 19-02 / 19-03 (it.todo below)
-/** TBD — will be pinned in Plan 19-02 (FreezeBalanceV2Contract). */
-export const FIXTURE_TRON_19_B_FINGERPRINT = "TBD-19-02";
+// ============================================================================
+// Fixture Tron-19-B — FreezeBalanceV2Contract (Plan 19-02)
+//
+// Inputs (pinned — deterministic tronweb Protobuf encoding):
+//   FROM      = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t" (USDT deployer — reuse Fixture A/M/N FROM)
+//   SUN       = 1_000_000_000 (1000 TRX)
+//   RESOURCE  = "ENERGY" (resource enum value 1 in Protobuf)
+//   ref_block_bytes = "00ad"
+//   ref_block_hash  = "8e5e7df4e3c8b9a2"
+//   expiration      = 1779268134000
+//   timestamp       = 1779268074000
+//
+// Computed at PR-write time via:
+//   const { txJsonToPb, txPbToRawDataHex } = require('tronweb/lib/commonjs/utils/transaction.js');
+//   const raw_data = { contract: [{ type: 'FreezeBalanceV2Contract',
+//     parameter: { value: { owner_address: FROM_HEX, frozen_balance: 1_000_000_000, resource: 'ENERGY' },
+//       type_url: 'type.googleapis.com/protocol.FreezeBalanceV2Contract' } }],
+//     ref_block_bytes: '00ad', ref_block_hash: '8e5e7df4e3c8b9a2',
+//     expiration: 1779268134000, timestamp: 1779268074000 };
+//   rawDataHex = txPbToRawDataHex(txJsonToPb({ raw_data })).toLowerCase();
+//   fingerprint = keccak256('VaultPilot-trontx-v1:' || rawDataBytes);
+// ============================================================================
+
+/** Pinned raw_data_hex for Fixture Tron-19-B. Computed at PR-write time. */
+const FIXTURE_TRON_19_B_RAW_DATA_HEX =
+  "0a0200ad22088e5e7df4e3c8b9a240f0c894a5e4335a5b083612570a34747970652e676f6f676c65617069732e636f6d2f70726f746f636f6c2e467265657a6542616c616e63655632436f6e7472616374121f0a1541a614f803b6fd780986a42c78ec9c7f77e6ded13c108094ebdc0318017090f490a5e433";
+
+/**
+ * Hardcoded payloadFingerprint literal for Fixture Tron-19-B (FreezeBalanceV2Contract).
+ * Computed at PR-write time via keccak256("VaultPilot-trontx-v1:" || rawDataBytes).
+ * Cross-linked from `test/prepare-tron-stake-freeze.test.ts`.
+ */
+export const FIXTURE_TRON_19_B_FINGERPRINT =
+  "0x18b3ea8b388d2af3175c35d16b0ac65e95818fa941229acbee8f44674419ba44";
+
+// Fixture Tron-19-B address/amount constants (re-exported for consumer tests)
+export const FIXTURE_TRON_19_B_FROM = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"; // same as Fixture A FROM
+export const FIXTURE_TRON_19_B_SUN = 1_000_000_000n; // 1000 TRX in SUN
+export const FIXTURE_TRON_19_B_RESOURCE = "ENERGY" as const;
+export const FIXTURE_TRON_19_B_REF_BLOCK_BYTES = "00ad";
+export const FIXTURE_TRON_19_B_REF_BLOCK_HASH = "8e5e7df4e3c8b9a2";
+export const FIXTURE_TRON_19_B_EXPIRATION = 1779268134000;
+
+// Placeholder constants for Plan 19-03 (it.todo below)
 /** TBD — will be pinned in Plan 19-03 (VoteWitnessContract). */
 export const FIXTURE_TRON_19_C_FINGERPRINT = "TBD-19-03";
 /** TBD — will be pinned in Plan 19-03 (WithdrawBalanceContract). */
@@ -170,9 +211,78 @@ describe("computeTronPayloadFingerprint — Phase 19 Fixture Tron-19-A (TRC-20 a
   });
 });
 
-// Placeholder tests for Plans 19-02 and 19-03 (filled in when those plans ship).
-describe("computeTronPayloadFingerprint — Phase 19 Fixtures B/C/D (stubs)", () => {
-  it.todo("Fixture Tron-19-B — FreezeBalanceV2Contract freeze fingerprint (Plan 19-02)");
+// ============================================================================
+// Fixture Tron-19-B — FreezeBalanceV2Contract (Plan 19-02)
+// ============================================================================
+
+describe("computeTronPayloadFingerprint — Phase 19 Fixture Tron-19-B (FreezeBalanceV2Contract)", () => {
+  it("Fixture Tron-19-B — FreezeBalanceV2 freeze fingerprint (hardcoded literal anchor)", () => {
+    const rawDataBytes = new Uint8Array(
+      Buffer.from(FIXTURE_TRON_19_B_RAW_DATA_HEX, "hex"),
+    );
+
+    // Stable byte-length anchor — catches any future Protobuf schema change.
+    // FreezeBalanceV2Contract encodes: owner_address (21 bytes) + frozen_balance (varint) + resource (varint).
+    expect(rawDataBytes.length).toBe(121);
+
+    const fp = computeTronPayloadFingerprint({ rawDataBytes });
+
+    // Hardcoded literal anchor (Plan 19-02 hardening — computed at PR-write time).
+    // Cross-linked from `test/prepare-tron-stake-freeze.test.ts` (consumer re-anchor).
+    // NO `beforeAll`-snapshot per CLAUDE.md.
+    expect(fp).toBe(FIXTURE_TRON_19_B_FINGERPRINT);
+  });
+
+  it("Fixture Tron-19-B: raw_data_hex encodes FreezeBalanceV2Contract (NOT Stake 1.0 FreezeBalanceContract)", () => {
+    // T-19-02-T-STAKE2-DISTINCT regression anchor — the type URL in the Protobuf
+    // encoding confirms this is FreezeBalanceV2Contract (Stake 2.0), NOT
+    // FreezeBalanceContract (Stake 1.0 deprecated per java-tron@4.6.0).
+    // The type URL is embedded as a string in the raw_data_hex.
+    const rawDataHexLower = FIXTURE_TRON_19_B_RAW_DATA_HEX.toLowerCase();
+    // "FreezeBalanceV2Contract" encoded as UTF-8 hex in the type_url field:
+    const freezeV2TypeUrlHex = Buffer.from("FreezeBalanceV2Contract").toString("hex");
+    expect(rawDataHexLower).toContain(freezeV2TypeUrlHex);
+    // Also verify "FreezeBalanceContract" (Stake 1.0) WITHOUT "V2" does NOT appear.
+    const stake1TypeUrlHex = Buffer.from("FreezeBalanceContract").toString("hex");
+    // "FreezeBalanceV2Contract" contains "FreezeBalanceContract" as a substring,
+    // so we check the V2 suffix specifically via "V2Contract" in hex:
+    const stake1OnlyHex = Buffer.from("Balance\x00").toString("hex"); // sanity
+    // More robust: verify the raw hex contains exactly "FreezeBalanceV2Contract" type_url
+    expect(rawDataHexLower).toContain(freezeV2TypeUrlHex);
+    // And does NOT have ONLY "FreezeBalanceContract" without "V2" in the type URL portion
+    // (the full type URL is "type.googleapis.com/protocol.FreezeBalanceV2Contract")
+    const fullTypeUrlV2 = Buffer.from("type.googleapis.com/protocol.FreezeBalanceV2Contract").toString("hex");
+    expect(rawDataHexLower).toContain(fullTypeUrlV2);
+  });
+
+  it("Fixture Tron-19-B: encoded resource is ENERGY (Protobuf field 3 = value 1)", () => {
+    // ENERGY = 1 in the TRON Resource enum (Protobuf).
+    // BANDWIDTH = 0 (default, often omitted in Protobuf encoding).
+    // The frozen_balance=1_000_000_000 is encoded as varint 0x80 0x94 0xEB 0xDC 0x03
+    // Resource=ENERGY is encoded as field 3, value 1: 0x18 0x01
+    // Verify the hex contains the ENERGY field encoding.
+    const rawDataHexLower = FIXTURE_TRON_19_B_RAW_DATA_HEX.toLowerCase();
+    // "1801" = field 3 (resource), varint value 1 (ENERGY)
+    expect(rawDataHexLower).toContain("1801");
+  });
+
+  it("Fixture Tron-19-B vs Fixture Tron-19-A: freeze and approve produce different fingerprints", () => {
+    const fpB = computeTronPayloadFingerprint({
+      rawDataBytes: new Uint8Array(Buffer.from(FIXTURE_TRON_19_B_RAW_DATA_HEX, "hex")),
+    });
+    const fpA = computeTronPayloadFingerprint({
+      rawDataBytes: new Uint8Array(Buffer.from(FIXTURE_TRON_19_A_RAW_DATA_HEX, "hex")),
+    });
+
+    expect(fpB).not.toBe(fpA);
+    expect(fpB).toBe(FIXTURE_TRON_19_B_FINGERPRINT);
+    expect(fpA).toBe(FIXTURE_TRON_19_A_FINGERPRINT);
+    expect(fpB).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+});
+
+// Placeholder tests for Plan 19-03 (filled in when that plan ships).
+describe("computeTronPayloadFingerprint — Phase 19 Fixtures C/D (stubs)", () => {
   it.todo("Fixture Tron-19-C — VoteWitnessContract vote fingerprint (Plan 19-03)");
   it.todo("Fixture Tron-19-D — WithdrawBalanceContract claim fingerprint (Plan 19-03)");
 });

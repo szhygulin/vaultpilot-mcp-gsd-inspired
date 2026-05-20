@@ -186,6 +186,43 @@ export type TronInstructionSummary =
        * `"(unknown spender — no prior interaction recorded)"` for unknown spenders.
        */
       spenderLabel: string;
+    }
+  | {
+      // Phase 19 Plan 19-02 — TRON Stake 2.0 freeze (FreezeBalanceV2Contract).
+      // Protobuf-native — no `contract_address` field. Caller-side dispatch-skip
+      // in preview_send.ts (documented in canonical-dispatch-tron.ts comment block).
+      // `sun` is the raw freeze amount (bigint); `resource` is the strict-equality
+      // enum per D-03b. Kind name `"stake-freeze-v2"` disambiguates from any
+      // hypothetical Stake 1.0 `"stake-freeze"` kind — version suffix is load-bearing.
+      kind: "stake-freeze-v2";
+      /** Sender base58check address. */
+      from: string;
+      /** Resource to freeze for — "ENERGY" or "BANDWIDTH" (strict-equality enum). */
+      resource: "ENERGY" | "BANDWIDTH";
+      /** Raw freeze amount in SUN (bigint). */
+      sun: bigint;
+    }
+  | {
+      // Phase 19 Plan 19-02 — TRON Stake 2.0 unfreeze (UnfreezeBalanceV2Contract).
+      // Initiates the 14-day waiting period after which `prepare_tron_withdraw_expire_unfreeze`
+      // becomes available. Protobuf-native — no `contract_address`.
+      kind: "stake-unfreeze-v2";
+      /** Sender base58check address. */
+      from: string;
+      /** Resource to unfreeze — "ENERGY" or "BANDWIDTH". */
+      resource: "ENERGY" | "BANDWIDTH";
+      /** Raw unfreeze amount in SUN (bigint). */
+      sun: bigint;
+    }
+  | {
+      // Phase 19 Plan 19-02 — TRON Stake 2.0 withdraw-expire-unfreeze
+      // (WithdrawExpireUnfreezeContract). Zero-arg — the protocol auto-withdraws
+      // all expired-unfreeze records for the owner. `from` is the owner address.
+      // Mandatory Layer 0.7 refusal at preview time via `_tronStake.checkWithdrawableBalance`
+      // when `withdrawable === 0n` (D-04b asymmetric promotion).
+      kind: "stake-withdraw-expire";
+      /** Sender / owner base58check address. */
+      from: string;
     };
 
 /**
@@ -358,10 +395,22 @@ export interface PreparedTxTron {
   expiration: number;
   /**
    * TRON-specific discriminator — routes Layer 0.5 + Layer 0.7 dispatch at
-   * preview_send TRON branch (Plan 18-04). `"native"` skips canonical-dispatch-
-   * tron allowlist and simulation gate; `"trc20"` enforces both.
+   * preview_send TRON branch (Plan 18-04 + Plan 19-02).
+   *   - `"native"` — skips canonical-dispatch-tron allowlist and simulation gate.
+   *   - `"trc20"` — enforces Layer 0.5 allowlist + Layer 0.7 mandatory simulation gate.
+   *   - `"stake-freeze"` — Stake 2.0 FreezeBalanceV2Contract; no contract_address;
+   *                        Layer 0.5 caller-skip; Layer 0.7 advisory only (no simulation API).
+   *   - `"stake-unfreeze"` — Stake 2.0 UnfreezeBalanceV2Contract; same skip as freeze.
+   *   - `"stake-withdraw-expire"` — Stake 2.0 WithdrawExpireUnfreezeContract; no contract_address;
+   *                                 Layer 0.7 MANDATORY refusal via `_tronStake.checkWithdrawableBalance`
+   *                                 when `withdrawable === 0n` (D-04b asymmetric promotion).
+   *
+   * Note: the `kind` values here use shorter names (e.g. `"stake-freeze"`) vs
+   * `TronInstructionSummary` (e.g. `"stake-freeze-v2"`). The routing discriminator
+   * doesn't need the version suffix; the instruction summary uses it to
+   * disambiguate Stake 1.0 should it ever appear in decoded payloads.
    */
-  kind: "native" | "trc20";
+  kind: "native" | "trc20" | "stake-freeze" | "stake-unfreeze" | "stake-withdraw-expire";
   /**
    * TRC-20 only — base58check token contract address. Consumed by
    * `canonical-dispatch-tron` allowlist (Plan 18-04 Layer 0.5 gate).

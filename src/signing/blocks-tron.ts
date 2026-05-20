@@ -350,3 +350,129 @@ export const KNOWN_SPENDER_LABEL_TRON_TEMPLATE: string = [
   "  Label:     {LABEL}",
   "  Source:    {SOURCE}",
 ].join("\n");
+
+// ---------------------------------------------------------------------------
+// Phase 19 Plan 19-02 — APPEND-ONLY templates for TRON Stake 2.0.
+// DO NOT modify the 10 templates above — they are BYTE-FROZEN (Phase 18 + Plan 19-01).
+// ---------------------------------------------------------------------------
+
+/**
+ * PREPARE RECEIPT — TRON Stake 2.0 freeze (FreezeBalanceV2Contract).
+ * Plan 19-02 — verbatim agent args, NO normalization. Five slots:
+ *   - `{RESOURCE}`        — "ENERGY" or "BANDWIDTH" (verbatim agent string).
+ *   - `{SUN}`             — raw SUN amount decimal string (verbatim agent string).
+ *   - `{REF_BLOCK_BYTES}` — pinned at prepare time; surfaced verbatim.
+ *   - `{REF_BLOCK_HASH}`  — pinned at prepare time; surfaced verbatim.
+ *   - `{EXPIRATION}`      — expiration timestamp (ms); surfaced verbatim.
+ *
+ * Mirrors the Phase 18 PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE shape but names
+ * the Stake 2.0 contract type explicitly.
+ */
+export const PREPARE_RECEIPT_TRON_STAKE_FREEZE_TEMPLATE: string = [
+  "PREPARE RECEIPT (TRON — Stake 2.0 freeze)",
+  "  chain:          TRON mainnet",
+  "  resource:       {RESOURCE}",
+  "  sun:            {SUN}",
+  "  refBlockBytes:  {REF_BLOCK_BYTES}",
+  "  refBlockHash:   {REF_BLOCK_HASH}",
+  "  expiration:     {EXPIRATION}",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT — TRON Stake 2.0 unfreeze (UnfreezeBalanceV2Contract).
+ * Plan 19-02 — verbatim agent args, NO normalization. Five slots:
+ *   - `{RESOURCE}`        — "ENERGY" or "BANDWIDTH" (verbatim agent string).
+ *   - `{SUN}`             — raw SUN amount decimal string (verbatim agent string).
+ *   - `{REF_BLOCK_BYTES}` — pinned at prepare time; surfaced verbatim.
+ *   - `{REF_BLOCK_HASH}`  — pinned at prepare time; surfaced verbatim.
+ *   - `{EXPIRATION}`      — expiration timestamp (ms); surfaced verbatim.
+ *
+ * Note: unfreeze initiates the 14-day waiting period; the STAKE_WAITING_PERIOD_TRON_TEMPLATE
+ * block is emitted separately (not in this template) for clear-sign readability.
+ */
+export const PREPARE_RECEIPT_TRON_STAKE_UNFREEZE_TEMPLATE: string = [
+  "PREPARE RECEIPT (TRON — Stake 2.0 unfreeze)",
+  "  chain:          TRON mainnet",
+  "  resource:       {RESOURCE}",
+  "  sun:            {SUN}",
+  "  refBlockBytes:  {REF_BLOCK_BYTES}",
+  "  refBlockHash:   {REF_BLOCK_HASH}",
+  "  expiration:     {EXPIRATION}",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT — TRON Stake 2.0 withdraw-expire-unfreeze (WithdrawExpireUnfreezeContract).
+ * Plan 19-02 — zero-arg contract (no resource, no sun). Three slots:
+ *   - `{REF_BLOCK_BYTES}` — pinned at prepare time; surfaced verbatim.
+ *   - `{REF_BLOCK_HASH}`  — pinned at prepare time; surfaced verbatim.
+ *   - `{EXPIRATION}`      — expiration timestamp (ms); surfaced verbatim.
+ *
+ * NO `{RESOURCE}` or `{SUN}` slots — `WithdrawExpireUnfreezeContract` takes
+ * no parameters; the protocol auto-withdraws ALL expired-unfreeze records for
+ * the caller (per RESEARCH §Topic 3 Pitfall — second arg is TransactionCommonOptions, not amount).
+ */
+export const PREPARE_RECEIPT_TRON_WITHDRAW_EXPIRE_TEMPLATE: string = [
+  "PREPARE RECEIPT (TRON — Stake 2.0 withdraw expired unfreeze)",
+  "  chain:          TRON mainnet",
+  "  refBlockBytes:  {REF_BLOCK_BYTES}",
+  "  refBlockHash:   {REF_BLOCK_HASH}",
+  "  expiration:     {EXPIRATION}",
+].join("\n");
+
+/**
+ * CHECKS PERFORMED (TRON — Stake 2.0 resource) — surfaces the resource
+ * semantics for freeze and unfreeze operations. Two slots:
+ *   - `{RESOURCE}`             — "ENERGY" or "BANDWIDTH".
+ *   - `{RESOURCE_DESCRIPTION}` — human-readable description of the resource
+ *                                (e.g. "ENERGY (consumed by TRC-20 transfers + contract calls)"
+ *                                or "BANDWIDTH (consumed by tx broadcast)").
+ *
+ * Emitted by prepare_tron_stake_freeze and prepare_tron_stake_unfreeze.
+ * NOT emitted by prepare_tron_withdraw_expire_unfreeze (zero-arg; no resource context).
+ * Per CONTEXT §Specifics: Energy reduces TRC-20 transfer costs; Bandwidth reduces
+ * native send costs.
+ */
+export const STAKE_RESOURCE_TRON_TEMPLATE: string = [
+  "CHECKS PERFORMED (TRON — Stake 2.0 resource)",
+  "  resource:      {RESOURCE}",
+  "  description:   {RESOURCE_DESCRIPTION}",
+].join("\n");
+
+/**
+ * CHECKS PERFORMED (TRON — Stake 2.0 waiting period) — informs the user of
+ * the 14-day waiting period after unfreeze. No slots — constant prose.
+ *
+ * Emitted ONLY by prepare_tron_stake_unfreeze (D-04a advisory surfacing).
+ * NOT emitted by freeze or withdraw-expire.
+ * The 14-day window is NOT enforced server-side at prepare time — enforcement
+ * happens via the Layer 0.7 mandatory-refusal gate in preview_send.ts for
+ * the withdraw-expire handle (D-04b asymmetric promotion).
+ */
+export const STAKE_WAITING_PERIOD_TRON_TEMPLATE: string = [
+  "CHECKS PERFORMED (TRON — Stake 2.0 waiting period)",
+  "  Unfreeze becomes withdrawable after 14 days; this tx initiates the waiting period.",
+  "  After 14 days, call `prepare_tron_withdraw_expire_unfreeze` to withdraw.",
+  "  Calling withdraw-expire before 14 days elapses will be refused at preview time",
+  "  (Layer 0.7 mandatory refusal — no withdrawable balance).",
+].join("\n");
+
+/**
+ * CHECKS PERFORMED (TRON — withdrawable balance found) — emitted by preview_send
+ * TRON branch for `stake-withdraw-expire` handles when `checkWithdrawableBalance`
+ * returns `withdrawable > 0n`. Two slots:
+ *   - `{WITHDRAWABLE_SUN}` — sum of expired-unfreeze records' amounts (decimal SUN).
+ *   - `{EARLIEST_EXPIRY_ISO}` — ISO 8601 timestamp of earliest-expired record, or
+ *                               "n/a" when all records have already expired.
+ *
+ * D-04b Layer 0.7 advisory PASS for stake-withdraw-expire — signals that
+ * the withdraw is eligible. Asymmetric: TRC-20 + stake-withdraw-expire use
+ * mandatory refusal; this template surfaces the PASS advisory when eligible.
+ */
+export const WITHDRAWABLE_BALANCE_TRON_TEMPLATE: string = [
+  "CHECKS PERFORMED (TRON — withdrawable balance found)",
+  "  withdrawableSun: {WITHDRAWABLE_SUN}",
+  "  earliestExpiry:  {EARLIEST_EXPIRY_ISO}",
+  "",
+  "  D-04b Layer 0.7 PASS: at least one unfreeze record has expired and",
+  "  is eligible for withdrawal. Proceed to on-device signing.",
+].join("\n");

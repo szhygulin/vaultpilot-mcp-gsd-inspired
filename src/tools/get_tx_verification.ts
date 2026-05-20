@@ -64,6 +64,9 @@ import {
 import {
   LEDGER_BLIND_SIGN_HASH_TRON_TEMPLATE,
   PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE,
+  PREPARE_RECEIPT_TRON_STAKE_FREEZE_TEMPLATE,
+  PREPARE_RECEIPT_TRON_STAKE_UNFREEZE_TEMPLATE,
+  PREPARE_RECEIPT_TRON_WITHDRAW_EXPIRE_TEMPLATE,
   PREPARE_RECEIPT_TRON_TRC20_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TRON_TEMPLATE,
 } from "../signing/blocks-tron.js";
@@ -561,7 +564,11 @@ function getTxVerificationTronBranch(
 ): ToolHandlerResult {
   const tronTx = record.tx;
 
-  // Build prepare receipt based on kind
+  // Build prepare receipt based on kind.
+  // Phase 19-02: stake kinds use their own templates; stake-withdraw-expire has no resource/sun slots.
+  const summary0Tron = tronTx.instructionSummary?.[0];
+  const stakeResource = summary0Tron && "resource" in summary0Tron ? summary0Tron.resource : "";
+  const stakeSun = summary0Tron && "sun" in summary0Tron ? (summary0Tron.sun as bigint).toString() : "";
   const prepareReceiptBlock = tronTx.kind === "native"
     ? PREPARE_RECEIPT_TRON_NATIVE_TEMPLATE
         .replace("{TO}", record.args.to)
@@ -569,13 +576,32 @@ function getTxVerificationTronBranch(
         .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
         .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
         .replace("{EXPIRATION}", String(tronTx.expiration))
-    : PREPARE_RECEIPT_TRON_TRC20_TEMPLATE
-        .replace("{TO}", record.args.to)
-        .replace("{TOKEN_ADDRESS}", record.args.tokenAddress ?? "")
-        .replace("{AMOUNT}", record.args.amount ?? "")
-        .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
-        .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
-        .replace("{EXPIRATION}", String(tronTx.expiration));
+    : tronTx.kind === "stake-freeze"
+      ? PREPARE_RECEIPT_TRON_STAKE_FREEZE_TEMPLATE
+          .replace("{RESOURCE}", stakeResource)
+          .replace("{SUN}", stakeSun)
+          .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+          .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+          .replace("{EXPIRATION}", String(tronTx.expiration))
+      : tronTx.kind === "stake-unfreeze"
+        ? PREPARE_RECEIPT_TRON_STAKE_UNFREEZE_TEMPLATE
+            .replace("{RESOURCE}", stakeResource)
+            .replace("{SUN}", stakeSun)
+            .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+            .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+            .replace("{EXPIRATION}", String(tronTx.expiration))
+        : tronTx.kind === "stake-withdraw-expire"
+          ? PREPARE_RECEIPT_TRON_WITHDRAW_EXPIRE_TEMPLATE
+              .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+              .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+              .replace("{EXPIRATION}", String(tronTx.expiration))
+          : PREPARE_RECEIPT_TRON_TRC20_TEMPLATE
+              .replace("{TO}", record.args.to)
+              .replace("{TOKEN_ADDRESS}", record.args.tokenAddress ?? "")
+              .replace("{AMOUNT}", record.args.amount ?? "")
+              .replace("{REF_BLOCK_BYTES}", tronTx.refBlockBytes)
+              .replace("{REF_BLOCK_HASH}", tronTx.refBlockHash)
+              .replace("{EXPIRATION}", String(tronTx.expiration));
 
   // dispatchCheckResult per kind (native = not-applicable; TRC-20 = re-run allowlist)
   const dispatchCheckResult = tronTx.kind === "trc20"
