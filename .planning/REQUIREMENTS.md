@@ -222,10 +222,10 @@ Adds TRON support via USB-HID Ledger transport (no WalletConnect — TRON has no
 - [x] **TRON-W-06**: `prepare_tron_stake_vote({ votes: [{ srAddress, count }] })` produces a `VoteWitnessContract` for super-representative voting; best-effort SR-registry lookup labels each candidate
 - [x] **TRON-W-07**: `prepare_tron_stake_claim_rewards` produces a `WithdrawBalanceContract` for accumulated voting rewards
 - [x] **TRON-W-08**: TRON-specific spender-label table extends `src/config/contracts.ts` — SunSwap V2 router + LiFi TRON facet + canonical TRC-20 stablecoin contracts (USDT/USDC/USDD/TUSD) as KnownSpender entries; unknown spender → `(unknown spender — no prior interaction recorded)` label
-- [ ] **TRON-W-09**: `get_sunswap_quote({ inputToken, outputToken, amount, slippageBps? })` returns the SunSwap V2 router quote (out amount, route plan, slippage); `prepare_sunswap_swap({ inputToken, outputToken, amount, slippageBps })` returns an unsigned TriggerSmartContract for the SunSwap V2 router
-- [ ] **TRON-W-10**: Sandwich-MEV defense — `prepare_sunswap_swap` default slippage hint = 50 bps; refuses without explicit `slippageBps` when price impact > 2% (mirrors v2.0 SOL-W-13 Jupiter + v2.6 MEV-01 EVM equivalent)
-- [ ] **TRON-W-11**: `prepare_tron_lifi_swap({ fromChain, fromToken, toChain, toToken, amount, toAddress })` produces an unsigned LiFi-routed bridge transaction; works both directions (TRON → EVM AND EVM → TRON); server-side `decodedFinalRecipient == userSuppliedToAddress` assertion at preview time (Inv #6b extension — mirrors v2.0 SOL-W-21 and v2.6 BRIDGE-T1)
-- [ ] **TRON-W-12**: SunSwap V2 router + LiFi TRON facet program IDs added to `src/security/canonical-dispatch.ts` TRON arm (Layer 0.5 — mirrors v1.3 SEC-35 EVM dispatch-target enforcement + v2.0 SOL-W-09 Solana arm); mismatch refuses at preview time
+- [x] **TRON-W-09**: `get_sunswap_quote({ inputToken, outputToken, amount, slippageBps? })` returns the SunSwap V2 router quote (out amount, route plan, slippage); `prepare_sunswap_swap({ inputToken, outputToken, amount, slippageBps })` returns an unsigned TriggerSmartContract for the SunSwap V2 router
+- [x] **TRON-W-10**: Sandwich-MEV defense — `prepare_sunswap_swap` default slippage hint = 50 bps; refuses without explicit `slippageBps` when price impact > 2% (mirrors v2.0 SOL-W-13 Jupiter + v2.6 MEV-01 EVM equivalent)
+- [ ] **TRON-W-11**: `prepare_tron_lifi_swap({ fromChain, fromToken, toChain, toToken, amount, toAddress })` produces an unsigned LiFi-routed bridge transaction; works both directions (TRON → EVM AND EVM → TRON); server-side `decodedFinalRecipient == userSuppliedToAddress` assertion at preview time (Inv #6b extension — mirrors v2.0 SOL-W-21 and v2.6 BRIDGE-T1) — **🟡 DEFERRED to v2.2.x per Phase 20 D-04b** (researcher 2026-05-20: LiFi `/v1/chains` returned 69 EVM chains with no TRON; GitHub `lifinance/contracts/deployments/` has no `tron*.json`; `/v1/quote?fromChain=TRX` returned error 1011 — see `.planning/phases/20-tron-sunswap-lifi-bridging/20-02-DEFERRED.md`)
+- [ ] **TRON-W-12**: SunSwap V2 router + LiFi TRON facet program IDs added to `src/security/canonical-dispatch.ts` TRON arm (Layer 0.5 — mirrors v1.3 SEC-35 EVM dispatch-target enforcement + v2.0 SOL-W-09 Solana arm); mismatch refuses at preview time — **🟡 PARTIAL: SunSwap V2 router shipped in PR #113 via NEW `TRON_SMARTCONTRACT_DISPATCH_ALLOWLIST` sibling set in `canonical-dispatch-tron.ts` (Open Question #2 design option (a)); LiFi TRON facet portion DEFERRED with TRON-W-11**
 
 #### Diagnostics (TRON-DIAG-*)
 
@@ -482,7 +482,7 @@ Updated during roadmap creation.
 | TRON-PAIR-01/02, TRON-READ-01..03 | Phase 17 (v2.1) | Pending |
 | TRON-PREP-01..04, TRON-W-01/02 | Phase 18 (v2.1) | Pending |
 | TRON-PREP-05, TRON-W-03..08 | Phase 19 (v2.1) | Done (PR #106-#109) |
-| TRON-W-09..12 | Phase 20 (v2.1) | Pending |
+| TRON-W-09..10, TRON-W-12 partial | Phase 20 (v2.1) | Done (PR #113); TRON-W-11 + TRON-W-12 LiFi portion deferred to v2.2.x per D-04b |
 | TRON-READ-04, TRON-DIAG-01 | Phase 21 (v2.1) | Pending |
 | BTC-PAIR-01/02, BTC-READ-01..05, LTC-PAIR-01, LTC-READ-01/02 | Phase 22 (v2.2) | Pending |
 | BTC-PREP-01..03, BTC-PSBT-01/02, BTC-W-01 | Phase 23 (v2.2) | Pending |
