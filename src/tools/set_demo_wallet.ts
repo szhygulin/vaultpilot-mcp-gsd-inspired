@@ -21,9 +21,11 @@
 import { isDemoMode } from "../config/env.js";
 import { PERSONAS } from "../demo/personas.js";
 import { findSolanaPersona } from "../demo/solana-persona.js";
+import { findTronPersona } from "../demo/tron-persona.js";
 import {
   setActivePersona,
   setActiveSolanaPersonaBySlug,
+  setActiveTronPersonaBySlug,
 } from "../demo/state.js";
 import {
   type ErrorCode,
@@ -46,11 +48,11 @@ function errEnvelope(
 
 const DESCRIPTION = [
   "Activate a curated demo wallet persona for simulation flows.",
-  "Use this AFTER get_demo_wallet lists the available personas and the user has picked one (4 EVM: whale / defi-degen / stable-saver / staking-maxi; 1 Solana: solana-whale).",
-  "EVM and Solana active personas are INDEPENDENT — setting an EVM slug does not affect the active Solana persona, and vice versa. Demo-mode EVM read tools route through the active EVM persona; Solana read tools route through the active Solana persona.",
+  "Use this AFTER get_demo_wallet lists the available personas and the user has picked one (4 EVM: whale / defi-degen / stable-saver / staking-maxi; 1 Solana: solana-whale; 1 TRON: tron-whale).",
+  "EVM, Solana, and TRON active personas are INDEPENDENT — setting one chain's slug does not affect the others. Demo-mode EVM read tools route through the active EVM persona; Solana read tools through the active Solana persona; TRON read tools through the active TRON persona.",
   "Do NOT use this in real mode — refuses with WRONG_MODE when no demo-mode signal is active (VAULTPILOT_DEMO env or ~/.vaultpilot-mcp/config.json).",
-  "Do NOT pass arbitrary addresses — the schema enum locks the five slugs; unknown values are rejected at the protocol boundary with -32602 InvalidParams.",
-  "Returns `{ active: { chain, slug, address, description } }` plus a confirmation text block. `chain` is `\"ethereum\"` for EVM personas, `\"solana\"` for the Solana persona; `address` is 0x-hex for EVM, base58 for Solana.",
+  "Do NOT pass arbitrary addresses — the schema enum locks the six slugs; unknown values are rejected at the protocol boundary with -32602 InvalidParams.",
+  "Returns `{ active: { chain, slug, address, description } }` plus a confirmation text block. `chain` is `\"ethereum\"` for EVM personas, `\"solana\"` for the Solana persona, `\"tron\"` for the TRON persona; `address` is 0x-hex for EVM, base58 for Solana, base58check T-prefixed for TRON.",
   "State is process-local — restarting the server drops the active personas; re-call this tool to re-activate.",
   "Failure modes: WRONG_MODE in real mode, INVALID_INPUT for unknown slug (defense-in-depth behind the schema enum).",
 ].join(" ");
@@ -66,9 +68,10 @@ const INPUT_SCHEMA = {
         "stable-saver",
         "staking-maxi",
         "solana-whale",
+        "tron-whale",
       ],
       description:
-        "Persona slug from get_demo_wallet's output. EVM: whale, defi-degen, stable-saver, staking-maxi. Solana: solana-whale.",
+        "Persona slug from get_demo_wallet's output. EVM: whale, defi-degen, stable-saver, staking-maxi. Solana: solana-whale. TRON: tron-whale.",
     },
   },
   required: ["persona"],
@@ -102,10 +105,37 @@ registerTool("set_demo_wallet", DESCRIPTION, INPUT_SCHEMA, (args) => {
     // protocol boundary (src/server.ts) already rejects unknown slugs
     // with JSON-RPC -32602 — this branch is unreachable in production.
     // Test 5 in `test/set-demo-wallet.test.ts` exercises it via direct
-    // handler invocation. The Solana branch (Plan 11-06) routes
-    // `solana-whale` to the Solana persona registry; the existing 4 EVM
-    // slugs keep the existing path (back-compat).
+    // handler invocation. The TRON branch (Plan 17-05) routes
+    // `tron-whale` to the TRON persona registry; the Solana branch
+    // (Plan 11-06) routes `solana-whale` to the Solana persona registry;
+    // the existing 4 EVM slugs keep the existing path (back-compat).
+    //
+    // Branch ordering: non-EVM branches BEFORE the EVM fallthrough so
+    // chain-specific lookups short-circuit cleanly. TRON precedes Solana
+    // (Plan 17-05 ordering — most-recent chain first, mirroring the
+    // PAIR-NEV-* convention).
     const slug = typeof args.persona === "string" ? args.persona : "";
+
+    const tronPersona = findTronPersona(slug);
+    if (tronPersona) {
+      const activated = setActiveTronPersonaBySlug(tronPersona.slug);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `active persona set: ${activated.slug} (${activated.tronAddress})`,
+          },
+        ],
+        structuredContent: {
+          active: {
+            chain: "tron",
+            slug: activated.slug,
+            address: activated.tronAddress,
+            description: activated.description,
+          },
+        },
+      };
+    }
 
     const solanaPersona = findSolanaPersona(slug);
     if (solanaPersona) {

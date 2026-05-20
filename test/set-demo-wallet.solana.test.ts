@@ -116,7 +116,7 @@ describe("set_demo_wallet — Solana slug refused in real mode (T-PERSONA-CONFUS
 });
 
 describe("set_demo_wallet — INPUT_SCHEMA enum includes 'solana-whale' (Plan 11-06)", () => {
-  it("registered tool's inputSchema.enum widens to 5 slugs", () => {
+  it("registered tool's inputSchema.enum contains the Solana slug (membership-only — TRON widening in Plan 17-05 makes a length assertion fragile)", () => {
     const tool = getRegisteredTool("set_demo_wallet");
     if (!tool) throw new Error("set_demo_wallet not registered");
     const schema = tool.inputSchema as {
@@ -128,6 +128,6 @@ describe("set_demo_wallet — INPUT_SCHEMA enum includes 'solana-whale' (Plan 11
     expect(enumValues).toContain("stable-saver");
     expect(enumValues).toContain("staking-maxi");
     expect(enumValues).toContain("solana-whale");
-    expect(enumValues.length).toBe(5);
+    expect(enumValues.length).toBeGreaterThanOrEqual(5);
   });
 });

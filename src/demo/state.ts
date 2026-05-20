@@ -20,6 +20,7 @@
 
 import { PERSONAS, type Persona } from "./personas.js";
 import { findSolanaPersona } from "./solana-persona.js";
+import { findTronPersona } from "./tron-persona.js";
 
 /**
  * Phase 11 — Plan 11-05 carve. The full `SolanaPersona` interface +
@@ -165,6 +166,28 @@ export function setActiveTronPersona(persona: TronPersona): TronPersona {
   }
   activeTronPersona = persona;
   return persona;
+}
+
+/**
+ * Activate a TRON persona by slug — Plan 17-05 surface. Resolves the slug
+ * against the `TRON_PERSONAS` registry in `src/demo/tron-persona.ts`,
+ * then delegates to `setActiveTronPersona`.
+ *
+ * Throws on unknown slug as defense-in-depth behind the JSON-Schema enum
+ * gate at `src/tools/set_demo_wallet.ts` — unreachable in production
+ * through the MCP protocol boundary, but defensible when called from
+ * tests or from a hypothetical future caller. Mirrors the Solana
+ * `setActiveSolanaPersonaBySlug` shape.
+ *
+ * The `tron-persona.ts` registry uses `import type` for `TronPersona`,
+ * so there's no runtime cycle from this file's import of `findTronPersona`.
+ */
+export function setActiveTronPersonaBySlug(slug: string): TronPersona {
+  const persona = findTronPersona(slug);
+  if (!persona) {
+    throw new Error(`unknown TRON persona slug: ${String(slug)}`);
+  }
+  return setActiveTronPersona(persona);
 }
 
 /**
