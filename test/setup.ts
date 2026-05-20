@@ -18,3 +18,8 @@
 // Side-effect-only module — no exports.
 
 process.env.VAULTPILOT_WC_STORAGE = "memory";
+
+// Phase 11 (Plan 11-01) — mirror the WC hermeticity pin for the non-EVM
+// account-store. Tests that need the persist branch override per-test (see
+// `test/non-evm-store.eager-init.test.ts` for the canonical pattern).
+process.env.VAULTPILOT_NON_EVM_STORAGE = "memory";
