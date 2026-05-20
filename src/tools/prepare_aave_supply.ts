@@ -45,8 +45,6 @@ import {
   type ChainId,
   type ChainName,
 } from "../config/contracts.js";
-import { isDemoMode } from "../config/env.js";
-import { getActivePersona } from "../demo/state.js";
 import { encodeAaveSupply } from "../protocols/aave-v3.js";
 import { InvalidAmountError, parseAmountStrict } from "../signing/amount.js";
 import { AAVE_SUPPLY_PREPARE_RECEIPT_TEMPLATE } from "../signing/blocks.js";
@@ -57,8 +55,8 @@ import {
 } from "../signing/error-codes.js";
 import { createHandle } from "../signing/handle-store.js";
 import { computePayloadFingerprint } from "../signing/payload-fingerprint.js";
+import { resolveFrom } from "../signing/resolve-from.js";
 import { loadTokenRegistry } from "../tokens/registry.js";
-import { getStatus } from "../wallet/session-manager.js";
 import { registerTool } from "./index.js";
 
 function errEnvelope(
@@ -81,9 +79,10 @@ const DESCRIPTION = [
   "`onBehalfOf` is hardcoded to the sender (deposit-for-self only in v1.1; the v2.x relayer-supply pattern would widen this).",
   "If preview-time simulation reveals an allowance shortfall (`SIMULATION status: revert` with an `ERC20: insufficient allowance` reason), call `prepare_token_approve({ chain, tokenAddress: asset, spender: <aave-pool-address from get_vaultpilot_config_status>, amount: 'max' })` first, sign the approve on device, then retry this prepare.",
   "Aave V3 supply is clear-signed on Ledger devices (covered by Ledger's ERC-7730 calldata registry on chainId=1); the device displays the asset symbol + amount, no blind-sign required.",
+  "Pass `from` when the user wants to act from a non-default approved account (visible in `get_ledger_status.accountsByChain[chainId]`); otherwise omit and the active account is used. PREPARE RECEIPT surfaces `From:` only when caller-supplied.",
   "Requires a paired Ledger (real mode) or active persona (demo mode).",
   "Returns `{ handle, chain, chainId, from, asset, amount, amountWei, payloadFingerprint }` plus a PREPARE RECEIPT text block surfacing the verbatim args.",
-  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set, INVALID_INPUT if chain/asset/amount malformed (including \"max\" and fractional-overflow vs token decimals), INTERNAL_ERROR if RPC fails resolving an off-list asset's decimals.",
+  "Failure modes: WALLET_NOT_PAIRED if no live session (real mode), WRONG_MODE if demo mode is on but no persona set OR if `from` doesn't match the active persona, INVALID_INPUT if chain/asset/amount/from malformed (including \"max\" and fractional-overflow vs token decimals), INVALID_ACCOUNT if `from` is not in the per-chain approved set, INTERNAL_ERROR if RPC fails resolving an off-list asset's decimals.",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -105,6 +104,12 @@ const INPUT_SCHEMA = {
       type: "string",
       description:
         "Decimal string in human units (e.g. \"100.5\"). The server resolves the asset's decimals via the registry / live RPC. The literal \"max\" is NOT accepted — pass a concrete decimal.",
+    },
+    from: {
+      type: "string",
+      pattern: "^0x[0-9a-fA-F]{40}$",
+      description:
+        "Optional sender address — must be one of the per-chain approved accounts in `get_ledger_status.accountsByChain[chainId]`. Omit to use the active account. In demo mode, must match the active persona's address.",
     },
   },
   required: ["chain", "asset", "amount"],
@@ -155,47 +160,15 @@ registerTool("prepare_aave_supply", DESCRIPTION, INPUT_SCHEMA, async (args) => {
 
     const rawAmount = typeof args.amount === "string" ? args.amount : "";
 
-    // SENDER resolution (Plan 05-02 / Q-CONTRADICTION-PREP Option B):
-    // demo branch SKIPS getStatus() so the spy observes zero calls in the
-    // demo arm. T-DEMO-1 + T-NULL-PERSONA-1 mitigation parity with
-    // prepare_weth_unwrap / prepare_token_send.
-    let fromAddress: Address;
-    if (isDemoMode()) {
-      const persona = getActivePersona();
-      if (persona === null) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text:
-                "error: demo mode is active but no persona set. Call `set_demo_wallet({ persona: \"whale\" | \"defi-degen\" | \"stable-saver\" | \"staking-maxi\" })` first.",
-            },
-          ],
-          structuredContent: errEnvelope(
-            "WRONG_MODE",
-            "demo mode active but no persona set; call set_demo_wallet first",
-          ),
-        };
-      }
-      fromAddress = persona.address;
-    } else {
-      const status = await getStatus();
-      if (status === null) {
-        return {
-          isError: true,
-          content: [
-            {
-              type: "text",
-              text:
-                "error: no live Ledger session. Call `pair_ledger_live` to pair a Ledger via WalletConnect, then retry.",
-            },
-          ],
-          structuredContent: errEnvelope("WALLET_NOT_PAIRED", "no live Ledger session"),
-        };
-      }
-      fromAddress = status.activeAccount;
+    // SENDER resolution (Plan 05-02 + Issue #62): delegated to shared
+    // resolveFrom helper. See prepare_native_send.ts for the full routing.
+    const rawFrom = typeof args.from === "string" ? args.from : undefined;
+    const fromResolution = await resolveFrom({ rawFrom, chainId });
+    if (fromResolution.kind === "error") {
+      return fromResolution.result;
     }
+    const fromAddress: Address = fromResolution.fromAddress;
+    const fromCallerSupplied = fromResolution.callerSupplied;
 
     // Checksum the asset address (server-internal correctness). The receipt
     // surfaces the RAW agent string (T-PREP-RCPT-1 — no normalization).
@@ -277,10 +250,14 @@ registerTool("prepare_aave_supply", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     });
 
     // Phase 8 — Plan 08-02: `{CHAIN}` slot widening.
-    const receipt = AAVE_SUPPLY_PREPARE_RECEIPT_TEMPLATE
+    // Issue #62: append `from:` line ONLY when caller-supplied.
+    const baseReceipt = AAVE_SUPPLY_PREPARE_RECEIPT_TEMPLATE
       .replace("{CHAIN}", `${chainName} (chainId ${chainId})`)
       .replace("{ASSET}", rawAsset)
       .replace("{AMOUNT}", rawAmount);
+    const receipt = fromCallerSupplied
+      ? `${baseReceipt}\n  from:         ${rawFrom}`
+      : baseReceipt;
 
     return {
       content: [{ type: "text", text: receipt }],

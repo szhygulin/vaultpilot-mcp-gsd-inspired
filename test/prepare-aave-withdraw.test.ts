@@ -83,6 +83,7 @@ const PAIRED_STATUS = {
   address: ANVIL_1,
   chainId: 1,
   sessionTopicLast8: "deadbeef",
+  accountsByChain: { 1: [ANVIL_1] } as Record<number, `0x${string}`[]>,
 };
 
 const USDC_CHECKSUMMED = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
@@ -304,5 +305,108 @@ describe("prepare_aave_withdraw — register-all wiring (smoke)", () => {
     const target = path.resolve(here, "..", "src", "tools", "register-all.ts");
     const source = await fs.readFile(target, "utf8");
     expect(source).toContain('import "./prepare_aave_withdraw.js";');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Issue #62 — optional `from` parameter. Aave withdraw embeds `from` into the
+// calldata as the `to` recipient (explicit-self-recipient lock), so a
+// DIFFERENT `from` legitimately changes the fingerprint. The re-anchor
+// assertion holds only when `from === active account`.
+// ---------------------------------------------------------------------------
+describe("prepare_aave_withdraw — optional `from` param (Issue #62)", () => {
+  // Canonical EIP-55 checksum (resolver checksums supplied input via
+  // viem.getAddress before returning; the structuredContent surfaces the
+  // checksummed form).
+  const SECOND_ACCOUNT = "0x742d35CC6634C0532925A3b844Bc9e7595f06b9D" as `0x${string}`;
+  const NOT_IN_SESSION = "0xabcDEF0123456789aBCdef0123456789AbCdEF01" as `0x${string}`;
+  const MULTI_ACCOUNT_STATUS = {
+    ...PAIRED_STATUS,
+    accounts: [ANVIL_1, SECOND_ACCOUNT],
+    accountsByChain: { 1: [ANVIL_1, SECOND_ACCOUNT] } as Record<number, `0x${string}`[]>,
+  };
+
+  it("supplied + matches active → fingerprint anchors to Fixture H; receipt includes `from:`", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callTool({
+      asset: USDC_CHECKSUMMED,
+      amount: FIXTURE_H_AMOUNT,
+      from: ANVIL_1,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { from: string; payloadFingerprint: string };
+    expect(sc.from).toBe(ANVIL_1);
+    expect(sc.payloadFingerprint).toBe(FIXTURE_H_FINGERPRINT);
+    expect(result.content[0]?.text ?? "").toContain(`from:         ${ANVIL_1}`);
+  });
+
+  it("supplied + different approved account → fingerprint differs (calldata `to` is the new from)", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callTool({
+      asset: USDC_CHECKSUMMED,
+      amount: FIXTURE_H_AMOUNT,
+      from: SECOND_ACCOUNT,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { from: string; payloadFingerprint: string };
+    expect(sc.from).toBe(SECOND_ACCOUNT);
+    expect(sc.payloadFingerprint).not.toBe(FIXTURE_H_FINGERPRINT);
+  });
+
+  it("supplied + NOT in approved set → INVALID_ACCOUNT", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callTool({
+      asset: USDC_CHECKSUMMED,
+      amount: FIXTURE_H_AMOUNT,
+      from: NOT_IN_SESSION,
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "INVALID_ACCOUNT",
+    );
+    expect(createHandleSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("supplied + malformed → INVALID_INPUT", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callTool({
+      asset: USDC_CHECKSUMMED,
+      amount: FIXTURE_H_AMOUNT,
+      from: "0xZZZ",
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "INVALID_INPUT",
+    );
+    expect(createHandleSpy).toHaveBeenCalledTimes(0);
+  });
+
+  it("omitted → byte-identical to today; receipt does NOT include `from:`", async () => {
+    getStatusSpy.mockResolvedValueOnce(MULTI_ACCOUNT_STATUS);
+    const result = await callTool({ asset: USDC_CHECKSUMMED, amount: FIXTURE_H_AMOUNT });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0]?.text ?? "").not.toMatch(/^\s*from:/im);
+  });
+
+  it("demo + `from` does NOT match persona → WRONG_MODE", async () => {
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    setActivePersona("whale");
+
+    const result = await callTool({
+      asset: USDC_CHECKSUMMED,
+      amount: FIXTURE_H_AMOUNT,
+      from: SECOND_ACCOUNT,
+    });
+
+    expect(result.isError).toBe(true);
+    expect((result.structuredContent as { errorCode: string }).errorCode).toBe(
+      "WRONG_MODE",
+    );
   });
 });
