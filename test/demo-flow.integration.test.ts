@@ -283,9 +283,10 @@ describe("demo flow — prepare → preview → send simulation under whale pers
     expect(previewedLookup.record.pinned!.previewToken).toBe(previewToken);
     expect(previewedLookup.record.payloadFingerprint).toBe(FIXTURE_PAYLOAD_FINGERPRINT);
 
-    // LEDGER BLIND-SIGN HASH block emitted in the response text.
+    // Issue #63: ledger block emitted in the response text under the new
+    // EXPECTED LEDGER DEVICE DISPLAY header (temporal-flow correction).
     const previewText = previewResult.content[0]?.text ?? "";
-    expect(previewText).toContain("LEDGER BLIND-SIGN");
+    expect(previewText).toContain("EXPECTED LEDGER DEVICE DISPLAY");
     expect(previewText).toContain(FIXTURE_PRESIGN_HASH);
 
     // --- ACT 3: send under demo mode (simulation envelope) ---

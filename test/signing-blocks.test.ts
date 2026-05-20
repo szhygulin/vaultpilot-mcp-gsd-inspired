@@ -41,7 +41,7 @@ describe("PREPARE_RECEIPT_TEMPLATE — verbatim substitution (PREP-02, T-PREP-RC
 });
 
 describe("LEDGER_BLIND_SIGN_HASH_TEMPLATE — A1 mitigation: emit BOTH forms", () => {
-  it("contains both {HASH_FULL} and {HASH_CHUNKED} placeholders + safety prose", () => {
+  it("contains both {HASH_FULL} and {HASH_CHUNKED} placeholders + post-send temporal-flow prose (issue #63)", () => {
     const hashFull = "0xb28e48247c132650294459b31a5ad7e4e9ad187abb0f984388629b2c29e27e85";
     const hashChunked = chunkHex(hashFull);
 
@@ -50,23 +50,38 @@ describe("LEDGER_BLIND_SIGN_HASH_TEMPLATE — A1 mitigation: emit BOTH forms", (
       hashChunked,
     );
 
-    expect(output).toContain("Expected on-device hash (full):");
-    expect(output).toContain("Expected on-device hash (chunked):");
+    // Issue #63: header reframes the block as a PREDICTION of what the
+    // device will display AFTER send, not a hash to compare against the
+    // dark-at-preview-time device screen.
+    expect(output).toMatch(/EXPECTED LEDGER DEVICE DISPLAY \(after you say "send"\)/);
+    expect(output).toContain("Predicted hash (full):");
+    expect(output).toContain("Predicted hash (chunked):");
     // Full hex on its own row (note the \s+ between label and hex).
     expect(output).toMatch(
-      /Expected on-device hash \(full\):\s+0xb28e48247c132650294459b31a5ad7e4e9ad187abb0f984388629b2c29e27e85/,
+      /Predicted hash \(full\):\s+0xb28e48247c132650294459b31a5ad7e4e9ad187abb0f984388629b2c29e27e85/,
     );
     // Chunked form on its own row.
-    expect(output).toMatch(/Expected on-device hash \(chunked\):\s+b28e 4824/);
-    expect(output).toContain("Match this hash CHARACTER-FOR-CHARACTER");
-    // Phrase wraps across two lines ("do —\nnot approve…"); use \s+ between
-    // tokens per the String-Template Test Pitfall rule.
-    expect(output.toLowerCase()).toMatch(/do\s+not\s+approve\s+on\s+the\s+device/);
+    expect(output).toMatch(/Predicted hash \(chunked\):\s+b28e 4824/);
+    // The temporal-flow correction: device dark NOW, comparison is post-send.
+    expect(output).toMatch(/device screen is dark\s+right now/);
+    expect(output).toMatch(/until\s+send_transaction\s+fires/);
+    // The 6-step sequence names the post-send on-device ritual.
+    expect(output).toMatch(/1\.\s+You tell the agent "send"/);
+    expect(output).toMatch(/2\.\s+send_transaction fires the WalletConnect request/);
+    expect(output).toMatch(/3\.\s+Ledger Live wakes your hardware device/);
+    expect(output).toMatch(/4\.\s+The device displays a hash/);
+    expect(output).toMatch(/5\.\s+You compare the device screen/);
+    expect(output).toMatch(/character-for-character/);
+    expect(output).toMatch(/REJECT on the device \(tamper signal\)/);
+    // Ledger Live vs Ledger device disambiguation — root cause of the
+    // agent's "open Ledger Live" mistake.
+    expect(output).toMatch(/DO NOT confuse Ledger Live.*with the Ledger\s+device/);
+    expect(output).toMatch(/The hash to compare is on the\s+DEVICE, not in Ledger Live/);
   });
 });
 
 describe("AGENT_TASK_TEMPLATE — verbatim substitution (PREP-05, T-AGENT-1)", () => {
-  it("contains the four checks + CHECKS PERFORMED prose + halt-on-failure instruction", () => {
+  it("contains the four checks + split CHECKS PERFORMED prose (pre-send agent / post-send user) + halt-on-failure instruction (issue #63)", () => {
     const to = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8";
     const valueWei = "1000000000000000000";
     const presignHash = "0xb28e48247c132650294459b31a5ad7e4e9ad187abb0f984388629b2c29e27e85";
@@ -78,20 +93,46 @@ describe("AGENT_TASK_TEMPLATE — verbatim substitution (PREP-05, T-AGENT-1)", (
     expect(output).toContain("[AGENT TASK — RUN THESE CHECKS NOW]");
     expect(output).toContain("viem.parseTransaction");
     expect(output).toContain("viem.serializeTransaction");
-    expect(output).toContain("CHECKS PERFORMED");
+    // Issue #63: CHECKS PERFORMED split into two sections.
+    expect(output).toContain("CHECKS PERFORMED (pre-send, by agent)");
+    expect(output).toContain("USER MUST PERFORM (post-send, on device)");
+    // The post-send section instructs the user to compare device screen vs
+    // PREDICTED hash above — the cryptographic-anchor ritual at the moment
+    // it is operationally possible.
+    expect(output).toMatch(/After saying "send", your Ledger device screen will display a hash\./);
+    expect(output).toMatch(/Compare it to the PREDICTED hash above\./);
+    expect(output).toMatch(/Approve only if they match\./);
+    // The "matches LEDGER block" line is renamed to "matches predicted" so
+    // pre-send agent checks do not claim to anchor against the device.
+    expect(output).toMatch(/matches predicted:\s+<yes \/ no \/ error>/);
     expect(output).toContain("halt and report the failure");
     // All three placeholders substituted — no `{` left over.
     expect(output.includes("{")).toBe(false);
   });
 });
 
-describe("VERIFY_BEFORE_SIGNING_TEMPLATE — constant prose summary", () => {
-  it("contains all four cross-check artifacts + cancellation instruction", () => {
+describe("VERIFY_BEFORE_SIGNING_TEMPLATE — 6-step temporal sequence (issue #63)", () => {
+  it("contains pre-send pre-flight + post-send on-device ritual + cancellation instruction", () => {
     expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toContain("VERIFY BEFORE SIGNING");
+    // Pre-send pre-flight phase — the local checks the user does before
+    // saying "send".
+    expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toMatch(/Pre-send pre-flight/);
     expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toContain("PREPARE RECEIPT");
-    expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toContain("LEDGER BLIND-SIGN HASH");
-    expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toContain("CHECKS PERFORMED");
+    expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toContain("CHECKS PERFORMED (pre-send, by agent)");
+    expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toContain("EXPECTED LEDGER DEVICE DISPLAY");
     expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toContain('userDecision: "cancel"');
+    // Post-send on-device ritual — the 6 numbered steps.
+    expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toMatch(/Post-send on-device ritual/);
+    expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toMatch(/1\.\s+You say "send"/);
+    expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toMatch(/2\.\s+Ledger Live routes/);
+    expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toMatch(/3\.\s+Your hardware device wakes/);
+    expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toMatch(
+      /4\.\s+You compare the device screen[\s\S]*character-for-character/,
+    );
+    expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toMatch(/5\.\s+If they match → approve on the device/);
+    expect(VERIFY_BEFORE_SIGNING_TEMPLATE).toMatch(
+      /6\.\s+If they differ → REJECT on the device\. This is a tamper signal/,
+    );
   });
 });
 

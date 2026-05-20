@@ -67,20 +67,52 @@ export const PREPARE_RECEIPT_TEMPLATE: string = [
 // Per research A1, a device may chunk or truncate the display. We emit BOTH
 // the unbroken 0x-prefixed hex AND the 16-group chunked form so the user
 // can match either way regardless of how the device renders.
+//
+// Issue #63 — temporal-flow correction. The previous wording instructed the
+// user to compare the predicted hash against the device screen AT PREVIEW
+// TIME, but no WC `eth_sendTransaction` request has been transmitted yet —
+// the device screen is dark. The comparison ritual is operationally possible
+// only AFTER `send_transaction` fires the WC request and the device wakes.
+// Rewrite states the temporal flow explicitly so the agent + user perform
+// the cryptographic-anchor check at the moment it actually exists.
 export const LEDGER_BLIND_SIGN_HASH_TEMPLATE: string = [
-  "LEDGER BLIND-SIGN HASH",
-  "  Expected on-device hash (full):    {HASH_FULL}",
-  "  Expected on-device hash (chunked): {HASH_CHUNKED}",
+  'EXPECTED LEDGER DEVICE DISPLAY (after you say "send")',
   "",
-  "Match this hash CHARACTER-FOR-CHARACTER against the value your Ledger device",
-  "displays in blind-sign mode. The chunked form (4-char groups) helps when the",
-  "device wraps or truncates the display. Any mismatch is a tamper signal — do",
-  "not approve on the device if the hashes differ.",
+  "  Predicted hash (full):    {HASH_FULL}",
+  "  Predicted hash (chunked): {HASH_CHUNKED}",
+  "",
+  "This is what your Ledger HARDWARE DEVICE will display in blind-sign mode AFTER",
+  'you say "send" and the request reaches the device. The device screen is dark',
+  "right now — there is nothing to compare against until send_transaction fires.",
+  "",
+  "Sequence:",
+  '  1. You tell the agent "send" (or "cancel" to abort cleanly with no broadcast)',
+  "  2. send_transaction fires the WalletConnect request to Ledger Live",
+  "  3. Ledger Live wakes your hardware device",
+  "  4. The device displays a hash on its physical screen",
+  "  5. You compare the device screen to the PREDICTED hash above —",
+  "     character-for-character",
+  "  6. If they match → approve on the device",
+  "     If they differ → REJECT on the device (tamper signal)",
+  "",
+  "The cryptographic trust anchor is step 5: YOUR EYES comparing the predicted",
+  "hash above against the hash your physical device displays. Steps 1-4 are the",
+  "agent + this MCP + WalletConnect + Ledger Live — all untrusted relays. Only",
+  "the device screen at step 4 is the trusted display.",
+  "",
+  "DO NOT confuse Ledger Live (desktop app, routes WC requests) with the Ledger",
+  "device (hardware screen, trusted display). The hash to compare is on the",
+  "DEVICE, not in Ledger Live.",
 ].join("\n");
 
 // AGENT TASK (PREP-05 — verbatim prose from research § Pattern 2 lines 364–384).
 // The agent runs the four checks LOCALLY using viem (does not delegate to
-// the server) and emits a `CHECKS PERFORMED` block before the confirm prompt.
+// the server) and emits a `CHECKS PERFORMED (pre-send, by agent)` block
+// before the confirm prompt. Issue #63 temporal-flow correction: the block
+// splits pre-send (agent-runs local cryptographic checks) from post-send
+// (user compares device screen vs the predicted hash after send_transaction
+// fires) so the user is not asked to perform an on-device match at a moment
+// when the device is dark.
 export const AGENT_TASK_TEMPLATE: string = [
   "[AGENT TASK — RUN THESE CHECKS NOW]",
   "Before asking the user to confirm, perform the following local verification",
@@ -91,27 +123,47 @@ export const AGENT_TASK_TEMPLATE: string = [
   "  3. Recompute keccak256(viem.serializeTransaction(decoded)) and confirm it",
   "     equals {PRESIGN_HASH}.",
   "",
-  "Report results to the user in a `CHECKS PERFORMED` block before the confirm",
-  "prompt. Format:",
+  "Report results to the user in a two-part block before the confirm prompt.",
+  "Format:",
   "",
-  "  CHECKS PERFORMED",
+  "  CHECKS PERFORMED (pre-send, by agent)",
   "    decoded.to:           <value or `error: …`>",
   "    decoded.value:        <value or `error: …`>",
   "    recomputed presign:   <value or `error: …`>",
-  "    matches LEDGER block: <yes / no / error>",
+  "    matches predicted:    <yes / no / error>",
   "",
-  "If any check fails, halt and report the failure to the user — do not send.",
+  "  USER MUST PERFORM (post-send, on device)",
+  '    After saying "send", your Ledger device screen will display a hash.',
+  "    Compare it to the PREDICTED hash above. Approve only if they match.",
+  "",
+  "If any pre-send check fails, halt and report the failure to the user — do",
+  "not send.",
 ].join("\n");
 
 // VERIFY BEFORE SIGNING — used by 04-03 + 04-05 as a user-facing summary of
 // every cross-check artifact the user should read before approving on the
-// device. No placeholders — constant prose.
+// device. No placeholders — constant prose. Issue #63: rewritten as a
+// 6-step temporal sequence (pre-send pre-flight → say send → WC routes →
+// device wakes → user compares → approve OR reject on device) so the
+// on-device cryptographic-anchor check sits at the moment the device is
+// actually displaying a hash.
 export const VERIFY_BEFORE_SIGNING_TEMPLATE: string = [
   "VERIFY BEFORE SIGNING",
-  "  1. Read the PREPARE RECEIPT — these are the args the agent passed, verbatim.",
-  "  2. Read the LEDGER BLIND-SIGN HASH — match against your device screen.",
-  "  3. Read the CHECKS PERFORMED block the agent emits in its response.",
-  '  4. If anything disagrees, call send_transaction with userDecision: "cancel".',
+  "  Pre-send pre-flight (now, before you say \"send\"):",
+  "    a. Read the PREPARE RECEIPT — these are the args the agent passed, verbatim.",
+  "    b. Read the CHECKS PERFORMED (pre-send, by agent) block — every line must say yes.",
+  "    c. Note the EXPECTED LEDGER DEVICE DISPLAY hash above — you will compare it",
+  "       against your physical device in step 4.",
+  '    d. If anything disagrees, call send_transaction with userDecision: "cancel".',
+  "",
+  "  Post-send on-device ritual (the 6-step sequence):",
+  '    1. You say "send" — send_transaction fires the WalletConnect request.',
+  "    2. Ledger Live routes the request to your hardware device.",
+  "    3. Your hardware device wakes and displays a hash on its physical screen.",
+  "    4. You compare the device screen to the PREDICTED hash above,",
+  "       character-for-character.",
+  "    5. If they match → approve on the device.",
+  "    6. If they differ → REJECT on the device. This is a tamper signal.",
 ].join("\n");
 
 /**
@@ -342,8 +394,9 @@ export const LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE: string = [
   "    1. Open the Ethereum app on your device",
   "    2. Settings → Blind signing → Enabled",
   "    3. Retry send_transaction",
-  "  Match the LEDGER BLIND-SIGN HASH below CHARACTER-FOR-CHARACTER against",
-  "  the value your device displays — this is the cryptographic anchor.",
+  "  After send_transaction fires, compare the PREDICTED hash below to the",
+  "  value your hardware device displays — character-for-character. This",
+  "  on-device match is the cryptographic anchor.",
 ].join("\n");
 
 /**
@@ -469,7 +522,8 @@ export function buildSimulationBlock(result: SimulationResult): string {
     "          the transaction would fail when broadcast — review the args",
     "          before confirming. An 'ok' status does NOT guarantee broadcast",
     "          success (gas/nonce drift can still revert). The trust anchor is",
-    "          the LEDGER BLIND-SIGN HASH match above, not this simulation.",
+    "          the post-send on-device hash match (compare your device screen",
+    "          to the PREDICTED hash above), not this simulation.",
   );
   return lines.join("\n");
 }

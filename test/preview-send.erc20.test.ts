@@ -311,7 +311,7 @@ describe("preview_send — SIMULATION block (DF-1 LOCKED wide scope)", () => {
     expect(result.isError).toBeFalsy();
     const text = result.content[0]?.text ?? "";
     // LEDGER block intact — trust anchor preserved.
-    expect(text).toContain("LEDGER BLIND-SIGN HASH");
+    expect(text).toContain("EXPECTED LEDGER DEVICE DISPLAY");
     // AGENT TASK + 4byte present.
     expect(text).toContain("[AGENT TASK");
     expect(text).toContain("4BYTE CROSS-CHECK");
@@ -334,7 +334,7 @@ describe("preview_send — SIMULATION block (DF-1 LOCKED wide scope)", () => {
 
     expect(result.isError).toBeFalsy();
     const text = result.content[0]?.text ?? "";
-    expect(text).toContain("LEDGER BLIND-SIGN HASH"); // trust anchor still present
+    expect(text).toContain("EXPECTED LEDGER DEVICE DISPLAY"); // trust anchor still present
     expect(text).toContain("status: error");
     expect(text).toContain("network timeout");
 
@@ -375,7 +375,7 @@ describe("preview_send — native-send regression (Phase 4 didn't break)", () =>
     // SIMULATION block IS present (native sends ALSO simulate).
     expect(text).toContain("SIMULATION (preview-time eth_call)");
     // Phase 4 block contract still holds.
-    expect(text).toContain("LEDGER BLIND-SIGN HASH");
+    expect(text).toContain("EXPECTED LEDGER DEVICE DISPLAY");
     expect(text).toContain("[AGENT TASK");
     expect(text).toContain("4BYTE CROSS-CHECK");
   });
@@ -648,10 +648,11 @@ describe("preview_send — Plan 06-04 — LEDGER NOTICE block (research § Topic
     );
     expect(text).toContain("Settings → Blind signing → Enabled");
 
-    // NOTICE appears BEFORE the LEDGER BLIND-SIGN HASH block (top-of-response
-    // discipline — actionable prerequisites precede artifacts to verify).
+    // NOTICE appears BEFORE the EXPECTED LEDGER DEVICE DISPLAY block (top-of-
+    // response discipline — actionable prerequisites precede artifacts to
+    // verify). Issue #63 renamed the ledger block header.
     const noticeIdx = text.indexOf("LEDGER NOTICE");
-    const hashIdx = text.indexOf("LEDGER BLIND-SIGN HASH");
+    const hashIdx = text.indexOf("EXPECTED LEDGER DEVICE DISPLAY");
     expect(noticeIdx).toBeGreaterThanOrEqual(0);
     expect(hashIdx).toBeGreaterThan(noticeIdx);
 
@@ -720,7 +721,7 @@ describe("preview_send — Plan 06-04 — insufficient-WETH revert simulation (T
     expect(result.isError).toBeFalsy();
     const text = result.content[0]?.text ?? "";
     // LEDGER block intact — trust anchor preserved.
-    expect(text).toContain("LEDGER BLIND-SIGN HASH");
+    expect(text).toContain("EXPECTED LEDGER DEVICE DISPLAY");
     // NOTICE block intact — actionable prerequisite preserved.
     expect(text).toContain("LEDGER NOTICE");
     // SIMULATION shows revert.
