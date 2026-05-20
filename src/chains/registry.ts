@@ -12,6 +12,15 @@
 //       and `alchemy`; provider name is `.toLowerCase()`-normalized.
 //       Unknown provider names log once-per-process to stderr and fall
 //       through to PublicNode.
+//   (2.5) Inferred-provider fan-out: if neither (1) for THIS chain nor (2)
+//       is set, scan the per-chain overrides that ARE set in chain-id
+//       ascending order [1, 10, 137, 8453, 42161]; if any matches a known
+//       provider URL shape (Infura / Alchemy), extract the key and use
+//       `PROVIDER_TEMPLATES[provider][chainId]` for chains without their
+//       own per-chain override. First match wins; inference runs once per
+//       process. Source chain still resolves via its (1) override. Logs
+//       once-per-process to stderr naming the source chain + fan-out set
+//       (key value never logged).
 //   (3) PublicNode public RPC per chain — final fallback. Once-per-chain
 //       stderr warning instructs the operator to configure the chain-
 //       specific env var or the `RPC_PROVIDER` shorthand for production.
@@ -114,6 +123,130 @@ const warnedFallbackByChain = new Set<ChainId>();
 const warnedUnknownProvider = new Set<string>();
 
 /**
+ * Inferred-provider memo (tier 2.5). Computed once per process on first
+ * call to `getInferredProviderFanOut()`; subsequent calls return the
+ * cached result. `null` ⇒ inference attempted and produced nothing (no
+ * per-chain URL matched Infura / Alchemy shape, OR `RPC_PROVIDER`+key
+ * shorthand is set so inference is preempted).
+ */
+let cachedInferredProvider:
+  | { provider: "infura" | "alchemy"; key: string; sourceChainId: ChainId }
+  | null
+  | undefined;
+
+/**
+ * Chain-id ascending iteration order for inference scanning. Deterministic
+ * "first-match wins" tiebreaker when two per-chain URLs carry different
+ * keys (documented invariant — see file header tier 2.5).
+ */
+const INFERENCE_SCAN_ORDER: ChainId[] = [1, 10, 137, 8453, 42161];
+
+const CHAIN_NAMES: Record<ChainId, string> = {
+  1: "ethereum",
+  42161: "arbitrum",
+  137: "polygon",
+  8453: "base",
+  10: "optimism",
+};
+
+const CHAIN_ENV_VAR_NAMES: Record<ChainId, string> = {
+  1: "ETHEREUM_RPC_URL",
+  42161: "ARBITRUM_RPC_URL",
+  137: "POLYGON_RPC_URL",
+  8453: "BASE_RPC_URL",
+  10: "OPTIMISM_RPC_URL",
+};
+
+/**
+ * Provider URL-shape patterns for tier-2.5 inference. The capture group
+ * extracts the API key verbatim from a per-chain RPC URL. Self-hosted /
+ * custom URLs do not match either pattern → inference returns undefined
+ * for them and those chains fall through to PublicNode.
+ *
+ * Patterns are intentionally narrow: subdomain segment `[a-z-]+` rejects
+ * anything that isn't a lower-case provider subdomain; the key segment
+ * `[A-Za-z0-9_-]+` accepts the alphanumeric+`_`+`-` keys both providers
+ * issue.
+ */
+const PROVIDER_URL_PATTERNS: { provider: "infura" | "alchemy"; re: RegExp }[] = [
+  { provider: "infura", re: /^https:\/\/[a-z-]+\.infura\.io\/v3\/([A-Za-z0-9_-]+)\/?$/ },
+  { provider: "alchemy", re: /^https:\/\/[a-z-]+\.g\.alchemy\.com\/v2\/([A-Za-z0-9_-]+)\/?$/ },
+];
+
+/**
+ * Internal helper. Tier-2.5 inference: scans per-chain RPC URL env vars
+ * in chain-id ascending order; the first URL that matches a known provider
+ * shape (Infura / Alchemy) wins. Returns `{provider, key, sourceChainId}`
+ * or `null`. Memoized once-per-process — `_resetChainRegistryForTesting`
+ * clears the memo.
+ *
+ * Preempted by `RPC_PROVIDER` + `RPC_API_KEY` shorthand: if both are set,
+ * inference is skipped and returns `null` (the explicit shorthand is
+ * tier 2 and wins over inference).
+ *
+ * Spyable via `_registry.getInferredProviderFanOut` for tests.
+ */
+function getInferredProviderFanOut():
+  | { provider: "infura" | "alchemy"; key: string; sourceChainId: ChainId }
+  | null {
+  if (cachedInferredProvider !== undefined) return cachedInferredProvider;
+
+  // Tier-2 shorthand preempts inference. If RPC_PROVIDER + RPC_API_KEY are
+  // both set, `getProviderShorthandUrl` covers every chain that has no
+  // per-chain override; inference would be redundant.
+  if (getRpcProvider() && getRpcApiKey()) {
+    cachedInferredProvider = null;
+    return null;
+  }
+
+  for (const chainId of INFERENCE_SCAN_ORDER) {
+    const resolver = RPC_URL_RESOLVERS[chainId];
+    const url = resolver();
+    if (!url) continue;
+    for (const { provider, re } of PROVIDER_URL_PATTERNS) {
+      const m = url.match(re);
+      const key = m?.[1];
+      if (key) {
+        const result = { provider, key, sourceChainId: chainId };
+        cachedInferredProvider = result;
+        const destChains = INFERENCE_SCAN_ORDER
+          .filter(
+            (id) => id !== chainId && RPC_URL_RESOLVERS[id]() === undefined,
+          )
+          .map((id) => CHAIN_NAMES[id]);
+        if (destChains.length > 0) {
+          log(
+            "info",
+            `Inferred ${provider} key from ${CHAIN_ENV_VAR_NAMES[chainId]} and fanned out to: ${destChains.join(", ")} (key value not logged)`,
+          );
+        }
+        return result;
+      }
+    }
+  }
+
+  cachedInferredProvider = null;
+  return null;
+}
+
+/**
+ * Internal helper. Returns the tier-2.5 inferred URL for `chainId` if
+ * inference produced a provider AND `chainId` is NOT the source chain
+ * (the source chain already has its own per-chain override and resolves
+ * via tier 1). Otherwise returns `undefined`.
+ *
+ * Spyable via `_registry.getInferredProviderUrl` for tests.
+ */
+function getInferredProviderUrl(chainId: ChainId): string | undefined {
+  const inferred = _registry.getInferredProviderFanOut();
+  if (!inferred) return undefined;
+  if (inferred.sourceChainId === chainId) return undefined;
+  const template = PROVIDER_TEMPLATES[inferred.provider]?.[chainId];
+  if (!template) return undefined;
+  return template.replace("{key}", inferred.key);
+}
+
+/**
  * Internal helper. Resolves `RPC_PROVIDER` + `RPC_API_KEY` into a
  * per-chain URL via `PROVIDER_TEMPLATES[provider.toLowerCase()][chainId]`.
  * Returns `undefined` when either env var is unset, or when the provider
@@ -157,9 +290,16 @@ export function getChainClient(chainId: ChainId): PublicClient {
 
   const override = RPC_URL_RESOLVERS[chainId]();
   const providerShorthand = _registry.getProviderShorthandUrl(chainId);
-  const url = override ?? providerShorthand ?? PUBLICNODE_RPC_URLS[chainId];
+  const inferred =
+    override === undefined && providerShorthand === undefined
+      ? _registry.getInferredProviderUrl(chainId)
+      : undefined;
+  const url =
+    override ?? providerShorthand ?? inferred ?? PUBLICNODE_RPC_URLS[chainId];
   const usedFallback =
-    override === undefined && providerShorthand === undefined;
+    override === undefined &&
+    providerShorthand === undefined &&
+    inferred === undefined;
   cachedFallbackByChain.set(chainId, usedFallback);
 
   if (usedFallback && !warnedFallbackByChain.has(chainId)) {
@@ -204,6 +344,7 @@ export function _resetChainRegistryForTesting(): void {
   cachedFallbackByChain.clear();
   warnedFallbackByChain.clear();
   warnedUnknownProvider.clear();
+  cachedInferredProvider = undefined;
 }
 
 /**
@@ -221,9 +362,15 @@ export function hasRpcConfiguredForChain(chainId: ChainId): boolean {
   if (RPC_URL_RESOLVERS[chainId]() !== undefined) return true;
   const provider = getRpcProvider();
   const key = getRpcApiKey();
-  if (!provider || !key) return false;
-  const normalized = provider.toLowerCase();
-  return PROVIDER_TEMPLATES[normalized] !== undefined;
+  if (provider && key) {
+    const normalized = provider.toLowerCase();
+    if (PROVIDER_TEMPLATES[normalized] !== undefined) return true;
+  }
+  // Tier 2.5 — inferred-provider fan-out covers chains without their own
+  // per-chain override when ANOTHER chain's override URL matches a known
+  // provider shape.
+  if (_registry.getInferredProviderUrl(chainId) !== undefined) return true;
+  return false;
 }
 
 /**
@@ -237,6 +384,8 @@ export function hasRpcConfiguredForChain(chainId: ChainId): boolean {
  */
 export const _registry = {
   getProviderShorthandUrl,
+  getInferredProviderFanOut,
+  getInferredProviderUrl,
   getChainClient,
   isPublicNodeFallback,
   hasRpcConfiguredForChain,

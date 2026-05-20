@@ -281,3 +281,209 @@ describe("src/chains/registry.ts — hasRpcConfiguredForChain", () => {
     expect(hasRpcConfiguredForChain(10)).toBe(false);
   });
 });
+
+// Tier-2.5 inferred-provider fan-out. If a user sets only one chain's RPC
+// URL to an Infura / Alchemy URL, the same key resolves the other 4 chains
+// via PROVIDER_TEMPLATES — eliminating the silent PublicNode fallback on
+// the unconfigured chains.
+describe("src/chains/registry.ts — inferred-provider fan-out (tier 2.5)", () => {
+  it("Test 16 — only ETHEREUM_RPC_URL=<infura> set → all 5 chains resolve to Infura URLs with the same key; ethereum uses its own override; other 4 use templates", () => {
+    process.env.ETHEREUM_RPC_URL = "https://mainnet.infura.io/v3/INFURA_KEY";
+
+    expect(getChainClient(1).transport.url).toBe(
+      "https://mainnet.infura.io/v3/INFURA_KEY",
+    );
+    expect(getChainClient(42161).transport.url).toBe(
+      "https://arbitrum-mainnet.infura.io/v3/INFURA_KEY",
+    );
+    expect(getChainClient(137).transport.url).toBe(
+      "https://polygon-mainnet.infura.io/v3/INFURA_KEY",
+    );
+    expect(getChainClient(8453).transport.url).toBe(
+      "https://base-mainnet.infura.io/v3/INFURA_KEY",
+    );
+    expect(getChainClient(10).transport.url).toBe(
+      "https://optimism-mainnet.infura.io/v3/INFURA_KEY",
+    );
+
+    // No chain is in PublicNode-fallback state — rpcDegraded source is
+    // false for every chain.
+    expect(isPublicNodeFallback(1)).toBe(false);
+    expect(isPublicNodeFallback(42161)).toBe(false);
+    expect(isPublicNodeFallback(137)).toBe(false);
+    expect(isPublicNodeFallback(8453)).toBe(false);
+    expect(isPublicNodeFallback(10)).toBe(false);
+
+    // hasRpcConfiguredForChain reports true for the inferred chains too —
+    // get_vaultpilot_config_status's configuredChains map is correct.
+    expect(hasRpcConfiguredForChain(1)).toBe(true);
+    expect(hasRpcConfiguredForChain(42161)).toBe(true);
+    expect(hasRpcConfiguredForChain(137)).toBe(true);
+    expect(hasRpcConfiguredForChain(8453)).toBe(true);
+    expect(hasRpcConfiguredForChain(10)).toBe(true);
+
+    // Once-per-process stderr info log naming source + destinations (in
+    // chain-id ascending scan order: 10/137/8453/42161 = optimism, polygon,
+    // base, arbitrum — ethereum is the source so excluded).
+    expect(stderrBuf).toMatch(
+      /Inferred infura key from ETHEREUM_RPC_URL and fanned out to: optimism, polygon, base, arbitrum/,
+    );
+    // Key value MUST NOT appear in the log.
+    expect(stderrBuf).not.toMatch(/INFURA_KEY/);
+
+    // Once-per-process: a second resolution does NOT re-log.
+    const after1 = stderrBuf;
+    getChainClient(42161);
+    getChainClient(137);
+    expect(stderrBuf).toBe(after1);
+  });
+
+  it("Test 17 — only ARBITRUM_RPC_URL=<alchemy> set → all 5 chains resolve to Alchemy URLs", () => {
+    process.env.ARBITRUM_RPC_URL =
+      "https://arb-mainnet.g.alchemy.com/v2/ALCHEMY_KEY";
+
+    expect(getChainClient(42161).transport.url).toBe(
+      "https://arb-mainnet.g.alchemy.com/v2/ALCHEMY_KEY",
+    );
+    expect(getChainClient(1).transport.url).toBe(
+      "https://eth-mainnet.g.alchemy.com/v2/ALCHEMY_KEY",
+    );
+    expect(getChainClient(137).transport.url).toBe(
+      "https://polygon-mainnet.g.alchemy.com/v2/ALCHEMY_KEY",
+    );
+    expect(getChainClient(8453).transport.url).toBe(
+      "https://base-mainnet.g.alchemy.com/v2/ALCHEMY_KEY",
+    );
+    expect(getChainClient(10).transport.url).toBe(
+      "https://opt-mainnet.g.alchemy.com/v2/ALCHEMY_KEY",
+    );
+
+    expect(stderrBuf).toMatch(
+      /Inferred alchemy key from ARBITRUM_RPC_URL and fanned out to/,
+    );
+  });
+
+  it("Test 18 — self-hosted URL (no provider pattern match) → only that chain is configured; others on PublicNode", () => {
+    process.env.ETHEREUM_RPC_URL = "https://my-self-hosted-node.example/rpc";
+
+    expect(getChainClient(1).transport.url).toBe(
+      "https://my-self-hosted-node.example/rpc",
+    );
+    // No inference → other 4 fall through to PublicNode.
+    expect(getChainClient(42161).transport.url).toBe(PUBLICNODE_RPC_URLS[42161]);
+    expect(getChainClient(137).transport.url).toBe(PUBLICNODE_RPC_URLS[137]);
+    expect(getChainClient(8453).transport.url).toBe(PUBLICNODE_RPC_URLS[8453]);
+    expect(getChainClient(10).transport.url).toBe(PUBLICNODE_RPC_URLS[10]);
+
+    expect(isPublicNodeFallback(1)).toBe(false);
+    expect(isPublicNodeFallback(42161)).toBe(true);
+
+    // No inference info log fires when no URL matches a provider pattern.
+    expect(stderrBuf).not.toMatch(/Inferred .* key from/);
+  });
+
+  it("Test 19 — explicit per-chain override wins over inference: ETHEREUM=<infura> + ARBITRUM=<custom-self-hosted> → arbitrum keeps custom; others get Infura via fan-out", () => {
+    process.env.ETHEREUM_RPC_URL = "https://mainnet.infura.io/v3/KEY_A";
+    process.env.ARBITRUM_RPC_URL = "https://my-arb-node.example/rpc";
+
+    expect(getChainClient(1).transport.url).toBe(
+      "https://mainnet.infura.io/v3/KEY_A",
+    );
+    expect(getChainClient(42161).transport.url).toBe(
+      "https://my-arb-node.example/rpc",
+    );
+    expect(getChainClient(137).transport.url).toBe(
+      "https://polygon-mainnet.infura.io/v3/KEY_A",
+    );
+    expect(getChainClient(8453).transport.url).toBe(
+      "https://base-mainnet.infura.io/v3/KEY_A",
+    );
+    expect(getChainClient(10).transport.url).toBe(
+      "https://optimism-mainnet.infura.io/v3/KEY_A",
+    );
+
+    // Log lists ONLY the chains without their own override (arbitrum
+    // excluded — it has a per-chain URL). Scan order: 10/137/8453 =
+    // optimism, polygon, base.
+    expect(stderrBuf).toMatch(
+      /Inferred infura key from ETHEREUM_RPC_URL and fanned out to: optimism, polygon, base/,
+    );
+    expect(stderrBuf).not.toMatch(
+      /fanned out to: .*arbitrum/,
+    );
+  });
+
+  it("Test 20 — RPC_PROVIDER+RPC_API_KEY shorthand wins over inference for non-overridden chains; per-chain override still wins over shorthand", () => {
+    process.env.RPC_PROVIDER = "alchemy";
+    process.env.RPC_API_KEY = "SHORTHAND_KEY";
+    process.env.ETHEREUM_RPC_URL = "https://mainnet.infura.io/v3/INFURA_Y";
+
+    // Per-chain override wins on ethereum.
+    expect(getChainClient(1).transport.url).toBe(
+      "https://mainnet.infura.io/v3/INFURA_Y",
+    );
+    // Other 4 use the explicit Alchemy shorthand (NOT inferred Infura).
+    expect(getChainClient(42161).transport.url).toBe(
+      "https://arb-mainnet.g.alchemy.com/v2/SHORTHAND_KEY",
+    );
+    expect(getChainClient(137).transport.url).toBe(
+      "https://polygon-mainnet.g.alchemy.com/v2/SHORTHAND_KEY",
+    );
+    expect(getChainClient(8453).transport.url).toBe(
+      "https://base-mainnet.g.alchemy.com/v2/SHORTHAND_KEY",
+    );
+    expect(getChainClient(10).transport.url).toBe(
+      "https://opt-mainnet.g.alchemy.com/v2/SHORTHAND_KEY",
+    );
+
+    // Inference was preempted — no info log.
+    expect(stderrBuf).not.toMatch(/Inferred .* key from/);
+  });
+
+  it("Test 21 — first-match wins (chain-id ascending): ETHEREUM=<infura-A> + ARBITRUM=<alchemy-B> → ethereum's Infura wins; arbitrum keeps its own URL; polygon/base/optimism use Infura-A", () => {
+    process.env.ETHEREUM_RPC_URL = "https://mainnet.infura.io/v3/KEY_A";
+    process.env.ARBITRUM_RPC_URL =
+      "https://arb-mainnet.g.alchemy.com/v2/KEY_B";
+
+    // Source-chain overrides still win for themselves.
+    expect(getChainClient(1).transport.url).toBe(
+      "https://mainnet.infura.io/v3/KEY_A",
+    );
+    expect(getChainClient(42161).transport.url).toBe(
+      "https://arb-mainnet.g.alchemy.com/v2/KEY_B",
+    );
+    // Polygon/Base/Optimism use the FIRST-match (ethereum, chain id 1).
+    expect(getChainClient(137).transport.url).toBe(
+      "https://polygon-mainnet.infura.io/v3/KEY_A",
+    );
+    expect(getChainClient(8453).transport.url).toBe(
+      "https://base-mainnet.infura.io/v3/KEY_A",
+    );
+    expect(getChainClient(10).transport.url).toBe(
+      "https://optimism-mainnet.infura.io/v3/KEY_A",
+    );
+
+    expect(stderrBuf).toMatch(
+      /Inferred infura key from ETHEREUM_RPC_URL/,
+    );
+  });
+
+  it("Test 22 — single chain set + that chain is also the source: fan-out log fires only when at least one destination chain receives a URL (no destination → no log spam)", () => {
+    // All 5 chains have an explicit per-chain override → inference scans
+    // first match (ethereum-infura) but no destination chains exist (all
+    // have their own override). No log should fire.
+    process.env.ETHEREUM_RPC_URL = "https://mainnet.infura.io/v3/KA";
+    process.env.ARBITRUM_RPC_URL = "https://arb-node.example/rpc";
+    process.env.POLYGON_RPC_URL = "https://pol-node.example/rpc";
+    process.env.BASE_RPC_URL = "https://base-node.example/rpc";
+    process.env.OPTIMISM_RPC_URL = "https://opt-node.example/rpc";
+
+    getChainClient(1);
+    getChainClient(42161);
+    getChainClient(137);
+    getChainClient(8453);
+    getChainClient(10);
+
+    expect(stderrBuf).not.toMatch(/Inferred .* key from/);
+  });
+});
