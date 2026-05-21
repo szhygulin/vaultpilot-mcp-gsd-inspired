@@ -220,18 +220,18 @@ describe("scanXpub — gap-limit-20 termination (BIP-44)", () => {
     expect(callIdx).toBe(21);
   });
 
-  it("continues through 20-empty window when an active address sits at i=21 (Pitfall 4 anchor)", async () => {
-    // Mock: active at i=0, empty i=1..20, active at i=21. The naive
-    // "stop at first empty" approach misses i=21. BIP-44 requires 20
-    // CONSECUTIVE empties.
+  it("does NOT stop at first empty — continues through a sub-gap-limit empty window to discover an active address at i=20 (Pitfall 4 anchor)", async () => {
+    // Mock: active at i=0, empty i=1..19 (19 empties), active at i=20.
+    // The naive "stop at first empty" approach misses i=20. BIP-44
+    // requires 20 CONSECUTIVE empties — 19 in a row is NOT a stop.
     let callIdx = 0;
-    let i21Hit = false;
+    let i20Hit = false;
     vi.spyOn(esploraClient, "fetchAddressInfo").mockImplementation(
       async (addr: string) => {
         const here = callIdx;
         callIdx += 1;
-        if (here === 0 || here === 21) {
-          if (here === 21) i21Hit = true;
+        if (here === 0 || here === 20) {
+          if (here === 20) i20Hit = true;
           return okResult(addr, 100_000n, 0n, 1);
         }
         return emptyResult(addr);
@@ -240,10 +240,12 @@ describe("scanXpub — gap-limit-20 termination (BIP-44)", () => {
 
     const out = await scanXpub(PINNED_BIP84_ZPUB, "p2wpkh");
 
-    // i=21 fetch happens (only the 20-empty count after the LAST active
-    // address terminates the scan).
-    expect(i21Hit).toBe(true);
+    // i=20 fetch DOES happen (counter resets on i=0 active; 19 empties
+    // in a row at i=1..19 does NOT terminate; the active at i=20
+    // resets the counter again).
+    expect(i20Hit).toBe(true);
     expect(out.activeAddresses.length).toBe(2);
+    expect(out.activeAddresses[1]?.index).toBe(20);
   });
 });
 
