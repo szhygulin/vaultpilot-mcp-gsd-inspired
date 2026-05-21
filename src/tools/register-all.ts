@@ -22,6 +22,7 @@ import "./pair_tron_ledger.js"; // Phase 17 Plan 17-03 (TRON-PAIR-01)
 import "./pair_btc_ledger.js"; // Phase 22 Plan 22-02 (BTC-PAIR-01) — dual-address (segwit + taproot) pair
 import "./get_btc_balance.js"; // Phase 22 Plan 22-03 (BTC-READ-01) — single-address BalanceReport via Esplora
 import "./get_btc_balances.js"; // Phase 22 Plan 22-03 (BTC-READ-02) — parallel segwit + taproot via Promise.allSettled
+import "./get_btc_account_balance.js"; // Phase 22 Plan 22-03 (BTC-READ-03) — xpub gap-limit-respecting scan
 import "./get_tron_status.js"; // Phase 17 Plan 17-03 (TRON-PAIR-02)
 import "./get_tron_balance.js"; // Phase 17 Plan 17-03 (TRON-READ-01)
 import "./get_tron_token_balance.js"; // Phase 17 Plan 17-03 (TRON-READ-02)
