@@ -19,10 +19,12 @@
 //      module-scoped `activePersona` state.
 
 import { isDemoMode } from "../config/env.js";
+import { findBtcPersona } from "../demo/bitcoin-persona.js";
 import { PERSONAS } from "../demo/personas.js";
 import { findSolanaPersona } from "../demo/solana-persona.js";
 import { findTronPersona } from "../demo/tron-persona.js";
 import {
+  setActiveBtcPersonaBySlug,
   setActivePersona,
   setActiveSolanaPersonaBySlug,
   setActiveTronPersonaBySlug,
@@ -48,11 +50,12 @@ function errEnvelope(
 
 const DESCRIPTION = [
   "Activate a curated demo wallet persona for simulation flows.",
-  "Use this AFTER get_demo_wallet lists the available personas and the user has picked one (4 EVM: whale / defi-degen / stable-saver / staking-maxi; 1 Solana: solana-whale; 1 TRON: tron-whale).",
-  "EVM, Solana, and TRON active personas are INDEPENDENT — setting one chain's slug does not affect the others. Demo-mode EVM read tools route through the active EVM persona; Solana read tools through the active Solana persona; TRON read tools through the active TRON persona.",
+  "Use this AFTER get_demo_wallet lists the available personas and the user has picked one (4 EVM: whale / defi-degen / stable-saver / staking-maxi; 1 Solana: solana-whale; 1 TRON: tron-whale; 1 BTC: btc-whale).",
+  "EVM, Solana, TRON, and BTC active personas are INDEPENDENT — setting one chain's slug does not affect the others. Demo-mode EVM read tools route through the active EVM persona; Solana read tools through the active Solana persona; TRON read tools through the active TRON persona; BTC read tools through the active BTC persona.",
   "Do NOT use this in real mode — refuses with WRONG_MODE when no demo-mode signal is active (VAULTPILOT_DEMO env or ~/.vaultpilot-mcp/config.json).",
-  "Do NOT pass arbitrary addresses — the schema enum locks the six slugs; unknown values are rejected at the protocol boundary with -32602 InvalidParams.",
-  "Returns `{ active: { chain, slug, address, description } }` plus a confirmation text block. `chain` is `\"ethereum\"` for EVM personas, `\"solana\"` for the Solana persona, `\"tron\"` for the TRON persona; `address` is 0x-hex for EVM, base58 for Solana, base58check T-prefixed for TRON.",
+  "Do NOT pass arbitrary addresses — the schema enum locks the seven slugs; unknown values are rejected at the protocol boundary with -32602 InvalidParams.",
+  "Returns `{ active: { chain, slug, address, description } }` plus a confirmation text block. `chain` is `\"ethereum\"` for EVM personas, `\"solana\"` for the Solana persona, `\"tron\"` for the TRON persona, `\"bitcoin\"` for the BTC persona; `address` is 0x-hex for EVM, base58 for Solana, base58check T-prefixed for TRON, bech32 segwit (bc1q…) for BTC.",
+  "For BTC, the persona carries BOTH segwit and taproot addresses; the `active.address` field surfaces the segwit address as the canonical witness — the taproot address is available via the get_demo_wallet listing.",
   "State is process-local — restarting the server drops the active personas; re-call this tool to re-activate.",
   "Failure modes: WRONG_MODE in real mode, INVALID_INPUT for unknown slug (defense-in-depth behind the schema enum).",
 ].join(" ");
@@ -69,9 +72,10 @@ const INPUT_SCHEMA = {
         "staking-maxi",
         "solana-whale",
         "tron-whale",
+        "btc-whale",
       ],
       description:
-        "Persona slug from get_demo_wallet's output. EVM: whale, defi-degen, stable-saver, staking-maxi. Solana: solana-whale. TRON: tron-whale.",
+        "Persona slug from get_demo_wallet's output. EVM: whale, defi-degen, stable-saver, staking-maxi. Solana: solana-whale. TRON: tron-whale. BTC: btc-whale.",
     },
   },
   required: ["persona"],
@@ -105,16 +109,44 @@ registerTool("set_demo_wallet", DESCRIPTION, INPUT_SCHEMA, (args) => {
     // protocol boundary (src/server.ts) already rejects unknown slugs
     // with JSON-RPC -32602 — this branch is unreachable in production.
     // Test 5 in `test/set-demo-wallet.test.ts` exercises it via direct
-    // handler invocation. The TRON branch (Plan 17-05) routes
-    // `tron-whale` to the TRON persona registry; the Solana branch
-    // (Plan 11-06) routes `solana-whale` to the Solana persona registry;
-    // the existing 4 EVM slugs keep the existing path (back-compat).
+    // handler invocation. The BTC branch (Plan 22-04) routes
+    // `btc-whale` to the BTC persona registry; the TRON branch (Plan
+    // 17-05) routes `tron-whale` to the TRON persona registry; the
+    // Solana branch (Plan 11-06) routes `solana-whale` to the Solana
+    // persona registry; the existing 4 EVM slugs keep the existing
+    // path (back-compat).
     //
     // Branch ordering: non-EVM branches BEFORE the EVM fallthrough so
-    // chain-specific lookups short-circuit cleanly. TRON precedes Solana
-    // (Plan 17-05 ordering — most-recent chain first, mirroring the
+    // chain-specific lookups short-circuit cleanly. BTC precedes TRON
+    // (Plan 22-04 — most-recent chain first, mirroring the
     // PAIR-NEV-* convention).
     const slug = typeof args.persona === "string" ? args.persona : "";
+
+    const btcPersona = findBtcPersona(slug);
+    if (btcPersona) {
+      const activated = setActiveBtcPersonaBySlug(btcPersona.slug);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `active persona set: ${activated.slug} (${activated.btcSegwitAddress})`,
+          },
+        ],
+        structuredContent: {
+          active: {
+            chain: "bitcoin",
+            slug: activated.slug,
+            // Canonical witness — segwit address is the primary
+            // surface; the taproot address is in the registry listing
+            // via get_demo_wallet (sibling-interface widening; both
+            // addresses are load-bearing but the compact confirmation
+            // surface pins on segwit).
+            address: activated.btcSegwitAddress,
+            description: activated.description,
+          },
+        },
+      };
+    }
 
     const tronPersona = findTronPersona(slug);
     if (tronPersona) {

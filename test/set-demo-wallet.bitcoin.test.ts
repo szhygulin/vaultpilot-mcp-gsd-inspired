@@ -1,21 +1,23 @@
-// Plan 17-05 — set_demo_wallet TRON persona branch.
+// Plan 22-04 — set_demo_wallet BTC persona branch.
 //
 // Coverage:
-//   1. Demo-mode FIRST refusal preserved for TRON slug (byte-frozen with
-//      existing EVM + Solana behavior).
-//   2. Demo mode + 'tron-whale' → setActiveTronPersonaBySlug called;
-//      response confirms { chain: "tron", slug, address: tronAddress }.
-//   3. Demo mode + TRON slug → EVM + Solana persona untouched
+//   1. Demo-mode FIRST refusal preserved for BTC slug (byte-frozen with
+//      existing EVM + Solana + TRON behavior).
+//   2. Demo mode + 'btc-whale' → setActiveBtcPersonaBySlug called;
+//      response confirms { chain: "bitcoin", slug, address: btcSegwitAddress }.
+//   3. Demo mode + BTC slug → EVM + Solana + TRON persona untouched
 //      (independence).
-//   4. Demo mode + EVM/Solana slug → TRON persona untouched
+//   4. Demo mode + EVM/Solana/TRON slug → BTC persona untouched
 //      (independence).
-//   5. Schema enum widening — assert 'tron-whale' is in INPUT_SCHEMA.enum.
+//   5. Schema enum widening — assert 'btc-whale' is in INPUT_SCHEMA.enum;
+//      total slug count widens to 7.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { _resetDemoModeForTesting } from "../src/config/env.js";
 import {
   _resetActivePersonaForTesting,
+  getActiveBtcPersona,
   getActivePersona,
   getActiveSolanaPersona,
   getActiveTronPersona,
@@ -51,68 +53,80 @@ afterEach(() => {
   _resetActivePersonaForTesting();
 });
 
-describe("set_demo_wallet — TRON persona happy path (Plan 17-05)", () => {
-  it("demo mode + persona='tron-whale' → success, TRON state mutated", async () => {
+describe("set_demo_wallet — BTC persona happy path (Plan 22-04)", () => {
+  it("demo mode + persona='btc-whale' → success, BTC state mutated", async () => {
     process.env[DEMO_KEY] = "true";
     _resetDemoModeForTesting();
 
-    const result = await callTool({ persona: "tron-whale" });
+    const result = await callTool({ persona: "btc-whale" });
 
     expect(result.isError).toBeFalsy();
     const sc = result.structuredContent as {
       active: { chain: string; slug: string; address: string; description: string };
     };
-    expect(sc.active.chain).toBe("tron");
-    expect(sc.active.slug).toBe("tron-whale");
-    // Base58check T-prefixed address (not 0x-hex, not Solana base58).
-    expect(sc.active.address.startsWith("0x")).toBe(false);
-    expect(sc.active.address.startsWith("T")).toBe(true);
+    expect(sc.active.chain).toBe("bitcoin");
+    expect(sc.active.slug).toBe("btc-whale");
+    // Surface the segwit address as the canonical `address` field
+    // (bech32 P2WPKH; bc1q prefix). The taproot address is surfaced
+    // separately via the registry — set_demo_wallet's compact
+    // confirmation surface pins on segwit as the canonical witness.
+    expect(sc.active.address.startsWith("bc1q")).toBe(true);
     expect(sc.active.address).toBe(
-      "TWd4WrZ9wn84f5x1hZhL4DHvk738ns5jwb",
+      "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h",
     );
 
-    expect(getActiveTronPersona()?.slug).toBe("tron-whale");
+    expect(getActiveBtcPersona()?.slug).toBe("btc-whale");
 
     const text = result.content[0]?.text ?? "";
     expect(text).toMatch(/active persona set/);
-    expect(text).toMatch(/tron-whale/);
+    expect(text).toMatch(/btc-whale/);
   });
 
-  it("demo mode + TRON slug → EVM + Solana persona untouched (independence)", async () => {
+  it("demo mode + BTC slug → EVM + Solana + TRON persona untouched (independence)", async () => {
     process.env[DEMO_KEY] = "true";
     _resetDemoModeForTesting();
 
-    await callTool({ persona: "tron-whale" });
+    await callTool({ persona: "btc-whale" });
     expect(getActivePersona()).toBeNull(); // EVM untouched
     expect(getActiveSolanaPersona()).toBeNull(); // Solana untouched
-    expect(getActiveTronPersona()?.slug).toBe("tron-whale");
+    expect(getActiveTronPersona()).toBeNull(); // TRON untouched
+    expect(getActiveBtcPersona()?.slug).toBe("btc-whale");
   });
 
-  it("demo mode + EVM slug → TRON persona untouched (independence)", async () => {
+  it("demo mode + EVM slug → BTC persona untouched (independence)", async () => {
     process.env[DEMO_KEY] = "true";
     _resetDemoModeForTesting();
 
     await callTool({ persona: "whale" });
     expect(getActivePersona()?.slug).toBe("whale");
-    expect(getActiveTronPersona()).toBeNull(); // TRON untouched
+    expect(getActiveBtcPersona()).toBeNull(); // BTC untouched
   });
 
-  it("demo mode + Solana slug → TRON persona untouched (independence)", async () => {
+  it("demo mode + Solana slug → BTC persona untouched (independence)", async () => {
     process.env[DEMO_KEY] = "true";
     _resetDemoModeForTesting();
 
     await callTool({ persona: "solana-whale" });
     expect(getActiveSolanaPersona()?.slug).toBe("solana-whale");
-    expect(getActiveTronPersona()).toBeNull(); // TRON untouched
+    expect(getActiveBtcPersona()).toBeNull(); // BTC untouched
+  });
+
+  it("demo mode + TRON slug → BTC persona untouched (independence)", async () => {
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+
+    await callTool({ persona: "tron-whale" });
+    expect(getActiveTronPersona()?.slug).toBe("tron-whale");
+    expect(getActiveBtcPersona()).toBeNull(); // BTC untouched
   });
 });
 
-describe("set_demo_wallet — TRON slug refused in real mode (T-PERSONA-CONFUSION-1 preserved)", () => {
-  it("real mode + persona='tron-whale' → WRONG_MODE envelope; state NOT mutated", async () => {
+describe("set_demo_wallet — BTC slug refused in real mode (T-PERSONA-CONFUSION-1 preserved)", () => {
+  it("real mode + persona='btc-whale' → WRONG_MODE envelope; state NOT mutated", async () => {
     // beforeEach already set env=false and reset cache.
-    expect(getActiveTronPersona()).toBeNull();
+    expect(getActiveBtcPersona()).toBeNull();
 
-    const result = await callTool({ persona: "tron-whale" });
+    const result = await callTool({ persona: "btc-whale" });
 
     expect(result.isError).toBe(true);
     const sc = result.structuredContent as { errorCode: string };
@@ -121,15 +135,13 @@ describe("set_demo_wallet — TRON slug refused in real mode (T-PERSONA-CONFUSIO
     const text = result.content[0]?.text ?? "";
     expect(text).toMatch(/demo mode/i);
 
-    // Critical assertion: TRON state NOT mutated when mode check fires.
-    // Same mitigation as Test 3 in set-demo-wallet.test.ts — the demo-mode
-    // FIRST refusal block (byte-frozen) protects EVM + Solana + TRON paths.
-    expect(getActiveTronPersona()).toBeNull();
+    // Critical assertion: BTC state NOT mutated when mode check fires.
+    expect(getActiveBtcPersona()).toBeNull();
   });
 });
 
-describe("set_demo_wallet — INPUT_SCHEMA enum includes 'tron-whale' (Plan 17-05)", () => {
-  it("registered tool's inputSchema.enum contains tron-whale + the 6 prior slugs (additive — count may grow as new chains land)", () => {
+describe("set_demo_wallet — INPUT_SCHEMA enum includes 'btc-whale' (Plan 22-04)", () => {
+  it("registered tool's inputSchema.enum widens to 7 slugs", () => {
     const tool = getRegisteredTool("set_demo_wallet");
     if (!tool) throw new Error("set_demo_wallet not registered");
     const schema = tool.inputSchema as {
@@ -142,17 +154,13 @@ describe("set_demo_wallet — INPUT_SCHEMA enum includes 'tron-whale' (Plan 17-0
     expect(enumValues).toContain("staking-maxi");
     expect(enumValues).toContain("solana-whale");
     expect(enumValues).toContain("tron-whale");
-    // Lower-bound assertion — additive new-chain widening (Plan 22-04 adds
-    // btc-whale → 7; future LTC adds litecoin-whale → 8). The original
-    // `.toBe(6)` assertion was tightened to lower-bound to preserve the
-    // intent (Plan 17-05 ships AT LEAST these 6) while accommodating
-    // forward-compatible additive widening. See Plan 22-04 deviation note.
-    expect(enumValues.length).toBeGreaterThanOrEqual(6);
+    expect(enumValues).toContain("btc-whale");
+    expect(enumValues.length).toBe(7);
   });
 
-  it("tool DESCRIPTION mentions tron-whale (agent routing prompt)", () => {
+  it("tool DESCRIPTION mentions btc-whale (agent routing prompt)", () => {
     const tool = getRegisteredTool("set_demo_wallet");
     if (!tool) throw new Error("set_demo_wallet not registered");
-    expect(tool.description).toMatch(/tron-whale/);
+    expect(tool.description).toMatch(/btc-whale/);
   });
 });

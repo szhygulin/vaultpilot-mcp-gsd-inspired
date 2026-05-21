@@ -18,6 +18,7 @@
 //     effect on the auto-demo arm (Q-AUTO-DEMO-PERSONA-DEFAULT lock) so
 //     the first read tool call works out of the box.
 
+import { findBtcPersona } from "./bitcoin-persona.js";
 import { PERSONAS, type Persona } from "./personas.js";
 import { findSolanaPersona } from "./solana-persona.js";
 import { findTronPersona } from "./tron-persona.js";
@@ -56,9 +57,30 @@ export interface TronPersona {
   readonly description?: string;
 }
 
+/**
+ * Phase 22 — Plan 22-04 carve. The full `BtcPersona` interface +
+ * registry ship in `src/demo/bitcoin-persona.ts`; this file defines the
+ * minimal shape so `set_demo_wallet`'s BTC slug routing compiles against
+ * a stable contract. Plan 22-04's `setActiveBtcPersona` accepts any
+ * value matching this carved shape; `bitcoin-persona.ts` hands it
+ * values from `BTC_PERSONAS` which satisfy both. Mirror of the 17-04
+ * TRON carve. BTC carries TWO addresses (segwit + taproot) — both are
+ * load-bearing for the dual-address PAIR-NEV-* multi-record-per-chain
+ * surface.
+ */
+export interface BtcPersona {
+  readonly slug: string;
+  /** bech32-encoded segwit (P2WPKH) address — bc1q prefix, 42 chars. */
+  readonly btcSegwitAddress: string;
+  /** bech32m-encoded taproot (P2TR) address — bc1p prefix, 62 chars. */
+  readonly btcTaprootAddress: string;
+  readonly description?: string;
+}
+
 let activePersona: Persona | null = null;
 let activeSolanaPersona: SolanaPersona | null = null;
 let activeTronPersona: TronPersona | null = null;
+let activeBtcPersona: BtcPersona | null = null;
 
 /**
  * Returns the currently active persona, or `null` if none has been set.
@@ -191,6 +213,67 @@ export function setActiveTronPersonaBySlug(slug: string): TronPersona {
 }
 
 /**
+ * Returns the currently active BTC persona, or `null` if none has been
+ * set. Phase 22 Plan 22-04 surface. Mirror of Tron / Solana shape.
+ */
+export function getActiveBtcPersona(): BtcPersona | null {
+  return activeBtcPersona;
+}
+
+/**
+ * Activate a BTC persona. Phase 22 Plan 22-04 surface — the setter is
+ * exposed here so consumers can compile against a stable
+ * `getActiveBtcPersona()` contract.
+ *
+ * Defense-in-depth shape: throws if `persona` is falsy or missing
+ * EITHER address. BTC carries TWO load-bearing addresses (segwit +
+ * taproot) — both must be present (sibling-interface widening; the
+ * single-string check used for TRON/Solana would not catch a
+ * missing-taproot bug). The persona registry validation lives in
+ * `src/demo/bitcoin-persona.ts` (Plan 22-04 — full bech32/bech32m
+ * checksum gate via `address.toOutputScript`); this function is the
+ * registry-agnostic state setter and only validates field-shape.
+ */
+export function setActiveBtcPersona(persona: BtcPersona): BtcPersona {
+  if (!persona || typeof persona.btcSegwitAddress !== "string") {
+    throw new Error(
+      "setActiveBtcPersona: persona must have a btcSegwitAddress",
+    );
+  }
+  if (typeof persona.btcTaprootAddress !== "string") {
+    throw new Error(
+      "setActiveBtcPersona: persona must have a btcTaprootAddress",
+    );
+  }
+  activeBtcPersona = persona;
+  return persona;
+}
+
+/**
+ * Activate a BTC persona by slug — Plan 22-04 surface. Resolves the
+ * slug against the `BTC_PERSONAS` registry in
+ * `src/demo/bitcoin-persona.ts`, then delegates to
+ * `setActiveBtcPersona`.
+ *
+ * Throws on unknown slug as defense-in-depth behind the JSON-Schema
+ * enum gate at `src/tools/set_demo_wallet.ts` — unreachable in
+ * production through the MCP protocol boundary, but defensible when
+ * called from tests or from a hypothetical future caller. Mirrors the
+ * TRON `setActiveTronPersonaBySlug` shape.
+ *
+ * The `bitcoin-persona.ts` registry uses `import type` for `BtcPersona`,
+ * so there's no runtime cycle from this file's import of
+ * `findBtcPersona`.
+ */
+export function setActiveBtcPersonaBySlug(slug: string): BtcPersona {
+  const persona = findBtcPersona(slug);
+  if (!persona) {
+    throw new Error(`unknown BTC persona slug: ${String(slug)}`);
+  }
+  return setActiveBtcPersona(persona);
+}
+
+/**
  * Test-only helper. Production code MUST NOT call this — the active
  * persona is process-local and intentionally non-resettable in normal
  * operation. Tests use this to restore isolation between cases.
@@ -199,4 +282,5 @@ export function _resetActivePersonaForTesting(): void {
   activePersona = null;
   activeSolanaPersona = null;
   activeTronPersona = null;
+  activeBtcPersona = null;
 }
