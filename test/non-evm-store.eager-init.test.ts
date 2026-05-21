@@ -159,6 +159,39 @@ describe("eagerInitNonEvmStoreIfPersist — gates", () => {
     expect(readSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("(Phase 22 — dual bitcoin record cold-boot restore) two `chain: \"bitcoin\"` records restore via eager-init", async () => {
+    // PAIR-NEV-02 race-defense for dual-record-per-chain: a cold-booted
+    // server with TWO `chain: "bitcoin"` records on disk (segwit +
+    // taproot) loads BOTH on the first listAccounts({ chainFilter:
+    // "bitcoin" }) call. No new init code needed — the existing eager-
+    // init contract handles multi-record-per-chain for free.
+    process.env[ENV_KEY] = "persist";
+    process.env.HOME = tmpRoot!;
+    const dirPath = join(tmpRoot!, ".vaultpilot-mcp");
+    mkdirSync(dirPath, { recursive: true, mode: 0o700 });
+    const filePath = join(dirPath, "non-evm-accounts.json");
+    const segwit: NonEvmAccountRecord = {
+      chain: "bitcoin",
+      address: "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+      derivationPath: "84'/0'/0'/0/0",
+      pairedAt: "2026-05-01T00:00:00.000Z",
+    };
+    const taproot: NonEvmAccountRecord = {
+      chain: "bitcoin",
+      address: "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr",
+      derivationPath: "86'/0'/0'/0/0",
+      pairedAt: "2026-05-01T00:00:00.000Z",
+    };
+    writeFileSync(filePath, JSON.stringify([segwit, taproot]), { mode: 0o600 });
+
+    await eagerInitNonEvmStoreIfPersist();
+
+    const view = listAccounts({ chainFilter: "bitcoin" });
+    expect(view).toHaveLength(2);
+    const addrs = view.map((r) => r.address).sort();
+    expect(addrs).toEqual([segwit.address, taproot.address].sort());
+  });
+
   it("(cold-boot restore) saveAccount → reset → eager-init re-populates the store from disk", async () => {
     process.env[ENV_KEY] = "persist";
     process.env.HOME = tmpRoot!;
