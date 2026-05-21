@@ -1,0 +1,269 @@
+// USB-HID transport + Ledger Bitcoin app wrapper.
+//
+// Per-call transport (NOT a singleton): the underlying `node-hid` device
+// handle MUST be closed after every APDU exchange. The next call to
+// `pair_btc_ledger` opens a fresh transport. Holding the handle open
+// across calls makes the next `TransportNodeHid.open()` fail with
+// "device busy"; once `transport.disconnected` flips to true, every
+// subsequent APDU throws `DisconnectedDevice` from `@ledgerhq/errors`.
+//
+// **REGRESSION ANCHOR (research § Pitfall 7 — address-format mismatch):**
+// `getWalletPublicKey(path, { format })` returns the address in WHATEVER
+// format the caller asks for, regardless of whether `path` agrees with
+// `format`. The BIP-84 path → `format: "bech32"` mapping and the BIP-86
+// path → `format: "bech32m"` mapping are HARDCODED at module scope.
+// NEVER accept format as agent input. The accompanying test pins the
+// `bc1q…` / `bc1p…` prefix invariants so a future contributor can't
+// silently mutate the format → path mapping.
+//
+// **REGRESSION ANCHOR (research § Pitfall 2 — APDU table overlap with
+// Litecoin):** `getAppConfiguration()` is the canonical "is BTC app open"
+// gate. Without this gate, calling `getWalletPublicKey` while the Ledger
+// has Litecoin (or any other BTC-fork app) open silently returns an
+// LTC address (`ltc1q…` / `M…` prefix), not a BTC one. Map the throw to
+// `LedgerBtcAppNotOpenError` exactly like `LedgerTronAppNotOpenError`.
+//
+// **REGRESSION ANCHOR (Meta-Decision 2 — 5-level BIP-44 paths):** Phase
+// 22 uses 5-level paths (`m/84'/0'/0'/0/0` + `m/86'/0'/0'/0/0`) —
+// purpose / coin_type / account / change / address_index. Same shape as
+// TRON's `m/44'/195'/0'/0/0`. **Distinct from Solana's 3-level**
+// `m/44'/501'/0'`. A `lastHardenedIndex` helper copy-pasted from Solana
+// would return `0` (the address-index, last segment) for every slot.
+// The companion test exercises segment-by-segment shape so copy-paste
+// regression fails at a specific line, not silently.
+//
+// **REGRESSION ANCHOR (research § Pitfall 5 — transport handle leak):**
+// TWO sequential `getWalletPublicKey` calls means TWO ways to throw;
+// the `finally` block MUST cover both. ONE `try` wraps BOTH
+// `getWalletPublicKey` calls; ONE `finally` calls `transport.close()`.
+//
+// NodeNext + ESM default-export drift: the Ledger packages' `lib-es/.d.ts`
+// declares `default` only. Under TS5+ NodeNext the typed default class
+// occasionally fails the runtime `new X(...)` check (the value at the
+// `.default` property differs from the type's declared default). The
+// `(Module as any).default ?? Module` shim at module scope picks the
+// right runtime constructor without leaking `any` through the rest of
+// the file. Same shape as `ledger-tron-transport.ts` and
+// `ledger-solana-transport.ts`.
+
+import TransportNodeHidModule from "@ledgerhq/hw-transport-node-hid";
+import BtcAppModule from "@ledgerhq/hw-app-btc";
+
+import { log } from "../diagnostics/logger.js";
+
+// `(Module as any).default ?? Module` — see top-of-file note on NodeNext
+// + ESM default-export drift. Both Ledger packages declare a `default`
+// class export only; the namespace import resolves to a namespace object
+// whose `.default` IS the runtime class. Widening through `any` here
+// keeps the rest of the file typed normally.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const TransportNodeHid: any =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (TransportNodeHidModule as any).default ?? TransportNodeHidModule;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const BtcApp: any =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (BtcAppModule as any).default ?? BtcAppModule;
+
+/**
+ * Ledger Live's default BTC segwit derivation path — 5-level BIP-44,
+ * BIP-84 standard. P2WPKH → `bc1q…` prefix. Mirror of TRON's 5-level
+ * shape (`44'/195'/0'/0/0`); distinct from Solana's 3-level
+ * `"44'/501'/0'"` — do not confuse the two.
+ */
+export const DEFAULT_BTC_SEGWIT_PATH = "84'/0'/0'/0/0";
+
+/**
+ * Ledger Live's default BTC taproot derivation path — 5-level BIP-44,
+ * BIP-86 standard. P2TR → `bc1p…` prefix.
+ */
+export const DEFAULT_BTC_TAPROOT_PATH = "86'/0'/0'/0/0";
+
+/**
+ * Time budget for an on-device approval (consumed by Plan 22-02's pair
+ * handler when racing `fetchBtcAddresses` against a timer). Mirrors
+ * `APPROVAL_TIMEOUT_MS` in `ledger-tron-transport.ts` +
+ * `ledger-solana-transport.ts` + `session-manager.ts`.
+ */
+export const APPROVAL_TIMEOUT_MS = 60_000;
+
+/**
+ * Thrown when no Ledger device is reachable over USB-HID — either the
+ * platform lacks node-hid support, or `Transport.list()` returns empty.
+ * Message names the recovery action so the agent can relay it verbatim.
+ */
+export class LedgerDeviceNotConnectedError extends Error {
+  constructor() {
+    super(
+      "No Ledger device detected over USB-HID. Connect your Ledger via USB, unlock it, and open the Bitcoin app, then retry.",
+    );
+    this.name = "LedgerDeviceNotConnectedError";
+  }
+}
+
+/**
+ * Thrown when the transport opens but the active app on the device is
+ * not Bitcoin (typically Litecoin / Bitcoin-clone fork — the BTC app's
+ * APDU table overlaps with these derivative apps; `getAppConfiguration`
+ * is the canonical gate to discriminate).
+ */
+export class LedgerBtcAppNotOpenError extends Error {
+  constructor() {
+    super(
+      "Bitcoin app is not the active app on the Ledger. Open the Bitcoin app on the device, then retry.",
+    );
+    this.name = "LedgerBtcAppNotOpenError";
+  }
+}
+
+/**
+ * Spy-affordance indirection for the Ledger SDK statics. Production
+ * code calls `_transport.isSupported()` / `.list()` / `.open()` /
+ * `.buildBtcApp(t)` instead of the raw class methods so
+ * `vi.spyOn(_transport, "open")` works across the ESM module
+ * boundary. CLAUDE.md "Add the indirection at write time" — direct
+ * spies on the immutable named-export bindings silently no-op.
+ *
+ * `buildBtcApp` hardcodes `currency: "bitcoin"` (RESEARCH A6 — named-arg
+ * ctor; Phase 26 LTC sharing decision deferred). Single point of change
+ * when LTC scaffolding lands.
+ */
+export const _transport = {
+  isSupported: (): Promise<boolean> => TransportNodeHid.isSupported(),
+  list: (): Promise<readonly unknown[]> => TransportNodeHid.list(),
+  open: (path: string | null): Promise<unknown> => TransportNodeHid.open(path),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  buildBtcApp: (t: unknown): any => new BtcApp({ transport: t, currency: "bitcoin" }),
+};
+
+interface TransportLike {
+  close: () => Promise<void>;
+  disconnected?: boolean;
+}
+
+/**
+ * Open a fresh USB-HID transport to the first available Ledger.
+ *
+ * Throws `LedgerDeviceNotConnectedError` when the platform lacks
+ * node-hid support (`isSupported() === false`) or when no devices are
+ * enumerated (`list() === []`). The thrown error names the recovery
+ * action; the agent forwards it to the user.
+ *
+ * NOT a singleton: every call yields a fresh transport. Callers MUST
+ * call `transport.close()` (typically via `try/finally`) before the
+ * next call, or the device handle leaks and subsequent opens fail.
+ */
+export async function openTransport(): Promise<TransportLike> {
+  const supported = await _transport.isSupported();
+  if (!supported) throw new LedgerDeviceNotConnectedError();
+  const devices = await _transport.list();
+  if (!devices || devices.length === 0) {
+    throw new LedgerDeviceNotConnectedError();
+  }
+  log("info", "opening USB-HID transport to Ledger device");
+  return (await _transport.open(null)) as TransportLike;
+}
+
+/**
+ * Fetch BOTH segwit AND taproot addresses from the Ledger in ONE
+ * device session.
+ *
+ * Returns `{ segwit, taproot, appVersion }`:
+ *   - `segwit`: BIP-84 (`m/84'/0'/0'/0/0`) → `bc1q…` (P2WPKH).
+ *   - `taproot`: BIP-86 (`m/86'/0'/0'/0/0`) → `bc1p…` (P2TR).
+ *   - Each address-record carries `{ address, publicKey, chainCode,
+ *     derivationPath }`. The `address` field is **already encoded** in
+ *     the requested format by the Ledger BTC app — NO client-side
+ *     bech32 / bech32m step (Pitfall 7).
+ *   - `appVersion`: the BTC app version string from
+ *     `getAppConfiguration()` (useful in diagnostics + status-tool
+ *     responses).
+ *
+ * `getAppConfiguration()` runs FIRST inside the `try` block — if it
+ * throws (typical when LTC / BTC-fork app is open), we map to
+ * `LedgerBtcAppNotOpenError` (Pitfall 2). The two `getWalletPublicKey`
+ * calls are wrapped in the SAME `try/finally` so `transport.close()`
+ * runs unconditionally on BOTH error paths AND the happy path (Pitfall
+ * 5 — single transport-open wraps both APDU exchanges).
+ *
+ * `verify: true` is passed on both `getWalletPublicKey` calls — this
+ * forces the device to display each address on-screen and await user
+ * confirmation (RESEARCH § Plan 22-02 risks — pair-time on-device
+ * confirm is the whole point of pairing).
+ */
+export async function fetchBtcAddresses(
+  segwitPath: string = DEFAULT_BTC_SEGWIT_PATH,
+  taprootPath: string = DEFAULT_BTC_TAPROOT_PATH,
+): Promise<{
+  segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string };
+  taproot: { address: string; publicKey: string; chainCode: string; derivationPath: string };
+  appVersion: string;
+}> {
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildBtcApp(transport);
+    let cfg: { version?: string };
+    try {
+      cfg = await app.getAppConfiguration();
+    } catch {
+      throw new LedgerBtcAppNotOpenError();
+    }
+    // TWO sequential APDU exchanges within ONE transport open.
+    // Format / path mapping is HARDCODED — never agent-input (Pitfall 7).
+    // BIP-84 → bech32 (`bc1q…`); BIP-86 → bech32m (`bc1p…`).
+    const segwit = await app.getWalletPublicKey(segwitPath, { format: "bech32", verify: true });
+    const taproot = await app.getWalletPublicKey(taprootPath, { format: "bech32m", verify: true });
+    return {
+      segwit: {
+        address: segwit.bitcoinAddress,
+        publicKey: segwit.publicKey,
+        chainCode: segwit.chainCode,
+        derivationPath: segwitPath,
+      },
+      taproot: {
+        address: taproot.bitcoinAddress,
+        publicKey: taproot.publicKey,
+        chainCode: taproot.chainCode,
+        derivationPath: taprootPath,
+      },
+      appVersion: cfg.version ?? "unknown",
+    };
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log("warn", `transport.close() failed during cleanup: ${message}`);
+    }
+  }
+}
+
+/**
+ * ESM spy-affordance for the BTC address-probe path. Plan 22-04
+ * `get_btc_status` (deferred to Phase 27 for the lazy-probe diagnostic;
+ * Phase 22 status surface relies on the cached records) can spy on
+ * `_btcLedgerTransport.fetchBtcAddresses` without monkey-patching the
+ * named exports (ESM bindings are immutable). NARROWER than the TRON
+ * analog — Phase 22 has no signing surface yet; Phase 23 will widen
+ * with `signPsbtBuffer`.
+ */
+export const _btcLedgerTransport = {
+  fetchBtcAddresses: (
+    segwitPath?: string,
+    taprootPath?: string,
+  ): Promise<{
+    segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string };
+    taproot: { address: string; publicKey: string; chainCode: string; derivationPath: string };
+    appVersion: string;
+  }> => fetchBtcAddresses(segwitPath, taprootPath),
+};
+
+/**
+ * Test-only reset. The transport is per-call (no singleton state to
+ * clear); the function exists for parity with
+ * `_resetLedgerTronTransportForTesting` so test suites can call it
+ * uniformly in `beforeEach`.
+ */
+export function _resetLedgerBtcTransportForTesting(): void {
+  // No singleton state — intentional no-op.
+}
