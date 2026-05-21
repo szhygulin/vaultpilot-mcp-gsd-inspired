@@ -95,6 +95,22 @@ export function getTronRpcUrl(): string | null {
   return read("TRON_RPC_URL") ?? null;
 }
 
+// Phase 22 Plan 22-01 — BTC Esplora URL reader. Mirrors `getTronRpcUrl()`
+// shape via the in-tree `read(name)` helper (trims whitespace, returns
+// `undefined` for empty/missing). The resolution priority lives in
+// `src/chains/bitcoin/registry.ts::resolveEsploraUrl()`:
+//   (1) `BTC_ESPLORA_URL` env override wins
+//   (2) Public Esplora fallback (`https://blockstream.info/api`) with
+//       once-per-process stderr warn
+// No `RPC_PROVIDER` shorthand fan-out — Esplora is URL-config-only
+// (blockstream.info, mempool.space, self-hosted Esplora all use the
+// same HTTP shape; documented alt-endpoints). Public-fallback requires
+// no API key; operators with rate-limit pressure set BTC_ESPLORA_URL to
+// override.
+export function getBtcEsploraUrl(): string | null {
+  return read("BTC_ESPLORA_URL") ?? null;
+}
+
 // Plan 08-05 — multi-chain WalletConnect pairing.
 //
 // Returns the list of EVM chains this v1.2 build supports. Drives
