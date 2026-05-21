@@ -249,6 +249,90 @@ describe("Schema-invalid records dropped on load (warn + continue)", () => {
   });
 });
 
+describe("Phase 22 — dual-record-per-chain (bitcoin segwit + taproot coexist)", () => {
+  // PAIR-NEV-03 / Meta-Decision 1 (Phase 22 PATTERNS): the (chain, address)
+  // upsert tuple lets a single chain hold multiple records — `chain:
+  // "bitcoin"` holds one segwit (`bc1q…`) AND one taproot (`bc1p…`) record
+  // per paired device. The schema is BYTE-UNTOUCHED.
+  const BTC_SEGWIT = "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq";
+  const BTC_TAPROOT =
+    "bc1p5cyxnuxmeuwuvkwfem96lqzszd02n6xdcjrs20cac6yqjjwudpxqkedrcr";
+
+  it("two `chain: \"bitcoin\"` saveAccount calls with distinct addresses produce TWO coexisting records", () => {
+    const pairedAt = new Date().toISOString();
+    saveAccount({ chain: "bitcoin", address: BTC_SEGWIT, derivationPath: "84'/0'/0'/0/0", pairedAt });
+    saveAccount({ chain: "bitcoin", address: BTC_TAPROOT, derivationPath: "86'/0'/0'/0/0", pairedAt });
+
+    const view = listAccounts({ chainFilter: "bitcoin" });
+    expect(view).toHaveLength(2);
+    const addrs = view.map((r) => r.address).sort();
+    expect(addrs).toEqual([BTC_SEGWIT, BTC_TAPROOT].sort());
+  });
+
+  it("calling pair twice (4 saveAccount calls) produces EXACTLY 2 records (idempotent upsert on tuple)", () => {
+    // Regression anchor for PAIR-NEV-03 multi-record-per-chain under
+    // dual-pair: re-pair must NOT produce duplicate records. The upsert
+    // key is (chain, address); same chain+address replaces (refreshes
+    // pairedAt).
+    const t1 = "2026-05-01T00:00:00.000Z";
+    const t2 = "2026-05-02T00:00:00.000Z";
+    saveAccount({ chain: "bitcoin", address: BTC_SEGWIT, derivationPath: "84'/0'/0'/0/0", pairedAt: t1 });
+    saveAccount({ chain: "bitcoin", address: BTC_TAPROOT, derivationPath: "86'/0'/0'/0/0", pairedAt: t1 });
+    // Second pair call — same addresses, fresher pairedAt.
+    saveAccount({ chain: "bitcoin", address: BTC_SEGWIT, derivationPath: "84'/0'/0'/0/0", pairedAt: t2 });
+    saveAccount({ chain: "bitcoin", address: BTC_TAPROOT, derivationPath: "86'/0'/0'/0/0", pairedAt: t2 });
+
+    const view = listAccounts({ chainFilter: "bitcoin" });
+    expect(view).toHaveLength(2);
+    // pairedAt refreshed to t2 on both records.
+    expect(view.every((r) => r.pairedAt === t2)).toBe(true);
+  });
+
+  it("per-record aging — staleAccountWarning fires per (chain, address) tuple, not per pair", () => {
+    // Phase 22 Plan 22-02 acceptance: segwit and taproot age independently
+    // under chain: "bitcoin". A stale segwit record does NOT mark the
+    // sibling taproot record as stale.
+    const stale = new Date(Date.now() - 31 * 24 * 3600 * 1000).toISOString();
+    const fresh = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString();
+    saveAccount({ chain: "bitcoin", address: BTC_SEGWIT, derivationPath: "84'/0'/0'/0/0", pairedAt: stale });
+    saveAccount({ chain: "bitcoin", address: BTC_TAPROOT, derivationPath: "86'/0'/0'/0/0", pairedAt: fresh });
+
+    const view = listAccounts({ chainFilter: "bitcoin" });
+    expect(view).toHaveLength(2);
+    const segwitView = view.find((r) => r.address === BTC_SEGWIT);
+    const taprootView = view.find((r) => r.address === BTC_TAPROOT);
+    expect(segwitView?.staleAccountWarning).toBe(true);
+    expect(taprootView?.staleAccountWarning).toBeUndefined();
+  });
+
+  it("removeAccount on one bitcoin record leaves the sibling intact", () => {
+    const pairedAt = new Date().toISOString();
+    saveAccount({ chain: "bitcoin", address: BTC_SEGWIT, derivationPath: "84'/0'/0'/0/0", pairedAt });
+    saveAccount({ chain: "bitcoin", address: BTC_TAPROOT, derivationPath: "86'/0'/0'/0/0", pairedAt });
+
+    const result = removeAccount("bitcoin", BTC_SEGWIT);
+    expect(result).toEqual({ removed: true });
+
+    const view = listAccounts({ chainFilter: "bitcoin" });
+    expect(view).toHaveLength(1);
+    expect(view[0]?.address).toBe(BTC_TAPROOT);
+  });
+
+  it("`bitcoin` is in the NonEvmChain literal-union (zero schema change required for Phase 22)", () => {
+    // The compile-time check is enforced via the type system; this
+    // runtime assertion is the trace — saveAccount accepts `chain:
+    // "bitcoin"` without throwing.
+    expect(() =>
+      saveAccount({
+        chain: "bitcoin",
+        address: BTC_SEGWIT,
+        derivationPath: "84'/0'/0'/0/0",
+        pairedAt: new Date().toISOString(),
+      }),
+    ).not.toThrow();
+  });
+});
+
 describe("`_storage` ESM spy-affordance regression (CLAUDE.md non-negotiable)", () => {
   it("Test 11: vi.spyOn(_storage, 'readFileSync') intercepts internal calls (proves indirection works)", async () => {
     process.env[ENV_KEY] = "persist";
