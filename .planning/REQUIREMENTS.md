@@ -238,7 +238,7 @@ Adds Bitcoin + Litecoin support via USB-HID Ledger transport (Ledger BTC app han
 #### Read + Pair (BTC-PAIR-* + BTC-READ-* + LTC-PAIR-* + LTC-READ-*)
 
 - [ ] **BTC-PAIR-01**: `pair_btc_ledger()` opens the Ledger BTC app over USB-HID via `@ledgerhq/hw-app-btc`, returns the first segwit (bc1q…) AND first taproot (bc1p…) addresses verbatim plus a `VERIFY-ON-DEVICE` block instructing the user to confirm on the Ledger screen
-- [ ] **BTC-PAIR-02**: `get_btc_status()` returns `{ paired: true, addresses: { segwit, taproot }, derivationPath, esploraEndpoint, ledgerBtcAppVersion? }`; integrates with PAIR-NEV-* (v2.0 Phase 11) — multi-derivation-path record slots per the v2.0 multi-record-per-chain provision
+- [ ] **BTC-PAIR-02**: `get_btc_status()` returns `{ paired: true, addresses: { segwit, taproot }, derivationPaths: { segwit, taproot }, esploraEndpoint, ledgerBtcAppVersion? }`; integrates with PAIR-NEV-* (v2.0 Phase 11) — multi-derivation-path record slots per the v2.0 multi-record-per-chain provision
 - [ ] **BTC-READ-01**: `get_btc_balance({ wallet })` returns sat + BTC-formatted balance via Esplora `/address/{addr}` endpoint
 - [ ] **BTC-READ-02**: `get_btc_balances({ wallet })` returns segwit + taproot balances separately (UTXOs live at distinct script types per derivation)
 - [ ] **BTC-READ-03**: `get_btc_account_balance({ xpub })` aggregates across all derived addresses under an xpub (gap-limit-respecting scan)
