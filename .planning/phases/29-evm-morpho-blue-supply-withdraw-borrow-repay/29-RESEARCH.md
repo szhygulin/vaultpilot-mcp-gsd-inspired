@@ -474,9 +474,9 @@ Morpho Blue's permissionless design means any market can be created — the regi
 | `0x46b46943...bee` | USDC | sdeUSD | sdeUSD collateral |
 | `0x45671fb8...bca` | USDT | cbBTC | cbBTC/USDT market |
 
-**[ASSUMED — full top-25 list]:** The complete known-market snapshot cannot be determined without real-time API access to Morpho's data. The researcher recommends the planner include a Wave 0 task to snapshot the top 20-30 markets by `totalSupplyAssets` from the Morpho Blue GraphQL API at `blue-api.morpho.org/graphql` at execute time. Format: `src/config/morpho-markets.json` (analogous to `tron-srs.json` from Phase 19).
+**[ASSUMED — full top-25 list]:** The complete known-market snapshot cannot be determined without real-time API access to Morpho's data. The researcher recommends the planner include a Wave 0 task to snapshot the top 20-30 markets by `totalSupplyAssets` from the Morpho Blue GraphQL API at `blue-api.morpho.org/graphql` at execute time. Format: `src/tokens/morpho-markets-ethereum.json` (analogous to `tron-srs.json` from Phase 19).
 
-**Snapshot file pattern (`src/config/morpho-markets.json`):**
+**Snapshot file pattern (`src/tokens/morpho-markets-ethereum.json`):**
 ```json
 [
   {
@@ -701,7 +701,7 @@ return positions.filter(p => p.supplyShares > 0n || p.borrowShares > 0n || p.col
 | Market-ID derivation | Custom keccak | `keccak256(encodeAbiParameters(...))` via viem | Encoding must be ABI-standard (5 × 32-byte padded fields); not raw struct concat |
 | Interest accrual simulation | Server-side compound math | SharesMathLib `wTaylorCompounded` approximation (inline) or just display the stale market() read with a staleness note | Off-chain interest sim is display-only; the on-chain `accrueInterest()` call in each write tx is the authoritative update |
 | Event-log scan for market discovery | Full tx trace | `client.getLogs({ event: SUPPLY_EVENT, args: { onBehalf: user } })` | viem getLogs with indexed event args filter handles the RPC call efficiently |
-| Known-market labeling | Runtime API call | `src/config/morpho-markets.json` snapshot + `idToMarketParams` for unlabeled | Snapshot covers top 20-30; unlabeled markets get raw ID + `[UNKNOWN MARKET]` flag |
+| Known-market labeling | Runtime API call | `src/tokens/morpho-markets-ethereum.json` snapshot + `idToMarketParams` for unlabeled | Snapshot covers top 20-30; unlabeled markets get raw ID + `[UNKNOWN MARKET]` flag |
 
 **Key insight:** Morpho Blue's core contract is immutable and 650 lines. Its math libraries (SharesMathLib, MathLib, MarketParamsLib) are simple enough to inline as TypeScript bigint operations. No SDK is needed.
 
@@ -860,32 +860,37 @@ async function encodeMorphoRepayMax(client, morphoAddress, marketParams, userAdd
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **`prepare_morpho_supply_collateral` vs `prepare_morpho_borrow` — same plan or separate?**
    - What we know: supplyCollateral + borrow are always sequential (post collateral, then borrow). Many users will do both in one session.
    - What's unclear: Does the planner want these as separate atomic tools (matching MOR-02/03 surface) or should there be a `prepare_morpho_supply_collateral_and_borrow` composite?
    - Recommendation: Separate tools per MOR-02/03 requirement wording. Composites are scope creep. The agent can call both sequentially.
+   - **RESOLVED:** Plan 29-03 ships 6 separate prepare tools (`_supply`, `_withdraw`, `_supply_collateral`, `_withdraw_collateral`, `_borrow`, `_repay`). No composites per CLAUDE.md anti-brittle discipline (Phase 19 stake vote/freeze precedent).
 
 2. **Known-market registry — snapshot approach vs live API**
    - What we know: `blue-api.morpho.org/graphql` provides real-time market data. A snapshot file (like `tron-srs.json`) is the established Phase 19 pattern.
    - What's unclear: How many markets to curate (20? 25? 30?) and whether to hard-code market IDs or derive them dynamically.
-   - Recommendation: Wave 0 task to snapshot top 25 markets via GraphQL at execute time; store in `src/config/morpho-markets.json`. Add `[UNKNOWN MARKET — verify oracle + IRM externally]` flag for unlabeled markets.
+   - Recommendation: Wave 0 task to snapshot top 25 markets via GraphQL at execute time; store in `src/tokens/morpho-markets-ethereum.json`. Add `[UNKNOWN MARKET — verify oracle + IRM externally]` flag for unlabeled markets.
+   - **RESOLVED:** 25-entry snapshot in `src/tokens/morpho-markets-ethereum.json` per Plan 29-01 Wave 0 task (GraphQL fetch at execute time). Refresh cadence documented as backlog.
 
 3. **ERC-20 approval pre-flight — surface vs refuse**
    - What we know: Morpho requires ERC-20 approval before supply/supplyCollateral. Aave (Phase 7) similarly required approval.
    - What's unclear: Should `prepare_morpho_supply` refuse with `INVALID_INPUT` if insufficient allowance, or just surface a warning?
    - Recommendation: Match Phase 7's pattern — surface as a warning in the PREPARE RECEIPT ("You may need to approve this token before this transaction executes") but do NOT hard-refuse. The user may have set approval in a prior session.
+   - **RESOLVED:** Plan 29-03 implements SOFT WARNING (`PRE-FLIGHT NOTE` in CHECKS PERFORMED block) — advisory only, no refusal. Mirrors Phase 19 SunSwap pattern.
 
 4. **`get_morpho_market_info` tool — in scope for Phase 29?**
    - What we know: Phase 28 shipped `get_compound_market_info` as a read-only metadata tool. REQUIREMENTS.md §MOR-01 covers positions only; there is no MOR-06 for market info.
    - What's unclear: Whether the planner expects this tool for market discovery / APR surfacing.
    - Recommendation: Omit from Phase 29 (not in MOR-01..05). Add as MOR-06 if needed in v2.3.x.
+   - **RESOLVED:** DEFERRED to v2.3.x. Known-market registry serves as discovery surface. Backlog issue to be filed at Plan 29-03 PR-open.
 
 5. **Fixture letter assignments — next after Phase 28's R/S/T/U**
-   - What we know: Phase 28 used Fixtures R, S, T, U. The next available letters are V, W, X, Y, Z, then need to wrap.
-   - What's unclear: Whether the planner assigns V/W/X/Y for Phase 29's supply/borrow/supplyCollateral/repay fixtures, or uses a different naming scheme.
-   - Recommendation: Use V (supply), W (borrow), X (supplyCollateral), Y (repay). Reserve Z for Phase 30 Lido. The repay-max fixture is borrowShares-dependent so may need special handling (mock-only, no hardcoded literal).
+   - What we know: Phase 28 used Fixtures R, S, T, U. **ROADMAP collision discovered at plan-check iter 1:** V/W/X are RESERVED for Phase 30 Lido (per `30-CONTEXT.md`); Y is RESERVED for Phase 32 Uniswap V3 (per `32-CONTEXT.md`).
+   - What's unclear: Whether to use unclaimed letters (O/P/Q/Z) or adopt a phase-prefixed naming convention.
+   - Recommendation (REVISED post-collision): Use phase-prefixed convention `Morpho-29-{A,B,C,D}` in NEW sibling file `test/signing-fingerprint-morpho.test.ts` — scales forward without consuming single-letter pool. Phase 19 precedent (`Tron-19-{A,B,C,D}` + Phase 20's `Tron-20-A`) validates the phase-prefixed scheme. The repay-max fixture is borrowShares-dependent — Morpho-29-C uses mocked-but-deterministic `borrowShares = 1_000_000_000n` for reproducibility.
+   - **RESOLVED:** Phase-prefixed naming `Morpho-29-{A,B,C,D}` adopted across all 3 plans. Original V/W/X/Y assignments swapped out inline. NEW sibling test file `test/signing-fingerprint-morpho.test.ts` (Phase 28 Compound fixture file BYTE-FROZEN). Single-letter pool preserved for Phases 30 + 32 + future use.
 
 ---
 
@@ -935,14 +940,14 @@ async function encodeMorphoRepayMax(client, morphoAddress, marketParams, userAdd
 - [ ] `test/protocols-morpho-blue.test.ts` — ABI fragment selector byte-identity + encoder round-trips + decoder exhaustive union (covers MOR-02/03/04)
 - [ ] `test/signing-morpho-shares.test.ts` — `toAssetsDown`/`toAssetsUp` formula literals + VIRTUAL_SHARES/VIRTUAL_ASSETS constant anchors
 - [ ] `test/get-morpho-positions.test.ts` — event-log scan mock + position() read + shares-to-assets conversion (covers MOR-01)
-- [ ] `test/prepare-morpho-supply.test.ts` — schema validation + loanToken vs collateralToken gate + encoder + RECEIPT byte-identity + Fixture V anchor
-- [ ] `test/prepare-morpho-borrow.test.ts` — collateral-presence gate + encoder + Fixture W anchor
-- [ ] `test/prepare-morpho-supply-collateral.test.ts` — collateralToken gate + encoder + Fixture X anchor
+- [ ] `test/prepare-morpho-supply.test.ts` — schema validation + loanToken vs collateralToken gate + encoder + RECEIPT byte-identity + Fixture Morpho-29-A anchor
+- [ ] `test/prepare-morpho-borrow.test.ts` — collateral-presence gate + encoder + Fixture Morpho-29-B anchor
+- [ ] `test/prepare-morpho-supply-collateral.test.ts` — collateralToken gate + encoder + Fixture Morpho-29-C anchor
 - [ ] `test/prepare-morpho-repay.test.ts` — `"max"` sentinel reads borrowShares + encodes shares-based repay; `"max"` integration with mock position
 - [ ] `test/prepare-morpho-withdraw.test.ts` — supply-presence gate + encoder
 - [ ] `test/prepare-morpho-withdraw-collateral.test.ts` — collateral-presence gate + encoder
 - [ ] `test/morpho-blue-lifecycle.integration.test.ts` — full lifecycle persona-cycle byte-identity for Fixtures V/W/X (not Y — repay-max is shares-dependent)
-- [ ] `src/config/morpho-markets.json` — known-market registry (Wave 0 snapshot task)
+- [ ] `src/tokens/morpho-markets-ethereum.json` — known-market registry (Wave 0 snapshot task)
 
 ---
 
@@ -1027,6 +1032,6 @@ Phase 29 maps DIRECTLY onto Phase 28's file structure with these bounded diffs:
 | Phase 28 4 plans | Phase 29 estimate: 3 plans | Fewer tools needed per plan (no intent-gate complexity); market registry adds a Wave 0 task |
 
 **Recommended 3-plan carve:**
-- **Plan 29-01:** `MORPHO_BLUE_RAW` sub-table + `getMorphoBlueAddress(chainId)` getter + `src/protocols/morpho-blue.ts` (ABI + 6 selectors + encoders + decoder) + `src/config/morpho-markets.json` snapshot (Wave 0 task: enumerate top 25 markets) + Fixtures V/W/X literal anchors in `test/signing-fingerprint.test.ts` + `test/protocols-morpho-blue.test.ts`.
+- **Plan 29-01:** `MORPHO_BLUE_RAW` sub-table + `getMorphoBlueAddress(chainId)` getter + `src/protocols/morpho-blue.ts` (ABI + 6 selectors + encoders + decoder) + `src/tokens/morpho-markets-ethereum.json` snapshot (Wave 0 task: enumerate top 25 markets) + Fixtures Morpho-29-A/B/C literal anchors in `test/signing-fingerprint.test.ts` + `test/protocols-morpho-blue.test.ts`.
 - **Plan 29-02:** `src/chains/morpho-blue.ts` (readPosition + readMarketParams + getAllTouchedMarkets event-log) + `src/signing/morpho-shares.ts` (toAssetsDown/toAssetsUp inline constants) + `get_morpho_positions` tool (event-log scan → position reads → shares-to-assets → known-market labels). Depends on 29-01.
 - **Plan 29-03:** All 6 prepare tools (supply / withdraw / supplyCollateral / withdrawCollateral / borrow / repay) + repay-max borrowShares logic + RECEIPT templates + intent-validation gates (loan/collateral token assertion) + `preview_send.ts` 4th-tier Morpho dispatch (NO LEDGER NOTICE for main functions) + `canonical-dispatch.ts` Morpho address add + lifecycle integration test + `register-all.ts` +7 imports. Depends on 29-01 + 29-02.
