@@ -129,7 +129,7 @@ describe("set_demo_wallet — TRON slug refused in real mode (T-PERSONA-CONFUSIO
 });
 
 describe("set_demo_wallet — INPUT_SCHEMA enum includes 'tron-whale' (Plan 17-05)", () => {
-  it("registered tool's inputSchema.enum widens to 6 slugs", () => {
+  it("registered tool's inputSchema.enum contains tron-whale + the 6 prior slugs (additive — count may grow as new chains land)", () => {
     const tool = getRegisteredTool("set_demo_wallet");
     if (!tool) throw new Error("set_demo_wallet not registered");
     const schema = tool.inputSchema as {
@@ -142,7 +142,12 @@ describe("set_demo_wallet — INPUT_SCHEMA enum includes 'tron-whale' (Plan 17-0
     expect(enumValues).toContain("staking-maxi");
     expect(enumValues).toContain("solana-whale");
     expect(enumValues).toContain("tron-whale");
-    expect(enumValues.length).toBe(6);
+    // Lower-bound assertion — additive new-chain widening (Plan 22-04 adds
+    // btc-whale → 7; future LTC adds litecoin-whale → 8). The original
+    // `.toBe(6)` assertion was tightened to lower-bound to preserve the
+    // intent (Plan 17-05 ships AT LEAST these 6) while accommodating
+    // forward-compatible additive widening. See Plan 22-04 deviation note.
+    expect(enumValues.length).toBeGreaterThanOrEqual(6);
   });
 
   it("tool DESCRIPTION mentions tron-whale (agent routing prompt)", () => {
