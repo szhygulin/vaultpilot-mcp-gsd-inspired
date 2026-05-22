@@ -187,40 +187,6 @@ registerTool(
       const newFeeRate = rawNewFeeRate;
 
       // -----------------------------------------------------------------------
-      // Step 1b: Upper-bound sanity check on newFeeRate (WR-01 / D-03 parity).
-      // Mirrors prepare_btc_send's BTC_FEE_RATE_OUT_OF_BOUNDS guard.
-      // Cap: newFeeRate <= 10× current high-priority estimate.
-      // Fetch is best-effort — if Esplora is unavailable, skip the upper bound
-      // and let the floor check and BTC_RBF_CANNOT_AFFORD serve as backstops.
-      // -----------------------------------------------------------------------
-      {
-        const feeEstResult = await fetchFeeEstimates();
-        if (feeEstResult.kind === "ok") {
-          const highPriority = feeEstResult.estimates["1"] ?? 500;
-          if (newFeeRate > highPriority * 10) {
-            return {
-              isError: true,
-              content: [
-                {
-                  type: "text",
-                  text:
-                    `error: newFeeRate ${newFeeRate} sat/vB exceeds 10× the high-priority ` +
-                    `estimate (${highPriority * 10} sat/vB). This is likely a mistake. ` +
-                    `Use a newFeeRate <= ${highPriority * 10} sat/vB.`,
-                },
-              ],
-              structuredContent: errEnvelope(
-                "BTC_FEE_RATE_OUT_OF_BOUNDS",
-                `newFeeRate ${newFeeRate} sat/vB exceeds 10× high-priority estimate (${highPriority * 10} sat/vB)`,
-              ),
-            };
-          }
-        }
-        // If feeEstResult.kind !== "ok", skip the upper-bound check silently —
-        // the RBF-specific floor check and CANNOT_AFFORD guard remain in force.
-      }
-
-      // -----------------------------------------------------------------------
       // Step 2: Demo-mode FIRST refusal — read BTC persona registry.
       // Real-mode pairing check happens AFTER the demo branch.
       // Mirror of prepare_btc_send Step 2 ordering (T-23-11 mitigation).
@@ -390,6 +356,40 @@ registerTool(
       const originalFeeSats = originalInputSum - originalOutputSum;
       const originalVsize = Math.ceil(txData.weight / 4);
       const originalFeeRate = Number(originalFeeSats) / originalVsize;
+
+      // -----------------------------------------------------------------------
+      // Step 6b: Upper-bound sanity check on newFeeRate (WR-01 / D-03 parity).
+      // Mirrors prepare_btc_send's BTC_FEE_RATE_OUT_OF_BOUNDS guard.
+      // Placed here (after Esplora data is in hand) so demo-mode / pairing /
+      // not-found / confirmed / RBF-signal refusals still fire in the correct
+      // order. Fetch is best-effort: if Esplora unavailable, the upper-bound
+      // check is skipped silently — BTC_RBF_CANNOT_AFFORD remains as backstop.
+      // -----------------------------------------------------------------------
+      {
+        const feeEstResult = await fetchFeeEstimates();
+        if (feeEstResult.kind === "ok") {
+          const highPriority = feeEstResult.estimates["1"] ?? 500;
+          if (newFeeRate > highPriority * 10) {
+            return {
+              isError: true,
+              content: [
+                {
+                  type: "text",
+                  text:
+                    `error: newFeeRate ${newFeeRate} sat/vB exceeds 10× the high-priority ` +
+                    `estimate (${highPriority * 10} sat/vB). This is likely a mistake. ` +
+                    `Use a newFeeRate <= ${highPriority * 10} sat/vB.`,
+                },
+              ],
+              structuredContent: errEnvelope(
+                "BTC_FEE_RATE_OUT_OF_BOUNDS",
+                `newFeeRate ${newFeeRate} sat/vB exceeds 10× high-priority estimate (${highPriority * 10} sat/vB)`,
+              ),
+            };
+          }
+        }
+        // If feeEstResult.kind !== "ok", skip the upper-bound check silently.
+      }
 
       // -----------------------------------------------------------------------
       // Step 7: BIP-125 Rule 4 check — new rate must exceed original by >= 1 sat/vB.
