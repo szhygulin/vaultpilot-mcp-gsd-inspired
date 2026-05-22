@@ -152,7 +152,7 @@ registerTool(
       // Step 1: Input validation — FIRES FIRST (before any state read).
       // -----------------------------------------------------------------------
 
-      // txid: must be exactly 64 lowercase hex characters.
+      // txid: must be exactly 64 case-insensitive hex characters.
       if (!/^[0-9a-fA-F]{64}$/.test(rawTxid)) {
         return {
           isError: true,
@@ -403,7 +403,7 @@ registerTool(
               text:
                 `error: newFeeRate (${newFeeRate} sat/vB) must exceed the original fee rate ` +
                 `(${originalFeeRate.toFixed(2)} sat/vB) by at least ${MIN_RELAY_FEE_BUMP_SATS_PER_VB} sat/vB ` +
-                `(BIP-125 Rule 4). Use newFeeRate >= ${Math.ceil(originalFeeRate + MIN_RELAY_FEE_BUMP_SATS_PER_VB + 1)}.`,
+                `(BIP-125 Rule 4). Use newFeeRate >= ${Math.ceil(originalFeeRate + MIN_RELAY_FEE_BUMP_SATS_PER_VB) + 1}.`,
             },
           ],
           structuredContent: errEnvelope(
