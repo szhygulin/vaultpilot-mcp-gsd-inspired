@@ -19,6 +19,7 @@
 //     the first read tool call works out of the box.
 
 import { findBtcPersona } from "./bitcoin-persona.js";
+import { findLtcPersona } from "./litecoin-persona.js";
 import { PERSONAS, type Persona } from "./personas.js";
 import { findSolanaPersona } from "./solana-persona.js";
 import { findTronPersona } from "./tron-persona.js";
@@ -58,6 +59,21 @@ export interface TronPersona {
 }
 
 /**
+ * Phase 26 — Plan 26-02 carve. The full `LtcPersona` interface +
+ * registry ship in `src/demo/litecoin-persona.ts`; this file defines the
+ * minimal shape so `prepare_litecoin_native_send`'s demo-mode address
+ * resolver compiles against a stable contract. Mirrors the BTC carve pattern
+ * (Plan 22-04). LTC only carries ONE address (ltc1q segwit P2WPKH) —
+ * no taproot in Phase 26.
+ */
+export interface LtcPersona {
+  readonly slug: string;
+  /** bech32-encoded segwit (P2WPKH) LTC address — ltc1q prefix, 43 chars. */
+  readonly ltcSegwitAddress: string;
+  readonly description?: string;
+}
+
+/**
  * Phase 22 — Plan 22-04 carve. The full `BtcPersona` interface +
  * registry ship in `src/demo/bitcoin-persona.ts`; this file defines the
  * minimal shape so `set_demo_wallet`'s BTC slug routing compiles against
@@ -81,6 +97,7 @@ let activePersona: Persona | null = null;
 let activeSolanaPersona: SolanaPersona | null = null;
 let activeTronPersona: TronPersona | null = null;
 let activeBtcPersona: BtcPersona | null = null;
+let activeLtcPersona: LtcPersona | null = null;
 
 /**
  * Returns the currently active persona, or `null` if none has been set.
@@ -274,6 +291,42 @@ export function setActiveBtcPersonaBySlug(slug: string): BtcPersona {
 }
 
 /**
+ * Returns the currently active LTC persona, or `null` if none has been
+ * set. Phase 26 Plan 26-02 surface. Mirror of BTC / TRON / Solana shape.
+ */
+export function getActiveLtcPersona(): LtcPersona | null {
+  return activeLtcPersona;
+}
+
+/**
+ * Activate an LTC persona. Phase 26 Plan 26-02 surface.
+ * Defense-in-depth: throws if persona is falsy or missing ltcSegwitAddress.
+ */
+export function setActiveLtcPersona(persona: LtcPersona): LtcPersona {
+  if (!persona || typeof persona.ltcSegwitAddress !== "string") {
+    throw new Error(
+      "setActiveLtcPersona: persona must have a ltcSegwitAddress",
+    );
+  }
+  activeLtcPersona = persona;
+  return persona;
+}
+
+/**
+ * Activate an LTC persona by slug — Plan 26-02 surface. Resolves the
+ * slug against the `LTC_PERSONAS` registry in
+ * `src/demo/litecoin-persona.ts`, then delegates to
+ * `setActiveLtcPersona`.
+ */
+export function setActiveLtcPersonaBySlug(slug: string): LtcPersona {
+  const persona = findLtcPersona(slug);
+  if (!persona) {
+    throw new Error(`unknown LTC persona slug: ${String(slug)}`);
+  }
+  return setActiveLtcPersona(persona);
+}
+
+/**
  * Test-only helper. Production code MUST NOT call this — the active
  * persona is process-local and intentionally non-resettable in normal
  * operation. Tests use this to restore isolation between cases.
@@ -283,4 +336,5 @@ export function _resetActivePersonaForTesting(): void {
   activeSolanaPersona = null;
   activeTronPersona = null;
   activeBtcPersona = null;
+  activeLtcPersona = null;
 }

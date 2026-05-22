@@ -84,6 +84,8 @@ export interface PrepareArgs {
   slippageBps?: string;
   /** Phase 23 — BTC native amount as raw satoshis decimal string (e.g. "100000"). Populated by `prepare_btc_send` (Plan 23-03). */
   sats?: string;
+  /** Phase 26 — LTC native amount as raw litoshis decimal string (e.g. "100000"). Populated by `prepare_litecoin_native_send` (Plan 26-02). */
+  litoshi?: string;
 }
 
 /**
@@ -711,7 +713,141 @@ export interface PreparedTxBtc {
   instructionSummary?: BtcInstructionSummary[];
 }
 
-export type PreparedTx = PreparedTxEvm | PreparedTxSolana | PreparedTxTron | PreparedTxBtc;
+// ---------------------------------------------------------------------------
+// Phase 26 Plan 26-02 widening: PreparedTxLtc + LtcInstructionSummary.
+// ADDITIVE TYPE SURFACE — state machine + TTL logic BYTE-IDENTICAL
+// (same pattern as Phase 23 PreparedTxBtc).
+// ---------------------------------------------------------------------------
+
+/**
+ * Phase 26 — decoded LTC instruction summary for the DECODED ARGS block
+ * in preview_send LTC branch (Plan 26-02). Mirrors BtcInstructionSummary —
+ * only native kind (P2WPKH segwit ltc1q… addresses).
+ */
+export type LtcInstructionSummary = {
+  kind: "native";
+  /** Sender ltc1q segwit address. */
+  fromSegwit: string;
+  /** Recipient ltc1q address (or L-prefix legacy). */
+  to: string;
+  /** Amount being sent to the recipient in litoshis. */
+  litoshis: bigint;
+  /** Miner fee in litoshis. */
+  feeSats: bigint;
+};
+
+/**
+ * LTC prepared-tx shape. Phase 26 — Plan 26-02. Mirrors PreparedTxBtc exactly
+ * with `txType: "litecoin"` as the discriminator. Sentinel EVM fields follow
+ * the same BTC/TRON/Solana pattern — zero/empty values that hit the Layer 0.5
+ * dispatch-target refusal before reaching EVM processing.
+ *
+ * FROZEN guard: this interface is ADDITIVE TYPE SURFACE only. The handle-store
+ * state machine + TTL + createHandle + transitionTo* logic is BYTE-IDENTICAL
+ * (Phase 23 PreparedTxBtc precedent at line 537).
+ */
+export interface PreparedTxLtc {
+  /** Required discriminator — LTC UTXO-model shape. */
+  txType: "litecoin";
+
+  // -----------------------------------------------------------------------
+  // EVM-shape sentinel fields (set to zero / empty values for LTC handles).
+  // -----------------------------------------------------------------------
+  /** Sentinel — LTC has no EVM chainId. Always 0. */
+  chainId: number;
+  /** Sentinel — LTC addresses are bech32, not 0x-prefixed. Always the zero address. */
+  to: Address;
+  /** Sentinel — LTC uses litoshis, not valueWei. Always 0n. */
+  valueWei: bigint;
+  /** Sentinel — LTC has no EVM calldata. Always `"0x"`. */
+  data: Hex;
+  /** Sentinel — LTC has no EVM nonce. Always undefined. */
+  nonce?: number;
+  gas?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+
+  // -----------------------------------------------------------------------
+  // LTC-specific discriminator.
+  // -----------------------------------------------------------------------
+  /**
+   * LTC send kind. `"native"` covers all Phase 26 sends (P2WPKH segwit).
+   */
+  kind: "native";
+
+  // -----------------------------------------------------------------------
+  // LTC-specific cryptographic-binding fields.
+  // Mirrors PreparedTxBtc fields (lines 633-711) with "litecoin" labeling.
+  // -----------------------------------------------------------------------
+
+  /**
+   * PSBT-v0 in base64. The payload relayed to the Ledger LTC transport.
+   * Canonical recompute artifact is `unsignedTxHex` + `perInputPrevouts`
+   * (Pitfall 5 mitigation).
+   */
+  psbtBase64: string;
+
+  /**
+   * Unsigned transaction hex — canonical artifact for fingerprint recompute
+   * (Pitfall 5). BIP-143 is identical for LTC and BTC.
+   */
+  unsignedTxHex: string;
+
+  /**
+   * Ordered per-input prevout descriptors — one per selected UTXO input.
+   * Mirrors PreparedTxBtc.perInputPrevouts — same shape, LTC context.
+   * Only p2wpkh supported in Phase 26 (no taproot on Litecoin).
+   */
+  perInputPrevouts: readonly {
+    script: Uint8Array;
+    valueSats: bigint;
+    scriptType: "p2wpkh";
+  }[];
+
+  /** Per-input script types in PSBT order. LTC: always p2wpkh for Phase 26. */
+  inputScriptTypes: readonly "p2wpkh"[];
+
+  /** Decoded input summary for the PREPARE RECEIPT + DECODED block. */
+  inputs: readonly {
+    txid: string;
+    vout: number;
+    valueSats: bigint;
+    scriptType: "p2wpkh";
+  }[];
+
+  /** Decoded output summary for the PREPARE RECEIPT + DECODED block. */
+  outputs: readonly {
+    address: string;
+    valueSats: bigint;
+    role: "recipient" | "change";
+  }[];
+
+  /** Total miner fee in litoshis. Surfaced verbatim in the PREPARE RECEIPT. */
+  feeSats: bigint;
+
+  /** Change amount in litoshis (0n if no change output). */
+  changeSats: bigint;
+
+  /** Fee rate used for coin selection (sat/vByte, integer). */
+  feeRate: number;
+
+  /**
+   * Derivation path of the change output address.
+   * `null` when there is no change output (changeSats===0n).
+   */
+  changePath: string | null;
+
+  /**
+   * Change output address (ltc1q…).
+   * `null` when changeSats===0n.
+   */
+  changeAddress: string | null;
+
+  /** Optional decoded instruction summary for the DECODED ARGS block in preview_send. */
+  instructionSummary?: LtcInstructionSummary[];
+}
+
+export type PreparedTx = PreparedTxEvm | PreparedTxSolana | PreparedTxTron | PreparedTxBtc | PreparedTxLtc;
 
 /**
  * Preview-pinned fields, persisted onto the record at `transitionToPreviewed`

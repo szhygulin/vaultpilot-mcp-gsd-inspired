@@ -34,7 +34,7 @@
 // ─── Side-effect import: guarantee initEccLib fires ──────────────────────────
 import "../chains/bitcoin/types.js";
 
-import { Psbt, networks, payments, address as btcAddress } from "bitcoinjs-lib";
+import { Psbt, networks, payments, address as btcAddress, type Network } from "bitcoinjs-lib";
 import { bytesToHex } from "@noble/hashes/utils";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -94,6 +94,13 @@ export interface BtcPsbtArgs {
    * Pass `0xfffffffd` from `prepare_btc_send` when `signalRbf: true` (Design Fork 1).
    */
   readonly sequenceOverride?: number;
+  /**
+   * Optional bitcoinjs-lib Network object. Defaults to `networks.bitcoin`.
+   * Pass `LTC_NETWORK` from `src/chains/litecoin/types.ts` for LTC PSBT construction.
+   * RESEARCH Pitfall 2: omitting this defaults to BTC mainnet and silently produces
+   * bc1q addresses for LTC PSBTs — always pass the network explicitly for non-BTC chains.
+   */
+  readonly network?: Network;
 }
 
 /** Per-input prevout descriptor for fingerprint recompute (Pitfall 5 canonical artifact). */
@@ -188,21 +195,24 @@ export class BtcDustError extends Error {
  * Derive the witnessUtxo script for a given address.
  * Uses bitcoinjs-lib.address.toOutputScript for correct bech32/bech32m
  * checksum handling (Phase 22 Pitfall 1 — never use regex alone).
+ * Pass `network` explicitly — defaults to `networks.bitcoin` only for BTC callers.
  */
-function addressToScript(addr: string): Uint8Array {
-  return btcAddress.toOutputScript(addr, networks.bitcoin);
+function addressToScript(addr: string, network: Network = networks.bitcoin): Uint8Array {
+  return btcAddress.toOutputScript(addr, network);
 }
 
 /**
  * Build the witnessUtxo script for a PSBT input given the input's address.
  * For p2wpkh: derive the address from the pubkey then get the script.
  * For p2tr: derive the address from the x-only internal pubkey then get the script.
+ * Pass `network` explicitly — defaults to `networks.bitcoin` only for BTC callers.
+ * RESEARCH Pitfall 2: omitting network defaults to BTC mainnet; always pass for LTC.
  */
-function inputWitnessScript(input: BtcPsbtInput): Uint8Array {
+function inputWitnessScript(input: BtcPsbtInput, network: Network = networks.bitcoin): Uint8Array {
   if (input.scriptType === "p2wpkh") {
     const payment = payments.p2wpkh({
       pubkey: Buffer.from(input.pubkey),
-      network: networks.bitcoin,
+      network,
     });
     if (!payment.output) throw new Error(`btc-psbt: p2wpkh payment has no output for input ${input.txid}:${input.vout}`);
     return payment.output;
@@ -211,7 +221,7 @@ function inputWitnessScript(input: BtcPsbtInput): Uint8Array {
   const xOnly = input.xOnlyPubkey ?? input.pubkey.slice(1, 33);
   const payment = payments.p2tr({
     internalPubkey: Buffer.from(xOnly),
-    network: networks.bitcoin,
+    network,
   });
   if (!payment.output) throw new Error(`btc-psbt: p2tr payment has no output for input ${input.txid}:${input.vout}`);
   return payment.output;
@@ -242,6 +252,7 @@ function inputWitnessScript(input: BtcPsbtInput): Uint8Array {
 export function buildBtcPsbt(args: BtcPsbtArgs): BtcPsbtResult {
   const { inputs, recipientOutput, changeOutput, dustThresholdSats } = args;
   const effectiveSequence = args.sequenceOverride ?? RBF_DISABLED_SEQUENCE;
+  const network = args.network ?? networks.bitcoin;
 
   if (inputs.length === 0) {
     throw new Error("btc-psbt: at least one input required");
@@ -265,13 +276,13 @@ export function buildBtcPsbt(args: BtcPsbtArgs): BtcPsbtResult {
   }
 
   // ── Build the PSBT ────────────────────────────────────────────────────────
-  const psbt = new Psbt({ network: networks.bitcoin });
+  const psbt = new Psbt({ network });
 
   const perInputPrevouts: BtcPrevout[] = [];
   const decodedInputs: BtcDecodedInput[] = [];
 
   for (const inp of inputs) {
-    const witnessScript = inputWitnessScript(inp);
+    const witnessScript = inputWitnessScript(inp, network);
     perInputPrevouts.push({
       script: witnessScript,
       valueSats: inp.valueSats,
@@ -416,8 +427,9 @@ export function buildBtcPsbt(args: BtcPsbtArgs): BtcPsbtResult {
  * Decode a PSBT base64 string into a discriminated union.
  * NEVER throws — returns { kind: "unknown" } on any malformed input.
  * Consumed by the preview_send BTC branch (Plan 23-04) for the DECODED block.
+ * Pass `network` when decoding LTC PSBTs — defaults to `networks.bitcoin` for BTC.
  */
-export function decodeBtcPsbt(psbtBase64: string): BtcPsbtDecoded {
+export function decodeBtcPsbt(psbtBase64: string, network: Network = networks.bitcoin): BtcPsbtDecoded {
   try {
     const psbt = Psbt.fromBase64(psbtBase64);
     // txInputs and txOutputs are the parsed tx-level input/output views.
@@ -442,7 +454,7 @@ export function decodeBtcPsbt(psbtBase64: string): BtcPsbtDecoded {
       if (txOut === undefined) throw new Error(`btc-psbt: missing txOutput at index ${i}`);
       let addr = "unknown";
       try {
-        addr = btcAddress.fromOutputScript(txOut.script, networks.bitcoin);
+        addr = btcAddress.fromOutputScript(txOut.script, network);
       } catch {
         // Non-standard script — leave as "unknown".
       }
