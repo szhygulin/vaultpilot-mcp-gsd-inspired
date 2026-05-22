@@ -244,9 +244,9 @@ Adds Bitcoin + Litecoin support via USB-HID Ledger transport (Ledger BTC app han
 - [ ] **BTC-READ-03**: `get_btc_account_balance({ xpub })` aggregates across all derived addresses under an xpub (gap-limit-respecting scan)
 - [ ] **BTC-READ-04**: `get_btc_tx_history({ wallet, limit })` returns recent transactions via Esplora `/address/{addr}/txs`
 - [ ] **BTC-READ-05**: `get_btc_fee_estimates()` returns Esplora's fee-rate estimates (sat/vB) for 1/2/3/6/144-block confirmation targets
-- [ ] **LTC-PAIR-01**: `pair_litecoin_ledger()` opens the Ledger BTC app in LTC account-config mode (or Ledger Litecoin app per the device firmware revision); returns LTC base58 (M-prefixed) AND ltc1q-segwit addresses; PAIR-NEV-* `chain: "litecoin"` record key reuse
-- [ ] **LTC-READ-01**: `get_litecoin_balance({ wallet })` returns litoshi + LTC-formatted balance via litecoinspace.org Esplora-compatible endpoint
-- [ ] **LTC-READ-02**: `get_litecoin_tx_history` + `get_litecoin_fee_estimates` mirror the BTC equivalents against litecoinspace.org
+- [x] **LTC-PAIR-01**: `pair_litecoin_ledger()` opens the Ledger BTC app in LTC account-config mode (or Ledger Litecoin app per the device firmware revision); returns LTC base58 (M-prefixed) AND ltc1q-segwit addresses; PAIR-NEV-* `chain: "litecoin"` record key reuse
+- [x] **LTC-READ-01**: `get_litecoin_balance({ wallet })` returns litoshi + LTC-formatted balance via litecoinspace.org Esplora-compatible endpoint
+- [x] **LTC-READ-02**: `get_litecoin_tx_history` + `get_litecoin_fee_estimates` mirror the BTC equivalents against litecoinspace.org
 
 #### Prepare → Preview → Send (BTC-PREP-* + BTC-PSBT-*)
 

@@ -736,7 +736,7 @@ Plans:
 
 **Wave 1**
 
-- [ ] 26-01-PLAN.md — LTC scaffolding: `src/chains/litecoin/` shelf (types + registry + esplora-client; litecoinspace.org `/api/v1/fees/recommended` divergence) + `pair_litecoin_ledger` (dual-address, Litecoin-app gate) + `get_litecoin_balance` / `get_litecoin_tx_history` / `get_litecoin_fee_estimates` (LTC-PAIR-01, LTC-READ-01, LTC-READ-02)
+- [x] 26-01-PLAN.md — LTC scaffolding: `src/chains/litecoin/` shelf (types + registry + esplora-client; litecoinspace.org `/api/v1/fees/recommended` divergence) + `pair_litecoin_ledger` (dual-address, Litecoin-app gate) + `get_litecoin_balance` / `get_litecoin_tx_history` / `get_litecoin_fee_estimates` (LTC-PAIR-01, LTC-READ-01, LTC-READ-02)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -1126,7 +1126,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 23. BTC native + segwit + taproot trust pipeline (PSBT-based) | v2.2 | 4/4 | Complete    | 2026-05-22 |
 | 24. BIP-125 RBF + BIP-137 message signing | v2.2 | 2/2 | Complete    | 2026-05-22 |
 | 25. PSBT multisig flow (combine / sign / finalize + multisig wallet registry) | v2.2 | 3/3 | Complete    | 2026-05-22 |
-| 26. LTC scaffolding + LiFi BTC→EVM/Solana bridging | v2.2 | 0/3 | Not started | - |
+| 26. LTC scaffolding + LiFi BTC→EVM/Solana bridging | v2.2 | 1/3 | In Progress|  |
 | 27. Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics | v2.2 | 0/3 | Not started | - |
 | 28. Compound V3 — multi-Comet supply/withdraw/borrow/repay (Ethereum mainnet — 6 Comets) | v2.3 | 4/4 | Complete (verify-phase open); closes #64 | 2026-05-20 |
 | 29. Morpho Blue — supply/withdraw/borrow/repay | v2.3 | 0/3 | Not started | - |
