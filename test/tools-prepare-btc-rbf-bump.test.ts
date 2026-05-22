@@ -81,6 +81,7 @@ import {
 import { _btcPsbt } from "../src/protocols/btc-psbt.js";
 import { _btcSighash } from "../src/signing/btc-sighash.js";
 import { _btcFingerprint } from "../src/signing/btc-fingerprint.js";
+import { _resetEsploraCacheForTesting } from "../src/chains/bitcoin/esplora-client.js";
 import {
   getRegisteredTool,
   type ToolHandlerResult,
@@ -205,6 +206,9 @@ beforeEach(async () => {
   _resetHandleStoreForTesting();
   _resetActivePersonaForTesting();
   _resetDemoModeForTesting();
+  // Clear Esplora caches so the fee-estimates cache from prior tests does not
+  // bleed into the WR-01 upper-bound check test (which stubs fetch per call).
+  _resetEsploraCacheForTesting();
   // Re-apply createHandleSpy implementation after vi.restoreAllMocks() clears it in afterEach.
   // Pattern from prepare-btc-send.test.ts — restoreAllMocks() strips spy implementations; re-apply here.
   const realHandleStore = await vi.importActual<
@@ -629,6 +633,244 @@ describe("prepare_btc_rbf_bump — BTC-W-02 (Phase 24 Plan 24-01)", () => {
       expect((result.structuredContent as { errorCode?: string })?.errorCode).toBe(
         "INVALID_INPUT",
       );
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // CR-01 regression: multi-recipient originals must NOT silently drop outputs
+  // --------------------------------------------------------------------------
+  describe("CR-01 — multi-recipient original tx refusal (BIP-125 Rule 2)", () => {
+    beforeEach(() => {
+      listAccountsSpy.mockReturnValue([BTC_ACCOUNT]);
+    });
+
+    it("INVALID_INPUT when original tx has 2 non-change recipient outputs (must not drop silently)", async () => {
+      // tx with 3 vouts: recipient1 + recipient2 + change
+      // change is vout[2] (matches BTC_ACCOUNT.address); vout[0] and vout[1] are recipients.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            txid: "aaaa".repeat(16),
+            version: 2,
+            locktime: 0,
+            size: 150,
+            weight: 600,
+            fee: 20_000,
+            vin: [
+              {
+                txid: "bbbb".repeat(16),
+                vout: 0,
+                sequence: 0xfffffffd,
+                prevout: {
+                  scriptpubkey: "0014" + "00".repeat(20),
+                  scriptpubkey_address: "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+                  scriptpubkey_type: "v0_p2wpkh",
+                  value: 1_200_000,
+                },
+              },
+            ],
+            vout: [
+              {
+                scriptpubkey: "0014" + "11".repeat(20),
+                scriptpubkey_address: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+                scriptpubkey_type: "v0_p2wpkh",
+                value: 500_000, // recipient 1
+              },
+              {
+                scriptpubkey: "0014" + "22".repeat(20),
+                scriptpubkey_address: "bc1q9d5f2fsmq8eel3x5fwevyxzqxk3yfcph3ykcgp",
+                scriptpubkey_type: "v0_p2wpkh",
+                value: 400_000, // recipient 2 — would be silently dropped by a find-first bug
+              },
+              {
+                scriptpubkey: "0014" + "33".repeat(20),
+                scriptpubkey_address: BTC_ACCOUNT.address,
+                scriptpubkey_type: "v0_p2wpkh",
+                value: 280_000, // change
+              },
+            ],
+            status: { confirmed: false },
+          }),
+        }),
+      );
+
+      // originalFeeRate = 20_000 / (600/4) = 20_000/150 ≈ 133.3 sat/vB; need > 134.3
+      const result = await callTool({ txid: "aa".repeat(32), newFeeRate: 200 });
+      expect(result.isError).toBe(true);
+      const sc = result.structuredContent as { errorCode?: string; message?: string };
+      expect(sc.errorCode).toBe("INVALID_INPUT");
+      // The error message must explicitly mention the number of outputs — not just a generic error
+      const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+      expect(text).toMatch(/2\s+non-change/i);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // CR-02 regression: FEE_DELTA_SATS must match actual PSBT fee (not estimate)
+  // --------------------------------------------------------------------------
+  describe("CR-02 — feeDeltaSats from actual PSBT fee (dust-folding case)", () => {
+    beforeEach(() => {
+      listAccountsSpy.mockReturnValue([BTC_ACCOUNT]);
+      // Setup: original tx fee=20_000 sats; weight=440 → vsize=110; feeRate≈181.8 sat/vB.
+      // newFeeRate=300 → estimate newFee = ceil(300*110) = 33_000.
+      // But: mock buildBtcPsbt returns feeSats=33_100 (100 sats of dust folded into fee).
+      // The receipt feeDeltaSats must be 33_100 - 20_000 = 13_100, NOT 33_000 - 20_000 = 13_000.
+      stubFetchWithTx(makeEsploraTxResponse({ vout1Address: BTC_ACCOUNT.address }));
+      // Override buildBtcPsbt mock to return feeSats = 33_100 (100 extra from dust fold).
+      vi.spyOn(_btcPsbt, "buildBtcPsbt").mockReturnValue({
+        psbtBase64: "dGVzdC1wc2J0",
+        unsignedTxHex:
+          "0100000001" +
+          "bbbb".repeat(16) + "00000000" +
+          "00" +
+          "fdffffff" +
+          "01" + // 1 output (no change — dust folded)
+          "806d0d0000000000" + "16" + "0014" + "11".repeat(20) +
+          "00000000",
+        perInputPrevouts: [
+          {
+            script: new Uint8Array(22),
+            valueSats: 1_000_000n,
+            scriptType: "p2wpkh" as const,
+          },
+        ],
+        inputs: [{ txid: "bbbb".repeat(16), vout: 0, valueSats: 1_000_000n, scriptType: "p2wpkh" as const }],
+        outputs: [{ address: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4", valueSats: 880_000n, role: "recipient" as const }],
+        feeSats: 33_100n, // 100 sats extra from dust fold — the estimate was 33_000
+        changeSats: 0n,
+      });
+    });
+
+    it("feeDeltaSats in structuredContent equals psbtResult.feeSats - originalFeeSats (not rate estimate)", async () => {
+      // originalFeeSats = 1_000_000 - 880_000 - 100_000 = 20_000 (from makeEsploraTxResponse default)
+      const result = await callTool({ txid: "aa".repeat(32), newFeeRate: 300 });
+      expect(result.isError).toBeFalsy();
+      const sc = result.structuredContent as Record<string, unknown>;
+      // feeDeltaSats must come from psbt.feeSats (33_100) not newFeeSats estimate (33_000)
+      expect(sc.feeDeltaSats).toBe(String(33_100n - 20_000n)); // "13100" not "13000"
+    });
+
+    it("feeDeltaSats in PREPARE RECEIPT equals psbtResult.feeSats - originalFeeSats", async () => {
+      const result = await callTool({ txid: "aa".repeat(32), newFeeRate: 300 });
+      expect(result.isError).toBeFalsy();
+      const sc = result.structuredContent as Record<string, unknown>;
+      const receipt = sc.prepareReceipt as string;
+      // receipt must contain 13100, not 13000
+      expect(receipt).toContain("13100");
+      expect(receipt).not.toContain("13000");
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // WR-01 regression: BTC_FEE_RATE_OUT_OF_BOUNDS upper-bound guard
+  // --------------------------------------------------------------------------
+  describe("WR-01 — newFeeRate upper-bound (BTC_FEE_RATE_OUT_OF_BOUNDS)", () => {
+    beforeEach(() => {
+      listAccountsSpy.mockReturnValue([BTC_ACCOUNT]);
+    });
+
+    it("BTC_FEE_RATE_OUT_OF_BOUNDS when newFeeRate exceeds 10× high-priority estimate", async () => {
+      // Execution order: (1) fetchBtcTx, (2) fetchFeeEstimates.
+      // The fetchFeeEstimates call (step 6b) fires AFTER fetchBtcTx (step 3).
+      // Mock accordingly: first call → tx JSON, second call → fee-estimates JSON.
+      vi.stubGlobal(
+        "fetch",
+        vi.fn()
+          // First call: fetchBtcTx → valid RBF-signalling tx
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => makeEsploraTxResponse({ vout1Address: BTC_ACCOUNT.address }),
+          })
+          // Second call: fetchFeeEstimates → highPriority = 100 sat/vB → cap = 1000
+          .mockResolvedValueOnce({
+            ok: true,
+            status: 200,
+            json: async () => ({ "1": 100, "3": 50, "6": 20 }),
+          }),
+      );
+
+      // newFeeRate = 1500 > 100 * 10 = 1000 → should refuse BTC_FEE_RATE_OUT_OF_BOUNDS
+      const result = await callTool({ txid: "aa".repeat(32), newFeeRate: 1500 });
+      expect(result.isError).toBe(true);
+      expect((result.structuredContent as { errorCode?: string })?.errorCode).toBe(
+        "BTC_FEE_RATE_OUT_OF_BOUNDS",
+      );
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // WR-02 regression: taproot change output uses BIP-86 path m/86'
+  // --------------------------------------------------------------------------
+  describe("WR-02 — taproot change output uses m/86' BIP-32 path", () => {
+    beforeEach(() => {
+      listAccountsSpy.mockReturnValue([BTC_ACCOUNT]);
+    });
+
+    it("changePath is m/86'/0'/0'/1/0 when change output is P2TR", async () => {
+      // Provide a tx where the change output is P2TR (v1_p2tr)
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            txid: "aaaa".repeat(16),
+            version: 2,
+            locktime: 0,
+            size: 110,
+            weight: 440,
+            fee: 20_000,
+            vin: [
+              {
+                txid: "bbbb".repeat(16),
+                vout: 0,
+                sequence: 0xfffffffd,
+                prevout: {
+                  scriptpubkey: "0014" + "00".repeat(20),
+                  scriptpubkey_address: "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+                  scriptpubkey_type: "v0_p2wpkh",
+                  value: 1_000_000,
+                },
+              },
+            ],
+            vout: [
+              {
+                scriptpubkey: "0014" + "11".repeat(20),
+                scriptpubkey_address: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+                scriptpubkey_type: "v0_p2wpkh",
+                value: 880_000, // recipient
+              },
+              {
+                scriptpubkey: "5120" + "44".repeat(32),
+                // Use a P2TR taproot address for the change output.
+                scriptpubkey_address: BTC_ACCOUNT.address, // matched as owned
+                scriptpubkey_type: "v1_p2tr",              // taproot!
+                value: 100_000,
+              },
+            ],
+            status: { confirmed: false },
+          }),
+        }),
+      );
+
+      await callTool({ txid: "aa".repeat(32), newFeeRate: 300 });
+      const buildCallArgs = (
+        _btcPsbt.buildBtcPsbt as ReturnType<typeof vi.spyOn>
+      ).mock.calls[0]?.[0] as { changeOutput?: { bip32Path?: string } };
+      expect(buildCallArgs?.changeOutput?.bip32Path).toBe("m/86'/0'/0'/1/0");
+    });
+
+    it("changePath is m/84'/0'/0'/1/0 when change output is P2WPKH", async () => {
+      stubFetchWithTx(makeEsploraTxResponse({ vout1Address: BTC_ACCOUNT.address }));
+      await callTool({ txid: "aa".repeat(32), newFeeRate: 300 });
+      const buildCallArgs = (
+        _btcPsbt.buildBtcPsbt as ReturnType<typeof vi.spyOn>
+      ).mock.calls[0]?.[0] as { changeOutput?: { bip32Path?: string } };
+      expect(buildCallArgs?.changeOutput?.bip32Path).toBe("m/84'/0'/0'/1/0");
     });
   });
 });
