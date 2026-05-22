@@ -744,7 +744,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 26-03-PLAN.md — BTC LiFi bridging: `src/clients/lifi.ts` (from-scratch NEVER-throws client) + `lifi-btc` PSBT decoder + `prepare_btc_lifi_swap` with the Inv #6b `decodedFinalRecipient` assertion + `preview_send`/`send_transaction` btc-lifi branches + Fixture AA (BTC-LIFI-01)
+- [x] 26-03-PLAN.md — BTC LiFi bridging: `src/clients/lifi.ts` (from-scratch NEVER-throws client) + `lifi-btc` PSBT decoder + `prepare_btc_lifi_swap` with the Inv #6b `decodedFinalRecipient` assertion + `preview_send`/`send_transaction` btc-lifi branches + Fixture AA (BTC-LIFI-01)
 
 #### Phase 27: Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics
 
@@ -1126,7 +1126,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 23. BTC native + segwit + taproot trust pipeline (PSBT-based) | v2.2 | 4/4 | Complete    | 2026-05-22 |
 | 24. BIP-125 RBF + BIP-137 message signing | v2.2 | 2/2 | Complete    | 2026-05-22 |
 | 25. PSBT multisig flow (combine / sign / finalize + multisig wallet registry) | v2.2 | 3/3 | Complete    | 2026-05-22 |
-| 26. LTC scaffolding + LiFi BTC→EVM/Solana bridging | v2.2 | 2/3 | In Progress|  |
+| 26. LTC scaffolding + LiFi BTC→EVM/Solana bridging | v2.2 | 3/3 | Complete   | 2026-05-22 |
 | 27. Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics | v2.2 | 0/3 | Not started | - |
 | 28. Compound V3 — multi-Comet supply/withdraw/borrow/repay (Ethereum mainnet — 6 Comets) | v2.3 | 4/4 | Complete (verify-phase open); closes #64 | 2026-05-20 |
 | 29. Morpho Blue — supply/withdraw/borrow/repay | v2.3 | 0/3 | Not started | - |
