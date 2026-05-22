@@ -573,4 +573,62 @@ describe("computeBtcPayloadFingerprint — BTC-PREP-01 + D-05", () => {
       "0xffa4a2f84cedaa3fc86432bb3b8b79422befb6e06699048e463a8d83f775d783",
     );
   });
+
+  // --------------------------------------------------------------------------
+  // Fixture V — BTC RBF replacement PSBT fingerprint.
+  //
+  // Phase 24 / Plan 24-01 — RBF replacement (sequence 0xfffffffd).
+  //
+  // Same input as Fixture O (P2WPKH, txid=aa*32, vout=0; value=1_000_000 sats)
+  // but with:
+  //   - RBF-enabled sequence: 0xfffffffd (vs 0xfffffffe in Fixture O)
+  //   - Higher fee: output value = 880_000 sats (120_000 sats fee vs 100_000 in Fixture O)
+  //
+  // Hardcoded 0x… literal computed once at research time (2026-05-22) via:
+  //   node -e "
+  //     import('./dist/signing/btc-sighash.js').then(async ({ computeAllSighashes }) => {
+  //       const { computeBtcPayloadFingerprint } = await import('./dist/signing/btc-fingerprint.js');
+  //       const { Transaction, payments, networks } = await import('bitcoinjs-lib');
+  //       const pubkey = Buffer.from(
+  //         '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798', 'hex');
+  //       const script = payments.p2wpkh({ pubkey, network: networks.bitcoin }).output;
+  //       const tx = new Transaction();
+  //       tx.addInput(Buffer.alloc(32, 0xaa), 0, 0xfffffffd);  // RBF-ENABLED sequence
+  //       tx.addOutput(script, BigInt(880_000));
+  //       const sighashes = computeAllSighashes(tx, [{ scriptType: 'p2wpkh', prevOutScript: script, valueSats: BigInt(1_000_000) }]);
+  //       console.log(computeBtcPayloadFingerprint(sighashes));
+  //     })
+  //   "
+  //
+  // NO `beforeAll`-snapshot per CLAUDE.md — drift in the preimage assembly for
+  // RBF-shape data (sequence 0xfffffffd) breaks THIS exact assertion at PR-review time.
+  //
+  // Cross-link: consumed by test/tools-prepare-btc-rbf-bump.test.ts (Plan 24-01
+  // Fixture V re-anchor — drift fails at BOTH this file AND the consumer test).
+  // --------------------------------------------------------------------------
+  it("Fixture V — RBF replacement PSBT fingerprint (sequence 0xfffffffd, 120_000 sats fee) → 0x946eea... byte-for-byte", () => {
+    const txidBuf = Buffer.alloc(32, 0xaa);
+    const valueSats = BigInt(1_000_000);
+
+    const tx = new Transaction();
+    tx.addInput(txidBuf, 0, 0xfffffffd); // RBF-ENABLED sequence (distinct from Fixture O's 0xfffffffe)
+    tx.addOutput(BTC_FIXTURE_SEGWIT_SCRIPT, BigInt(880_000)); // 120_000 sats fee (vs 100_000 in Fixture O)
+
+    const sighashes = computeAllSighashes(tx, [
+      {
+        scriptType: "p2wpkh",
+        prevOutScript: BTC_FIXTURE_SEGWIT_SCRIPT,
+        valueSats,
+      },
+    ]);
+    const fp = computeBtcPayloadFingerprint(sighashes);
+
+    // Hardcoded literal anchor (Phase 24 / Plan 24-01 — RBF replacement,
+    // sequence 0xfffffffd). Distinct from Fixture O (sequence 0xfffffffe, output
+    // 900_000 sats): the changed sequence modifies the sighash preimage →
+    // distinct fingerprint. Drift in RBF preimage assembly breaks THIS assertion.
+    expect(fp).toBe(
+      "0x946eeae4f39317444201821a47bdd0819bffc155925e5b855d22d04a2e1cfefc",
+    );
+  });
 });

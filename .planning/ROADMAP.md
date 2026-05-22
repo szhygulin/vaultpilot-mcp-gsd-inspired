@@ -677,11 +677,11 @@ Plans:
 
 **Wave 1**
 
-- [ ] 24-01-PLAN.md — `prepare_btc_rbf_bump` (BTC-W-02): RBF replacement PSBT, BIP-125 sequence/fee-rate validation, `buildBtcPsbt` `sequenceOverride?` param, `signalRbf` flag on `prepare_btc_send` (Design Fork 1 Option A), `PreparedTxBtc.kind` widening to `"rbf"`, Fixture V anchor (Wave 1)
+- [x] 24-01-PLAN.md — `prepare_btc_rbf_bump` (BTC-W-02): RBF replacement PSBT, BIP-125 sequence/fee-rate validation, `buildBtcPsbt` `sequenceOverride?` param, `signalRbf` flag on `prepare_btc_send` (Design Fork 1 Option A), `PreparedTxBtc.kind` widening to `"rbf"`, Fixture V anchor (Wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 24-02-PLAN.md — `sign_message_btc` (BTC-W-03): BIP-137 compact-signature shape, `signBtcMessage` Ledger transport spy-affordance, magic-prefix-device-applied, Fixture W anchor; BIP-322 taproot deferred (Wave 2, depends on 24-01)
+- [x] 24-02-PLAN.md — `sign_message_btc` (BTC-W-03): BIP-137 compact-signature shape, `signBtcMessage` Ledger transport spy-affordance, magic-prefix-device-applied, Fixture W anchor; BIP-322 taproot deferred (Wave 2, depends on 24-01)
 
 #### Phase 25: PSBT multisig flow (combine / sign / finalize + multisig wallet registry)
 
@@ -1106,7 +1106,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 21. TRON diagnostics + v2.1 milestone close-out (portfolio leg shipped in Phase 17) | v2.1 | 0/1 | Not started | - |
 | 22. BTC scaffolding — Esplora reads + USB-HID + persistent BTC account | v2.2 | 0/4 | Not started | - |
 | 23. BTC native + segwit + taproot trust pipeline (PSBT-based) | v2.2 | 4/4 | Complete    | 2026-05-22 |
-| 24. BIP-125 RBF + BIP-137 message signing | v2.2 | 0/2 | Not started | - |
+| 24. BIP-125 RBF + BIP-137 message signing | v2.2 | 2/2 | Complete    | 2026-05-22 |
 | 25. PSBT multisig flow (combine / sign / finalize + multisig wallet registry) | v2.2 | 0/3 | Not started | - |
 | 26. LTC scaffolding + LiFi BTC→EVM/Solana bridging | v2.2 | 0/3 | Not started | - |
 | 27. Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics | v2.2 | 0/3 | Not started | - |

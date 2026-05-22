@@ -463,6 +463,58 @@ export async function signBtcPsbt(
   }
 }
 
+// ─── Phase 24 Plan 24-02 — BIP-137 message signing ───────────────────────────
+
+/**
+ * Sign a raw message via the Ledger BTC app using the BIP-137 compact-signature
+ * protocol.
+ *
+ * **IMPORTANT — no double-prefix:** pass the raw UTF-8 message bytes hex-encoded.
+ * The Ledger BTC app v2.1+ applies the `"Bitcoin Signed Message:\n"` magic
+ * prefix INTERNALLY before hashing and signing. Passing a pre-prefixed message
+ * would double-prefix and produce an invalid BIP-137 signature (RESEARCH
+ * §BIP-137 Verified Details Pitfall 3).
+ *
+ * @param path       — BIP-32 derivation path (e.g. `"84'/0'/0'/0/0"`).
+ * @param messageHex — raw message bytes, hex-encoded (NOT the magic-prefixed form).
+ * @returns `{ v, r, s }` where `v` is the raw recovery_id (0 or 1); the BtcNew
+ *          SDK already strips the `27+4` offset (BtcNew.js line 294).
+ */
+export async function signBtcMessage(
+  path: string,
+  messageHex: string,
+): Promise<{ v: number; r: string; s: string }> {
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildBtcApp(transport);
+
+    // Guard: BTC app must be open (mirrors fetchBtcAddresses + signBtcPsbt).
+    try {
+      await app.getAppConfiguration();
+    } catch {
+      throw new LedgerBtcAppNotOpenError();
+    }
+
+    // Call with POSITIONAL args — the Btc wrapper class (returned by buildBtcApp)
+    // uses the positional-arg interface `signMessage(path, messageHex)`. It routes
+    // to BtcNew.signMessage({ path, messageHex }) internally (currency: "bitcoin"
+    // guaranteed by buildBtcApp hardcoding — RESEARCH §State of the Art).
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    const result = await app.signMessage(path, messageHex);
+    return result as { v: number; r: string; s: string };
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log(
+        "warn",
+        `transport.close() failed during signBtcMessage cleanup: ${message}`,
+      );
+    }
+  }
+}
+
 /**
  * ESM spy-affordance for the BTC address-probe path. Plan 22-04
  * `get_btc_status` (deferred to Phase 27 for the lazy-probe diagnostic;
@@ -471,6 +523,8 @@ export async function signBtcPsbt(
  * named exports (ESM bindings are immutable). NARROWER than the TRON
  * analog — Phase 22 has no signing surface yet; Phase 23 will widen
  * with `signPsbtBuffer`.
+ *
+ * Phase 24 Plan 24-02: adds `signBtcMessage` for BIP-137 message signing.
  */
 export const _btcLedgerTransport = {
   fetchBtcAddresses: (
@@ -487,6 +541,12 @@ export const _btcLedgerTransport = {
     knownAddressDerivations: readonly KnownAddressDerivation[],
   ): Promise<{ rawTxHex: string }> =>
     signBtcPsbt(psbtBase64, inputs, knownAddressDerivations),
+  // Phase 24 Plan 24-02: BIP-137 message signing via the Ledger BTC app.
+  signBtcMessage: (
+    path: string,
+    messageHex: string,
+  ): Promise<{ v: number; r: string; s: string }> =>
+    signBtcMessage(path, messageHex),
 };
 
 /**

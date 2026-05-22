@@ -2,15 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Bitcoin + Litecoin
-status: executing
-last_updated: "2026-05-22T16:03:31.650Z"
-last_activity: 2026-05-22 -- Phase 24 planning complete
+status: ready_to_plan
+last_updated: 2026-05-22T17:13:26.467Z
+last_activity: 2026-05-22
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 10
-  completed_plans: 8
-  percent: 33
+  completed_plans: 45
+  percent: 50
+stopped_at: Phase 24 complete (2/2) — ready to discuss Phase 25
 ---
 
 # Project State
@@ -20,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-12)
 
 **Core value:** The user trusts what the Ledger screen shows — nothing else. Tampering at any layer between the agent and the device produces a visible mismatch on-screen before signing.
-**Current focus:** Phase 24 — btc bip125 rbf bip137 message signing
+**Current focus:** Phase 25 — btc psbt multisig flow
 
 ## Current Position
 
-Phase: 24
+Phase: 25
 Plan: Not started
-Status: Ready to execute
-Last activity: 2026-05-22 -- Phase 24 planning complete
+Status: Ready to plan
+Last activity: 2026-05-22
 
 Prior activity: 2026-05-18 — Phase 9 (Hardening — v1.3 skill + verification tools + dispatch allowlist) closed code-complete. 5 atomic execute PRs landed sequentially under auto-mode in wave order 09-01 → 09-02 → 09-03 → 09-04 → 09-05: PR #48 (09-01 sister repo `szhygulin/vaultpilot-preflight-skill` bootstrap via `gh repo create --private`; BUSL-1.1 license mirrored from main repo; SKILL.md + Step 0 self-check + invariants #1/#2/#2.5/#5/#11/#14 encoded; v1.3.0 tag deferred to coordinated 09-02 step per plan-checker W-1; CI workflow `.github/workflows/ci.yml` deferred because gh OAuth lacks `workflow` scope; 789 → 789 +0), PR #49 (09-02 `src/security/skill-integrity.ts` SHA-256 lazy probe via Node `crypto` + personal + project scope; `VAULTPILOT_NOTICE_TEMPLATE` missing + tampered variants in `blocks.ts` APPEND-ONLY; dispatcher-wrap NOTICE prepend at `server.ts` with `skillNoticeEmitted` dedup flag set BEFORE return for race-defense; 789 → 810 +21), PR #50 (09-03 `get_verification_artifact` tool + sparse JSON structuredContent + `pasteableBlock` byte-stable 32-line template; 810 → 828 +18), PR #51 (09-04 `src/security/canonical-dispatch.ts` parallel `CANONICAL_DISPATCH_TARGETS` per-chain table; Layer 0.5 wiring; `DISPATCH_TARGET_REFUSED` errorCode; 828 → 858 +30), PR #52 (09-05 `verify_tx_decode` 3-arm discriminated union + `get_tx_verification` v1.3 additive fields + register-all consolidation; 858 → 890 +32). Test trajectory 789 → 890 (+101 net across 5 plans). FROZEN-area zero-diff held END-TO-END. Sister repo `szhygulin/vaultpilot-preflight-skill` live at v1.3.0.
 
@@ -47,13 +48,13 @@ Prior activity: 2026-05-13 — Quick task 260513-c8e (issue #25 WC session persi
 
 Prior activity: 2026-05-12 — Phase 5 planned + executed. Planning bundle (RESEARCH + VALIDATION + PATTERNS + 3 PLAN files) shipped as PR #18 (PASS after 2 inline plan-checker fixes + 1 accepted residual; Q-CONTRADICTION-PREP Option B + Q-NPM resolved via AskUserQuestion before planning). Then 05-01 (demo state + persona registry + ErrorCode 13→14 with WRONG_MODE + get/set_demo_wallet) shipped as PR #19 (+29 tests, 3 ESM-mechanics deviations). Then 05-02 (Q-CONTRADICTION-PREP Option B — REMOVES demo refusal from prepare_native_send + preview_send; persona address as `from`; integration test re-anchors Fixture A + C under demo `from`) shipped as PR #20 (+9 net tests, zero substantive deviations). Finally 05-03 (DIAG tools + update check + auto-demo NOTICE dispatcher-wrap + INSTRUCTIONS rewrite) shipped as PR #21 (+26 tests, 2 minor deviations; secret-safety audit via 3-sentinel substring scan; dispatcher-wrap at src/server.ts one-change architectural-scope-correct per Phase 4 precedent).
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 4
+- Total plans completed: 6
 - Average duration: —
 - Total execution time: —
 
@@ -62,6 +63,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 23 | 4 | - | - |
+| 24 | 2 | - | - |
 
 **Recent Trend:**
 
@@ -70,6 +72,8 @@ Progress: [░░░░░░░░░░] 0%
 
 *Updated after each plan completion*
 | Phase 23 P04 | 180 | 3 tasks | 8 files |
+| Phase 24 P01 | 90 | 3 tasks | 12 files |
+| Phase 24 P02 | 35 | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -293,6 +297,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-22T14:15:43.521Z
+Last session: 2026-05-22T16:40:39.903Z
 Stopped at: Phase 23 context gathered
 Resume file: None

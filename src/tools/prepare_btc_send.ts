@@ -168,6 +168,11 @@ const INPUT_SCHEMA = {
         required: ["txid", "vout", "valueSats", "scriptType"],
       },
     },
+    signalRbf: {
+      type: "boolean",
+      description:
+        "Optional. Set to true to signal BIP-125 Replace-By-Fee on all inputs (sequence 0xfffffffd). Default false. Enables future fee-bumping via prepare_btc_rbf_bump. When false (default), all inputs use sequence 0xfffffffe (RBF disabled). The default-false path is byte-identical to Phase 23.",
+    },
   },
   required: ["to", "sats"],
   additionalProperties: false,
@@ -199,6 +204,9 @@ registerTool(
             scriptType: "p2wpkh" | "p2tr";
           }>)
         : undefined;
+      // Design Fork 1 (RESOLVED Option A): opt-in RBF signal, default false.
+      // When false the default 0xfffffffe sequence is used (byte-identical to Phase 23).
+      const rawSignalRbf = args.signalRbf === true;
 
       // -----------------------------------------------------------------------
       // Step 1: Input validation — FIRES FIRST (before any state read).
@@ -687,6 +695,10 @@ registerTool(
                 }
               : null,
           dustThresholdSats: DUST_THRESHOLD_SATS,
+          // Design Fork 1: RBF_ENABLED_SEQUENCE (0xfffffffd) only when signalRbf is true.
+          // When false: sequenceOverride is omitted → buildBtcPsbt defaults to RBF_DISABLED_SEQUENCE (0xfffffffe).
+          // The default path is byte-identical to Phase 23 Fixtures O/P/Q.
+          ...(rawSignalRbf ? { sequenceOverride: 0xfffffffd } : {}),
         });
       } catch (err) {
         const cause = err instanceof Error ? err.message : String(err);

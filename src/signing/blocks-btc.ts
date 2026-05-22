@@ -131,3 +131,69 @@ export const LEDGER_BLIND_SIGN_HASH_BTC_TEMPLATE: string = [
  */
 export const INPUT_SIGHASH_ROW_BTC_TEMPLATE: string =
   "    input[{INPUT_INDEX}]  ({SCRIPT_TYPE})  {SIGHASH_HEX}";
+
+// ─── Phase 24 Plan 24-01 — RBF fee-bump templates ────────────────────────────
+
+/**
+ * PREPARE RECEIPT — BTC RBF fee bump (PSBT-based, verbatim agent args,
+ * NO normalization). Substituted by `prepare_btc_rbf_bump.ts` (Plan 24-01).
+ * Slots:
+ *   - `{ORIGINAL_TXID}` — txid of the original mempool-pending transaction.
+ *   - `{NEW_FEE_RATE}`  — new fee rate in sat/vB (decimal string).
+ *   - `{ORIGINAL_FEE_SATS}` — original fee in sats (decimal string).
+ *   - `{ORIGINAL_FEE_RATE}` — original fee rate in sat/vB (decimal string).
+ *   - `{NEW_FEE_SATS}`  — new fee in sats (decimal string).
+ *   - `{FEE_DELTA_SATS}` — absolute fee increase in sats (decimal string).
+ *   - `{INPUT_ROWS}`   — expanded inline: one line per input (reuses INPUT_ROW_BTC_TEMPLATE).
+ *   - `{OUTPUT_ROWS}`  — expanded inline: one line per output (reuses OUTPUT_ROW_BTC_TEMPLATE).
+ *
+ * PREP-02 invariant: the receipt surfaces the original txid plus the server-
+ * derived fee diff summary. The cryptographic anchor (payloadFingerprint = keccak256
+ * over per-input sighashes with RBF-enabled sequence) catches drift.
+ */
+export const PREPARE_RECEIPT_BTC_RBF_TEMPLATE: string = [
+  "PREPARE RECEIPT (BTC — RBF fee bump)",
+  "  chain:         Bitcoin mainnet",
+  "  originalTxid:  {ORIGINAL_TXID}",
+  "  newFeeRate:    {NEW_FEE_RATE} sat/vB",
+  "  originalFee:   {ORIGINAL_FEE_SATS} sats  ({ORIGINAL_FEE_RATE} sat/vB)",
+  "  newFee:        {NEW_FEE_SATS} sats  (delta: +{FEE_DELTA_SATS} sats)",
+  "  inputs:",
+  "{INPUT_ROWS}",
+  "  outputs:",
+  "{OUTPUT_ROWS}",
+].join("\n");
+
+// ─── Phase 24 Plan 24-02 — BIP-137 message signing template ──────────────────
+
+/**
+ * LEDGER BLIND-SIGN HASH (BTC — message signing) — device-display hash surface
+ * emitted by `sign_message_btc` (Plan 24-02). Two slots:
+ *   - `{MESSAGE_TEXT}` — the raw message the agent passed in (verbatim).
+ *   - `{MESSAGE_HASH}` — the server-computed BIP-137 double-SHA256 message hash
+ *                       (0x-prefixed hex of double-SHA256(varint(24) ‖ magic ‖
+ *                       varint(len) ‖ message)). This is what the device signs.
+ *
+ * BIP-137 divergence from the PSBT template:
+ *   - `LEDGER_BLIND_SIGN_HASH_BTC_TEMPLATE` covers tx signing (N per-input
+ *     BIP-143/341 sighashes, displayed as inputs/outputs/fee on-device).
+ *   - THIS template covers message signing (single double-SHA256 hash; the
+ *     device displays the message text on-screen for literal approval).
+ *
+ * Security: the device applies the `"Bitcoin Signed Message:\n"` magic prefix
+ * internally — the message text shown on-device is the literal message, not a
+ * binary hash. Compare character-for-character before approving.
+ * T-24-07 mitigation: magic prefix makes BIP-137 signatures non-spendable
+ * (cannot collide with a Bitcoin tx sighash); T-24-09 mitigation: this block
+ * surfaces the server-computed hash so the user can verify independently.
+ */
+export const LEDGER_BLIND_SIGN_HASH_MSG_BTC_TEMPLATE: string = [
+  "LEDGER BLIND-SIGN HASH (BTC — message signing)",
+  "  Message:      {MESSAGE_TEXT}",
+  "  BIP-137 hash: {MESSAGE_HASH}",
+  "  (double-SHA256 of magic_prefix ‖ varint_len ‖ message)",
+  "",
+  "  Your Ledger BTC app displays the message text above on-device.",
+  "  Compare the displayed message character-for-character against the agent's claim.",
+  "  If they match → approve. If they differ → REJECT.",
+].join("\n");
