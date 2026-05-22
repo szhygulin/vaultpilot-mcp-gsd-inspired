@@ -1597,6 +1597,9 @@ async function sendTransactionBtcBranch(
       handle: handleArg,
       txType: "btc" as const,
       kind: btcTx.kind,
+      // WR-04: include originalTxid for RBF handles so callers can link the
+      // replacement tx to the original mempool tx (plan 24-01 Task 2 requirement).
+      ...(btcTx.kind === "rbf" ? { originalTxid: btcTx.originalTxid } : {}),
       // Phase 23 — BTC uses Esplora direct broadcast (no WC relay).
       sessionTopicLast8: null,
     },
