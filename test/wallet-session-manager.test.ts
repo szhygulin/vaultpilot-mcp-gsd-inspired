@@ -62,7 +62,12 @@ const TOPIC = "0xfeedfacecafebeef0000000000000000000000000000000000000000c0ffee"
  * Real-timers only; for fake-timer tests use `vi.advanceTimersByTimeAsync`.
  */
 async function waitUntilConnectCalled(expectedCalls = 1): Promise<void> {
-  for (let i = 0; i < 50; i += 1) {
+  // Poll until the expected call count is reached. Uses a deadline (2 s) rather
+  // than a fixed flush count so the test is robust under CPU contention (full
+  // suite runs) without an arbitrary iteration limit. Each setImmediate tick
+  // yields to let async continuations in the module under test run.
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline) {
     if (mockSignClient.client.connect.mock.calls.length >= expectedCalls) {
       // One more flush so the connect()-returning Promise resolves and
       // approval() has been invoked, capturing the deferred.
@@ -72,7 +77,7 @@ async function waitUntilConnectCalled(expectedCalls = 1): Promise<void> {
     await new Promise((resolve) => setImmediate(resolve));
   }
   throw new Error(
-    `waitUntilConnectCalled: connect not called >= ${expectedCalls} times after 50 microtask flushes`,
+    `waitUntilConnectCalled: connect not called >= ${expectedCalls} times after 2 s deadline`,
   );
 }
 

@@ -86,11 +86,21 @@ const FAKE_HMAC = "a".repeat(64); // 32-byte hex
 // sequence=0xfffffffe), 1 P2WPKH output (900_000 sats).
 // witnessScript = p2ms(m=2, sorted derived pubkeys at change=0 index=0).
 //
+// Output script: P2WPKH of the secp256k1 generator point G (BTC_FIXTURE_PUBKEY
+// in test/signing-fingerprint.test.ts = 0279be667ef9dcbbac55a06295ce870b...).
+// This matches the BTC_FIXTURE_SEGWIT_SCRIPT used in the Fixture X computation.
+//
 // The payloadFingerprint for this PSBT = Fixture X = 0xced8fc41b79311a8...
 // (pinned in test/signing-fingerprint.test.ts).
 //
 // Cross-link: test/signing-fingerprint.test.ts → "Fixture X — BTC 2-of-3 multisig
 // P2WSH single-input → 0xced8fc41... byte-for-byte"
+
+// The secp256k1 generator point G — same as BTC_FIXTURE_PUBKEY in signing-fingerprint.test.ts
+const BTC_FIXTURE_PUBKEY = Buffer.from(
+  "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+  "hex",
+);
 
 function buildFixtureXPsbt(): string {
   const bip32 = BIP32Factory(tinySecp256k1);
@@ -103,8 +113,9 @@ function buildFixtureXPsbt(): string {
 
   const p2ms = payments.p2ms({ m: 2, pubkeys: sorted, network: networks.bitcoin });
   const p2wsh = payments.p2wsh({ redeem: p2ms, network: networks.bitcoin });
-  // P2WPKH output using first sorted pubkey (matches BTC_FIXTURE_SEGWIT_SCRIPT in signing-fingerprint.test.ts)
-  const p2wpkh = payments.p2wpkh({ pubkey: sorted[0]!, network: networks.bitcoin });
+  // Output: P2WPKH of generator point G — matches BTC_FIXTURE_SEGWIT_SCRIPT in
+  // test/signing-fingerprint.test.ts (the Fixture X computation).
+  const p2wpkh = payments.p2wpkh({ pubkey: BTC_FIXTURE_PUBKEY, network: networks.bitcoin });
 
   const psbt = new Psbt({ network: networks.bitcoin });
   psbt.addInput({
