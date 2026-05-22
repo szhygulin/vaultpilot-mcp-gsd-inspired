@@ -405,9 +405,8 @@ registerTool(
             },
           ],
           structuredContent: errEnvelope(
-            "INTERNAL_ERROR",
+            "LITECOIN_APP_NOT_OPEN",
             "Ledger LTC app is not open; open the Litecoin app on the device",
-            "LedgerLtcAppNotOpenError",
           ),
         };
       }
@@ -421,9 +420,8 @@ registerTool(
             },
           ],
           structuredContent: errEnvelope(
-            "INTERNAL_ERROR",
+            "LEDGER_NOT_CONNECTED",
             "Ledger device not connected; connect via USB",
-            "LedgerDeviceNotConnectedError",
           ),
         };
       }
