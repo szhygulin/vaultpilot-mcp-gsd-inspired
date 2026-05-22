@@ -569,15 +569,23 @@ registerTool(
         role: "recipient",
       };
 
+      // WR-02: derive the change BIP-32 path from the script type.
+      // Taproot outputs derive under m/86'/0'/0' (BIP-86), not m/84'/0'/0' (BIP-84).
+      // The Ledger BTC app uses bip32Path to identify "yours" (change) vs "recipient".
+      const changeScriptType: "p2wpkh" | "p2tr" =
+        changeVout.scriptpubkey_type === "v1_p2tr" ? "p2tr" : "p2wpkh";
+      const changeBip32Path =
+        changeScriptType === "p2tr" ? "m/86'/0'/0'/1/0" : "m/84'/0'/0'/1/0";
+
       const changeOutput: BtcPsbtOutput | null =
         effectiveChangeSats > 0n
           ? {
               address: changeVout.scriptpubkey_address,
               valueSats: effectiveChangeSats,
-              scriptType: changeVout.scriptpubkey_type === "v1_p2tr" ? "p2tr" : "p2wpkh",
+              scriptType: changeScriptType,
               role: "change",
               pubkey: segwitPubkey,
-              bip32Path: "m/84'/0'/0'/1/0",
+              bip32Path: changeBip32Path,
               masterFingerprint: ZERO_MASTER_FINGERPRINT,
             }
           : null;
@@ -651,7 +659,7 @@ registerTool(
         feeSats: psbtResult.feeSats,
         changeSats: psbtResult.changeSats,
         feeRate: newFeeRate,
-        changePath: changeOutput !== null ? "m/84'/0'/0'/1/0" : null,
+        changePath: changeOutput !== null ? changeBip32Path : null,
         changeAddress: changeOutput !== null ? changeOutput.address : null,
         // RBF-specific fields for CHECKS PERFORMED diff block at preview time.
         originalTxid: rawTxid,
