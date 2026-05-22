@@ -32,7 +32,7 @@
 
 import { Transaction } from "bitcoinjs-lib";
 
-import { fetchBtcTx } from "../chains/bitcoin/esplora-client.js";
+import { fetchBtcTx, fetchFeeEstimates } from "../chains/bitcoin/esplora-client.js";
 import "../chains/bitcoin/types.js"; // initEccLib side-effect
 import { isDemoMode } from "../config/env.js";
 import { getActiveBtcPersona } from "../demo/state.js";
@@ -185,6 +185,40 @@ registerTool(
         };
       }
       const newFeeRate = rawNewFeeRate;
+
+      // -----------------------------------------------------------------------
+      // Step 1b: Upper-bound sanity check on newFeeRate (WR-01 / D-03 parity).
+      // Mirrors prepare_btc_send's BTC_FEE_RATE_OUT_OF_BOUNDS guard.
+      // Cap: newFeeRate <= 10× current high-priority estimate.
+      // Fetch is best-effort — if Esplora is unavailable, skip the upper bound
+      // and let the floor check and BTC_RBF_CANNOT_AFFORD serve as backstops.
+      // -----------------------------------------------------------------------
+      {
+        const feeEstResult = await fetchFeeEstimates();
+        if (feeEstResult.kind === "ok") {
+          const highPriority = feeEstResult.estimates["1"] ?? 500;
+          if (newFeeRate > highPriority * 10) {
+            return {
+              isError: true,
+              content: [
+                {
+                  type: "text",
+                  text:
+                    `error: newFeeRate ${newFeeRate} sat/vB exceeds 10× the high-priority ` +
+                    `estimate (${highPriority * 10} sat/vB). This is likely a mistake. ` +
+                    `Use a newFeeRate <= ${highPriority * 10} sat/vB.`,
+                },
+              ],
+              structuredContent: errEnvelope(
+                "BTC_FEE_RATE_OUT_OF_BOUNDS",
+                `newFeeRate ${newFeeRate} sat/vB exceeds 10× high-priority estimate (${highPriority * 10} sat/vB)`,
+              ),
+            };
+          }
+        }
+        // If feeEstResult.kind !== "ok", skip the upper-bound check silently —
+        // the RBF-specific floor check and CANNOT_AFFORD guard remain in force.
+      }
 
       // -----------------------------------------------------------------------
       // Step 2: Demo-mode FIRST refusal — read BTC persona registry.
