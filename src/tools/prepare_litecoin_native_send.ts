@@ -483,7 +483,27 @@ registerTool(
       // LTC Phase 26: no xpub support yet — fold change into fee (changeSats=0)
       // when no change derivation is available. The persona/real-mode change
       // address support is deferred to a future phase (same pattern as BTC demo mode).
+      //
+      // WR-04: refuse when changeSats > 10_000 litoshi to prevent silent large
+      // forfeitures (e.g. a 1 LTC UTXO sending 0.001 LTC silently forfeiting ~0.999 LTC).
+      // Below the threshold, the change is folded into the miner fee and disclosed
+      // in the PREPARE RECEIPT block.
       // -----------------------------------------------------------------------
+      const CHANGE_FORFEIT_REFUSE_THRESHOLD = 10_000n; // litoshi (WR-04)
+      if (changeSats > CHANGE_FORFEIT_REFUSE_THRESHOLD) {
+        const message =
+          `LTC change would be forfeited: ${changeSats} litoshi exceeds the ` +
+          `${CHANGE_FORFEIT_REFUSE_THRESHOLD}-litoshi threshold. ` +
+          `xpub change-address support is not yet available. ` +
+          `Size the send to the UTXO amount (${selectedInputs.reduce((s, u) => s + u.valueSats, 0n)} litoshi) ` +
+          `minus the estimated fee, or send the full UTXO balance.`;
+        return {
+          isError: true,
+          content: [{ type: "text", text: `error: ${message}` }],
+          structuredContent: errEnvelope("INVALID_INPUT", message),
+        };
+      }
+
       // In demo mode and real mode without xpub: no change output.
       const changeAddress: string | null = null;
       const changePath: string | null = null;
@@ -628,13 +648,19 @@ registerTool(
         )
         .join("\n");
 
-      const prepareReceipt = PREPARE_RECEIPT_LTC_NATIVE_TEMPLATE
+      let prepareReceipt = PREPARE_RECEIPT_LTC_NATIVE_TEMPLATE
         .replace("{TO}", rawTo)
         .replace("{LITOSHIS}", rawLitoshi)
         .replace("{FEE_SATS}", String(psbtResult.feeSats))
         .replace("{FEE_RATE}", String(feeRate))
         .replace("{INPUT_ROWS}", inputRows)
         .replace("{OUTPUT_ROWS}", outputRows);
+
+      // WR-04: disclose forfeited change in the PREPARE RECEIPT block.
+      if (psbtResult.changeSats > 0n) {
+        prepareReceipt +=
+          `\nCHANGE FORFEITED: ${psbtResult.changeSats} litoshi (xpub change-address support deferred)`;
+      }
 
       const feeSatsStr = String(psbtResult.feeSats);
       const responseText = `${prepareReceipt}\n\nHandle: ${handle}\npayloadFingerprint: ${payloadFingerprint}\n\nNext step: pass this handle to preview_send.`;
