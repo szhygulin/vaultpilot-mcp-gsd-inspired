@@ -620,16 +620,17 @@ import { PREPARE_RECEIPT_BTC_RBF_TEMPLATE } from "../signing/blocks-btc.js";
 
 ### Cryptographic-Binding Fixture Discipline
 **Source:** `test/signing-fingerprint.test.ts` lines 329–440 (BTC Fixtures O/P/Q block)
-**Apply to:** `test/signing-fingerprint.test.ts` (Fixture R), `test/signing-bip137.test.ts` (Fixture S)
+**Apply to:** `test/signing-fingerprint.test.ts` (Fixture V), `test/signing-bip137.test.ts` (Fixture W)
+> NOTE: fixture letters assigned by the PLAN files — A–U are all claimed (R/S/T reserved for Phase 28 Compound V3), so Phase 24 uses **V** (RBF fingerprint) and **W** (BIP-137 message hash). Computed `0x…` values below are unchanged.
 ```typescript
 // MANDATORY: hardcoded 0x... literal, computed ONCE at write-time, pinned forever
 // NO beforeAll-snapshot — drift fails at the specific assertion line
-// Fixture R: RBF replacement PSBT fingerprint (0xfffffffd sequence, 120,000 sats fee)
+// Fixture V: RBF replacement PSBT fingerprint (0xfffffffd sequence, 120,000 sats fee)
 //   0x946eeae4f39317444201821a47bdd0819bffc155925e5b855d22d04a2e1cfefc
-// Fixture S: BIP-137 message hash for "Hello VaultPilot"
+// Fixture W: BIP-137 message hash for "Hello VaultPilot"
 //   0xca329bc5829e0752932695bd827ca11f3dbe9efd7f94f75fedc42574cb86667e
 
-it("Fixture R — RBF replacement PSBT fingerprint → 0x946eea... byte-for-byte", () => {
+it("Fixture V — RBF replacement PSBT fingerprint → 0x946eea... byte-for-byte", () => {
   const tx = new Transaction();
   tx.addInput(Buffer.alloc(32, 0xaa), 0, 0xfffffffd); // RBF-ENABLED sequence
   tx.addOutput(BTC_FIXTURE_SEGWIT_SCRIPT, BigInt(880_000)); // 120,000 sats fee
@@ -704,4 +705,4 @@ All Phase 24 files have analogs in the existing codebase. No file requires falli
 
 4. **`PreparedTxBtc` extension fields for RBF** — besides widening `kind` to `"native" | "rbf"`, the `PreparedTxBtc` interface needs two optional fields for the CHECKS PERFORMED diff block in preview: `originalTxid?: string`, `originalFeeSats?: bigint`, `originalFeeRate?: number`. These carry the original tx's metrics through the handle to preview time.
 
-5. **Fixture R vs Fixture O** — differ only in sequence number (`0xfffffffd` vs `0xfffffffe`) and output value (`880_000` vs `900_000` sats). The distinct sequence is what changes the sighash preimage → distinct fingerprint. This confirms the RBF replacement's fingerprint is cryptographically distinct from the original tx's fingerprint.
+5. **Fixture V vs Fixture O** — differ only in sequence number (`0xfffffffd` vs `0xfffffffe`) and output value (`880_000` vs `900_000` sats). The distinct sequence is what changes the sighash preimage → distinct fingerprint. This confirms the RBF replacement's fingerprint is cryptographically distinct from the original tx's fingerprint.
