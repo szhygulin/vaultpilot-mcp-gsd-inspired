@@ -687,7 +687,7 @@ Plans:
 
 **Goal**: User can participate in M-of-N multisig PSBT workflows — combine partially-signed PSBTs from co-signers, sign their input contribution, finalize the fully-signed PSBT for broadcast. Multisig wallet registry tracks known M-of-N descriptors.
 **Depends on**: Phase 24
-**Requirements**: BTC-PSBT-03, BTC-PSBT-04, BTC-PSBT-05, BTC-PSBT-06, BTC-W-04
+**Requirements**: BTC-PSBT-03, BTC-PSBT-04, BTC-PSBT-05, BTC-PSBT-06, BTC-PSBT-07, BTC-W-04
 **Success Criteria** (what must be TRUE):
 
   1. `register_btc_multisig_wallet({ name, descriptor, threshold })` records a known multisig descriptor (sortedmulti or musig-aware); descriptors validated against bitcoin script rules
