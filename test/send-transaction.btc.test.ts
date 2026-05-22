@@ -24,6 +24,7 @@
 //   - handle-store stays REAL — seed via `createHandle`, assert via `lookup()`.
 
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Transaction } from "bitcoinjs-lib";
 
@@ -437,10 +438,19 @@ describe("send_transaction BTC branch — FROZEN three-gate region zero-diff ass
       expect(inRemoved, `FROZEN sentinel "${sentinel}" must not be in removed lines`).toBe(false);
     }
 
-    // BTC-additive changes (new btc arm in discriminator + new dispatch if + sendTransactionBtcBranch)
-    // appear as ADDED lines — this is expected and correct.
-    const addedLines = diff.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++"));
-    const hasBtcAddition = addedLines.some((l) => l.includes("btc"));
-    expect(hasBtcAddition, "send_transaction.ts diff must contain BTC-additive lines").toBe(true);
+    // The BTC send branch is part of origin/main since Phase 23 merged. Assert it
+    // is PRESENT in send_transaction.ts — the prior diff-based check ("the diff vs
+    // origin/main adds BTC lines") only held while origin/main predated the BTC
+    // branch. A `kind: "rbf"` handle (Phase 24) is a PreparedTxBtc with
+    // `txType === "btc"`, so it flows through this same branch with no new code.
+    const sendTxSource = readFileSync("src/tools/send_transaction.ts", "utf8");
+    expect(
+      sendTxSource.includes("sendTransactionBtcBranch"),
+      "send_transaction.ts must contain the BTC send branch",
+    ).toBe(true);
+    expect(
+      sendTxSource.includes('txType === "btc"'),
+      "send_transaction.ts must dispatch the BTC branch on txType",
+    ).toBe(true);
   });
 });
