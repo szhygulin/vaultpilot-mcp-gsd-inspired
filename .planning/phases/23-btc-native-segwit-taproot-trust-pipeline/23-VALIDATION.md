@@ -1,9 +1,9 @@
 ---
 phase: 23
 slug: btc-native-segwit-taproot-trust-pipeline
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: ready
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-05-22
 ---
 
@@ -83,11 +83,15 @@ created: 2026-05-22
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 90s
-- [ ] `nyquist_compliant: true` set in frontmatter
+> No separate Wave 0 plan — each Wave 0 test file is created in the same plan task
+> that produces its source (verified by gsd-plan-checker, 2026-05-22). `wave_0_complete`
+> is therefore satisfied by in-task creation.
 
-**Approval:** pending
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references (test files created in-task by 23-01..23-04)
+- [x] No watch-mode flags
+- [x] Feedback latency < 90s
+- [x] `nyquist_compliant: true` set in frontmatter
+
+**Approval:** approved 2026-05-22 (validation strategy finalized against the 4 committed plans)
