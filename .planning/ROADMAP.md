@@ -750,7 +750,7 @@ Plans:
 
 **Goal**: Optional Bitcoin Core / Litecoin Core JSON-RPC support unlocks forensic chain reads that Esplora can't serve (chain tips, full mempool, fee percentiles, block stats). `build_incident_report` bundles BTC/LTC chain-tip + mempool-anomaly signals with EVM market-incident bits.
 **Depends on**: Phase 26
-**Requirements**: BTC-FORENSIC-01, BTC-FORENSIC-02, BTC-FORENSIC-03, BTC-FORENSIC-04, BTC-FORENSIC-05, BTC-INC-01
+**Requirements**: BTC-FORENSIC-01, BTC-FORENSIC-02, BTC-FORENSIC-03, BTC-FORENSIC-04, BTC-FORENSIC-05, LTC-FORENSIC-01, BTC-INC-01
 **Success Criteria** (what must be TRUE):
 
   1. `BITCOIN_CORE_RPC_URL` (with optional `_USER`/`_PASS` basic-auth) enables Bitcoin Core JSON-RPC reads when set; absent → forensic tools return `coreNotConfigured` envelope (never silent failure)
@@ -762,13 +762,21 @@ Plans:
   7. `LITECOIN_CORE_RPC_URL` enables the LTC-equivalent forensic suite
   8. `build_incident_report({ wallet?, includeChains?: string[] })` bundles chain-tip + mempool-anomaly signals across configured BTC/LTC/EVM chains; surfaces unexplained mempool spikes, reorg events, large unconfirmed-balance changes
 
-**Plans**: 3 plans (estimate)
+**Plans**: 3 plans
 
 Plans:
 
-- [ ] 27-01: `src/clients/bitcoin-core-rpc.ts` (JSON-RPC client mirroring `etherscan.ts` shape — never-throws, basic-auth handling, 5-arm discriminated union); `BITCOIN_CORE_RPC_URL` env reader; `get_btc_block_tip` + `get_btc_block_stats` + `get_btc_blocks_recent` + `get_btc_chain_tips` tools
-- [ ] 27-02: `get_btc_mempool_summary` + LTC-equivalent forensic suite (`LITECOIN_CORE_RPC_URL` env + read tools mirroring BTC)
-- [ ] 27-03: `build_incident_report` bundling logic + cross-chain anomaly-signal aggregation; v2.2 milestone close-out (SECURITY.md BTC/LTC threat-model finalization)
+**Wave 1**
+
+- [ ] 27-01-PLAN.md — Bitcoin Core JSON-RPC client (`src/clients/bitcoin-core-rpc.ts`, NEVER-throws + 5-arm union + basic-auth) + `src/config/bitcoin-core-env.ts` env readers + 4 BTC forensic tools (`get_btc_block_tip` Core+Esplora-fallback / `get_btc_block_stats` / `get_btc_blocks_recent` / `get_btc_chain_tips`) (BTC-FORENSIC-01..04)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 27-02-PLAN.md — `get_btc_mempool_summary` (Core-only) + Litecoin Core env readers + LTC mirror tools (`get_litecoin_block_tip` with litecoinspace fallback / `get_litecoin_mempool_summary`) + `get_vaultpilot_config_status` extension surfacing `bitcoinCoreConfigured` + `litecoinCoreConfigured` booleans (BTC-FORENSIC-05, LTC-FORENSIC-01)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 27-03-PLAN.md — `build_incident_report` cross-chain anomaly aggregator (`Promise.allSettled` fan-out + per-chain 10s `AbortController` timeout + 4-variant AnomalySignal: chain-tip-lag / reorg-detected / mempool-spike / probe-failed) + SECURITY.md v2.2 milestone close-out (Phase 27 section: BTC Core RPC trust shape + LTC threat model + Phase 27 threat register) (BTC-INC-01)
 
 **Status**: planning; v2.2 verify-phase requires a physical Ledger with BTC app installed + USB-HID connectivity + small BTC + LTC balances for return-able test broadcasts. PSBT multisig flow needs a second cooperating signer (could be a second VaultPilot install or any PSBT-compatible wallet).
 
