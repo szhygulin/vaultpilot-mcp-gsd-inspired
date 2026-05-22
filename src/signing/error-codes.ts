@@ -230,7 +230,25 @@ export type ErrorCode =
   //                         A tampered or malicious LiFi route redirected funds to a
   //                         different recipient. Handle NOT created. (T-26-10 mitigation)
   | "LIFI_NO_ROUTE"
-  | "RECIPIENT_MISMATCH";
+  | "RECIPIENT_MISMATCH"
+  //
+  // Phase 26 Plan 26-01 — LTC pairing error codes (additive).
+  // APPEND-ONLY — do not reorder existing codes above.
+  //
+  //   LITECOIN_APP_NOT_OPEN — pair_litecoin_ledger / sign_message_ltc: transport
+  //                           opens but the active app on the Ledger is not
+  //                           Litecoin. Recovery: open the Litecoin app on the
+  //                           device, retry. Mirrors BTC_APP_NOT_OPEN +
+  //                           SOLANA_APP_NOT_OPEN.
+  //   APPROVAL_TIMEOUT      — pair_litecoin_ledger: device did not approve the
+  //                           address fetch within the 60-second window. Recovery:
+  //                           re-call pair_litecoin_ledger and approve on device.
+  //   USER_REJECTED         — pair_litecoin_ledger: user rejected the pairing
+  //                           request on the Ledger device (APDU 0x6985).
+  //                           Non-error structured exit — analogous to USER_CANCELLED.
+  | "LITECOIN_APP_NOT_OPEN"
+  | "APPROVAL_TIMEOUT"
+  | "USER_REJECTED";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers
