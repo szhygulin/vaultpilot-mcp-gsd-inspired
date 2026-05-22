@@ -134,6 +134,10 @@ function validateRecord(raw: unknown): BtcMultisigWalletRecord | null {
     log("warn", `btc-multisig-store: dropping record with invalid totalSigners: ${JSON.stringify(r.totalSigners)}`);
     return null;
   }
+  if (r.threshold > r.totalSigners) {
+    log("warn", `btc-multisig-store: dropping record where threshold (${r.threshold}) > totalSigners (${r.totalSigners})`);
+    return null;
+  }
   if (!Array.isArray(r.keyFingerprints)) {
     log("warn", `btc-multisig-store: dropping record with non-array keyFingerprints`);
     return null;

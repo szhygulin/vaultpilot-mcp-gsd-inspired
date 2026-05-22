@@ -159,6 +159,56 @@ describe("btc-multisig-store — atomic write + 0o600", () => {
   });
 });
 
+describe("btc-multisig-store — validateRecord threshold <= totalSigners", () => {
+  beforeEach(() => {
+    _resetBtcMultisigStoreForTesting();
+  });
+
+  it("persist mode: drops a record where threshold > totalSigners", () => {
+    process.env["VAULTPILOT_BTC_MULTISIG_STORAGE"] = "persist";
+    _resetBtcMultisigStoreForTesting();
+
+    // Tampered record: threshold=10 but totalSigners=2 — impossible invariant
+    const tamperedRecord = { ...makeRecord("tampered"), threshold: 10, totalSigners: 2 };
+    const diskData = JSON.stringify([tamperedRecord]);
+
+    vi.spyOn(_btcMultisigStorage, "existsSync").mockReturnValue(true);
+    vi.spyOn(_btcMultisigStorage, "readFileSync").mockReturnValue(diskData);
+    vi.spyOn(_btcMultisigStorage, "writeFileSync").mockImplementation(() => {});
+    vi.spyOn(_btcMultisigStorage, "renameSync").mockImplementation(() => {});
+    vi.spyOn(_btcMultisigStorage, "ensureStorageDirWithPerms").mockImplementation(() => {});
+
+    const all = loadAllMultisigWallets();
+    // The tampered record must be dropped — threshold > totalSigners is invalid
+    expect(all).toHaveLength(0);
+
+    process.env["VAULTPILOT_BTC_MULTISIG_STORAGE"] = "memory";
+    _resetBtcMultisigStoreForTesting();
+  });
+
+  it("persist mode: keeps a record where threshold === totalSigners (edge case)", () => {
+    process.env["VAULTPILOT_BTC_MULTISIG_STORAGE"] = "persist";
+    _resetBtcMultisigStoreForTesting();
+
+    // Edge case: 1-of-1 multisig — threshold === totalSigners — is valid
+    const oneOfOne = { ...makeRecord("one-of-one"), threshold: 1, totalSigners: 1 };
+    const diskData = JSON.stringify([oneOfOne]);
+
+    vi.spyOn(_btcMultisigStorage, "existsSync").mockReturnValue(true);
+    vi.spyOn(_btcMultisigStorage, "readFileSync").mockReturnValue(diskData);
+    vi.spyOn(_btcMultisigStorage, "writeFileSync").mockImplementation(() => {});
+    vi.spyOn(_btcMultisigStorage, "renameSync").mockImplementation(() => {});
+    vi.spyOn(_btcMultisigStorage, "ensureStorageDirWithPerms").mockImplementation(() => {});
+
+    const all = loadAllMultisigWallets();
+    expect(all).toHaveLength(1);
+    expect(all[0]?.name).toBe("one-of-one");
+
+    process.env["VAULTPILOT_BTC_MULTISIG_STORAGE"] = "memory";
+    _resetBtcMultisigStoreForTesting();
+  });
+});
+
 describe("btc-multisig-store — loadFromDisk drop-invalid", () => {
   beforeEach(() => {
     _resetBtcMultisigStoreForTesting();
