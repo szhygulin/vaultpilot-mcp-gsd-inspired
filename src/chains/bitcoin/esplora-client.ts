@@ -558,6 +558,73 @@ export async function fetchFeeEstimates(): Promise<EsploraFeeEstimatesResult> {
   return result;
 }
 
+// ───────────────────────── broadcastTx ──────────────────────────────
+//
+// Phase 23 Plan 23-04 — POST /tx to Esplora.
+// RESEARCH § Code Examples "Esplora broadcast". Never-throws discriminated
+// union: { kind: "ok"; txid } | { kind: "rejected"; message } |
+// { kind: "error"; message }.
+//
+// Esplora broadcast semantics (RESEARCH Assumption A2):
+//   - 200 OK → plain-text txid in body.
+//   - 400 Bad Request → mempool rejection reason in body (min-relay-fee,
+//     double-spend, etc.).
+//   - Other error / network failure → { kind: "error" }.
+//
+// The POST body is the raw tx hex as plain text (no JSON envelope).
+// AbortController timeout mirrors the existing fetch helpers.
+
+export type EsploraBroadcastResult =
+  | { kind: "ok"; txid: string }
+  | { kind: "rejected"; message: string }
+  | { kind: "error"; message: string };
+
+/**
+ * Broadcast a finalized raw transaction hex via Esplora `POST /tx`.
+ *
+ * Returns a discriminated union — NEVER throws.
+ *   - `{ kind: "ok"; txid }` — Esplora accepted the tx; `txid` is the
+ *     plain-text txid returned in the response body.
+ *   - `{ kind: "rejected"; message }` — Esplora returned HTTP 400
+ *     (mempool rejection, e.g. min-relay-fee, double-spend).
+ *   - `{ kind: "error"; message }` — network error, timeout, or any
+ *     non-200/400 HTTP status.
+ */
+export async function broadcastTx(
+  rawTxHex: string,
+): Promise<EsploraBroadcastResult> {
+  const url = `${_bitcoinRegistry.getEsploraBaseUrl()}/tx`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ESPLORA_TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      body: rawTxHex,
+      signal: controller.signal,
+    });
+    const text = await resp.text();
+    if (resp.ok) {
+      return { kind: "ok", txid: text.trim() };
+    }
+    if (resp.status === 400) {
+      // Mempool rejection (e.g. "min relay fee not met", "txn-mempool-conflict").
+      return { kind: "rejected", message: text };
+    }
+    return {
+      kind: "error",
+      message: `Esplora POST /tx HTTP ${resp.status}: ${text}`,
+    };
+  } catch (err) {
+    const e = err as Error;
+    if (e?.name === "AbortError") {
+      return { kind: "error", message: `Esplora broadcast timeout (${ESPLORA_TIMEOUT_MS}ms)` };
+    }
+    return { kind: "error", message: `Esplora unreachable: ${e?.message ?? String(err)}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ───────────────────────── Test-only cache reset ─────────────────────
 
 /**

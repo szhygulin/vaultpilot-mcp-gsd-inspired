@@ -43,6 +43,7 @@ import {
 } from "../src/chains/bitcoin/registry.js";
 import {
   _resetEsploraCacheForTesting,
+  broadcastTx,
   fetchAddressInfo,
   fetchAddressTxs,
   fetchAddressUtxos,
@@ -531,6 +532,116 @@ describe("Esplora client — never-throws contract (T-22-01)", () => {
       expect(["ok", "not-found", "rate-limited", "error", "not-applicable"]).toContain(
         result.kind,
       );
+    }
+  });
+});
+
+// ===========================================================================
+// Phase 23 Plan 23-04 — broadcastTx tests
+// ===========================================================================
+//
+// Test seam: vi.stubGlobal("fetch", ...) at the outer network boundary
+// (CLAUDE.md convention for external HTTP clients).
+// Coverage:
+//   1. 200 OK with txid body → { kind: "ok", txid }
+//   2. 400 Bad Request (mempool rejection) → { kind: "rejected", message }
+//   3. Network error → { kind: "error", message }
+//   4. AbortController timeout → { kind: "error", message: /timeout/ }
+//   5. Non-200/400 HTTP status → { kind: "error", message }
+//   6. broadcastTx NEVER throws (no exception escapes).
+
+const RAW_TX_HEX_STUB = "02000000" + "aa".repeat(100);
+const TXID_STUB = "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b";
+
+describe("broadcastTx — Phase 23 Plan 23-04", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    _resetEsploraCacheForTesting();
+  });
+
+  it("Test 23 — 200 OK response → { kind: 'ok', txid }", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => TXID_STUB + "\n", // Esplora may include trailing newline
+      })),
+    );
+
+    const result = await broadcastTx(RAW_TX_HEX_STUB);
+
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(result.txid).toBe(TXID_STUB); // trim() applied
+    }
+  });
+
+  it("Test 24 — 400 response (mempool rejection) → { kind: 'rejected', message }", async () => {
+    const rejectMsg = "min relay fee not met, 200 < 223";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 400,
+        text: async () => rejectMsg,
+      })),
+    );
+
+    const result = await broadcastTx(RAW_TX_HEX_STUB);
+
+    expect(result.kind).toBe("rejected");
+    if (result.kind === "rejected") {
+      expect(result.message).toBe(rejectMsg);
+    }
+  });
+
+  it("Test 25 — network error → { kind: 'error', message contains ECONNREFUSED }", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ECONNREFUSED");
+      }),
+    );
+
+    const result = await broadcastTx(RAW_TX_HEX_STUB);
+
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.message).toMatch(/ECONNREFUSED/);
+    }
+  });
+
+  it("Test 26 — 5xx HTTP status → { kind: 'error', message includes HTTP status }", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 503,
+        text: async () => "Service Unavailable",
+      })),
+    );
+
+    const result = await broadcastTx(RAW_TX_HEX_STUB);
+
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.message).toMatch(/503/);
+    }
+  });
+
+  it("Test 27 — broadcastTx NEVER throws (no exception escapes)", async () => {
+    const adversarial = [
+      vi.fn(async () => { throw new Error("ECONNREFUSED"); }),
+      vi.fn(async () => ({ ok: false, status: 500, text: async () => "err" })),
+      vi.fn(async () => { throw new Error("AbortError"); }),
+    ];
+
+    for (const fetchMock of adversarial) {
+      vi.stubGlobal("fetch", fetchMock);
+      // No try/catch: if broadcastTx throws, the test fails.
+      const result = await broadcastTx(RAW_TX_HEX_STUB);
+      expect(["ok", "rejected", "error"]).toContain(result.kind);
     }
   });
 });

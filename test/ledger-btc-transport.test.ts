@@ -35,6 +35,9 @@ import {
   _transport,
   fetchBtcAddresses,
   openTransport,
+  signBtcPsbt,
+  type BtcPsbtSignInput,
+  type KnownAddressDerivation,
 } from "../src/wallet/ledger-btc-transport.js";
 
 // Address fixtures pinned to recognizable bc1q / bc1p shapes. NOT real
@@ -462,6 +465,395 @@ describe("_btcLedgerTransport spy seam (Plan 22-04 status surface)", () => {
 
     expect(result.segwit.address).toBe(SEGWIT_FIXTURE);
     expect(result.taproot.address).toBe(TAPROOT_FIXTURE);
+  });
+});
+
+// ===========================================================================
+// Phase 23 Plan 23-04 — signBtcPsbt two-pass mixed-input signing tests
+// ===========================================================================
+//
+// These tests mock the Ledger BTC app `signPsbtBuffer` call and verify:
+//   1. Segwit-only PSBT → exactly ONE signPsbtBuffer call (bech32 path).
+//   2. Taproot-only PSBT → exactly ONE signPsbtBuffer call (bech32m path).
+//   3. Mixed segwit+taproot PSBT → exactly TWO signPsbtBuffer calls.
+//   4. Every signPsbtBuffer call receives a knownAddressDerivations that
+//      includes the change address.
+//   5. Transport-open failure → LedgerBtcAppNotOpenError; close() is called.
+//
+// Mock strategy: vi.spyOn(_transport, "buildBtcApp") to inject a mock BTC
+// app with a spy on signPsbtBuffer.
+//
+// Since we need a real PSBT to pass through `signBtcPsbt`, we use a
+// minimal valid PSBT constructed via bitcoinjs-lib in a helper.
+// The mock signPsbtBuffer returns the SAME psbt buffer (pre-signed stub),
+// so combine + finalizeAllInputs + extractTransaction can work on it.
+// We use a pre-built raw tx hex stub for the "signed" result.
+//
+// IMPORTANT: bitcoinjs-lib Psbt.finalizeAllInputs() requires the inputs
+// to have partial sigs. For these unit tests, we mock signPsbtBuffer to
+// return a PSBT that has the finalScriptWitness already set on inputs
+// (simulating a finalized-by-device PSBT), and we call finalizeAllInputs()
+// on that. Since we can't easily do that without real signing, we instead
+// mock the app to return a PSBT that can be finalized by setting
+// finalScriptWitness directly on the buffer.
+//
+// Simplest approach: mock signPsbtBuffer to return a buffer that when
+// parsed has finalScriptWitness set on all inputs in the group.
+// We use the bitcoinjs-lib PSBT internals to build a mock that will
+// finalizeAllInputs without error.
+
+import { Psbt, Transaction, networks, payments } from "bitcoinjs-lib";
+
+// Build a minimal valid PSBT for test purposes.
+// The PSBT has the specified number of segwit/taproot inputs.
+// Since we mock signPsbtBuffer to return a buffer with finalScriptWitness set,
+// finalizeAllInputs works on it directly.
+//
+// Helper: build a minimal PSBT buffer for test use (not sent to a real device).
+function buildTestPsbt(options: {
+  segwitCount: number;
+  taprootCount: number;
+}): {
+  psbtBase64: string;
+  inputs: BtcPsbtSignInput[];
+  knownAddressDerivations: KnownAddressDerivation[];
+} {
+  const { segwitCount, taprootCount } = options;
+
+  // Minimal compressed pubkey for tests (not a real secp256k1 key — only used
+  // for bip32Derivation metadata in the PSBT, which the mock device ignores).
+  // The PSBT will have witnessUtxo set on all inputs.
+  const pubkey = Buffer.from("03" + "ab".repeat(32), "hex");
+  const xOnlyPubkey = Buffer.from("ab".repeat(32), "hex");
+  const masterFp = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
+
+  const psbt = new Psbt({ network: networks.bitcoin });
+
+  const totalInputs = segwitCount + taprootCount;
+  const inputs: BtcPsbtSignInput[] = [];
+
+  for (let i = 0; i < totalInputs; i++) {
+    const isSegwit = i < segwitCount;
+    const txidBuf = Buffer.alloc(32, i + 1);
+
+    if (isSegwit) {
+      const p2wpkh = payments.p2wpkh({ pubkey, network: networks.bitcoin });
+      psbt.addInput({
+        hash: txidBuf,
+        index: 0,
+        sequence: 0xfffffffe,
+        witnessUtxo: {
+          script: p2wpkh.output!,
+          value: BigInt(100000),
+        },
+        bip32Derivation: [
+          {
+            masterFingerprint: masterFp,
+            pubkey,
+            path: `m/84'/0'/0'/0/${i}`,
+          },
+        ],
+      });
+      inputs.push({
+        index: i,
+        scriptType: "p2wpkh",
+        bip32Path: `m/84'/0'/0'/0/${i}`,
+        pubkey: new Uint8Array(pubkey),
+        masterFingerprint: new Uint8Array(masterFp),
+      });
+    } else {
+      // Taproot — we can't use payments.p2tr without a real secp256k1 point,
+      // but we can construct a minimal P2TR output script directly.
+      // P2TR output: OP_1 <32-byte x-only-pubkey>
+      const p2trScript = Buffer.concat([Buffer.from([0x51, 0x20]), xOnlyPubkey]);
+      // tapBip32Derivation.pubkey must be 32-byte x-only key; wrapping in
+      // a Buffer so bip174 sees it as the proper type.
+      psbt.addInput({
+        hash: txidBuf,
+        index: 0,
+        sequence: 0xfffffffe,
+        witnessUtxo: {
+          script: p2trScript,
+          value: BigInt(100000),
+        },
+        tapInternalKey: xOnlyPubkey,
+        tapBip32Derivation: [
+          {
+            masterFingerprint: masterFp,
+            pubkey: xOnlyPubkey, // 32-byte x-only for tapBip32Derivation
+            path: `m/86'/0'/0'/0/${i - segwitCount}`,
+            leafHashes: [] as Buffer[],
+          },
+        ],
+      });
+      inputs.push({
+        index: i,
+        scriptType: "p2tr",
+        bip32Path: `m/86'/0'/0'/0/${i - segwitCount}`,
+        pubkey: new Uint8Array(xOnlyPubkey),
+        masterFingerprint: new Uint8Array(masterFp),
+      });
+    }
+  }
+
+  // Add a dummy output.
+  const changeScript = Buffer.concat([
+    Buffer.from([0x00, 0x14]),
+    Buffer.alloc(20, 0xcc),
+  ]);
+  psbt.addOutput({ script: changeScript, value: BigInt(90000) });
+
+  // Change address scriptPubKey hash for knownAddressDerivations.
+  const changeScriptPubKeyHashHex = "cc".repeat(20);
+
+  const knownAddressDerivations: KnownAddressDerivation[] = [
+    {
+      scriptPubKeyHashHex: changeScriptPubKeyHashHex,
+      pubkey: new Uint8Array(pubkey),
+      path: "m/84'/0'/0'/1/0",
+    },
+  ];
+
+  return {
+    psbtBase64: psbt.toBase64(),
+    inputs,
+    knownAddressDerivations,
+  };
+}
+
+// Build a mock signPsbtBuffer that returns a PSBT buffer with
+// finalScriptWitness set on the group's inputs (simulating device signing).
+function makeMockSignPsbtBuffer(
+  signedTxHex: string = "02000000000101" + "aa".repeat(32) + "00000000" + "fe" + "ff" + "ff" + "ff" + "0090f40100000000001600" + "14" + "75".repeat(20) + "02" + "47" + "30".repeat(71) + "21" + "02".repeat(33) + "00000000",
+): ReturnType<typeof vi.fn> {
+  return vi.fn(async (psbtBuffer: Buffer) => {
+    // Parse the group PSBT and add dummy finalScriptWitness on each input
+    // that has bip32Derivation or tapBip32Derivation set.
+    const psbt = Psbt.fromBuffer(psbtBuffer);
+    for (let i = 0; i < psbt.data.inputs.length; i++) {
+      const inp = psbt.data.inputs[i]!;
+      const hasDerivation =
+        (inp.bip32Derivation && inp.bip32Derivation.length > 0) ||
+        (inp.tapBip32Derivation && inp.tapBip32Derivation.length > 0);
+      if (hasDerivation) {
+        // Set finalScriptWitness to a valid P2WPKH witness stack stub.
+        // OP_0 <72-byte sig> <33-byte pubkey> — standard P2WPKH witness.
+        const sigStub = Buffer.alloc(72, 0x30);
+        const pubkeyStub = Buffer.alloc(33, 0x02);
+        // Encode as witness: varint(items) + varint(len)+data per item.
+        const witness = Buffer.concat([
+          Buffer.from([0x02]), // 2 items
+          Buffer.from([0x48]), // 72 bytes
+          sigStub,
+          Buffer.from([0x21]), // 33 bytes
+          pubkeyStub,
+        ]);
+        inp.finalScriptWitness = witness;
+        // Clear derivation (signed inputs lose derivation after signing).
+        // Use delete — setting to undefined causes bip174's keyValsFromMap
+        // to iterate the key, find a non-undefined converter, then call
+        // converter.encode(undefined) which crashes on undefined.pubkey.
+        delete inp.bip32Derivation;
+        delete inp.tapBip32Derivation;
+      }
+    }
+    return { psbt: psbt.toBuffer() };
+  });
+}
+
+// Minimal raw tx hex used as the extracted transaction stub.
+// A valid 1-input segwit tx: version=2, 1 input, 1 output, locktime=0.
+const SIGNED_TX_HEX_STUB =
+  "02000000" + // version
+  "00" + // segwit marker
+  "01" + // segwit flag
+  "01" + // 1 input
+  "aa".repeat(32) + // txid
+  "00000000" + // vout
+  "00" + // script sig (empty)
+  "feffffff" + // sequence
+  "01" + // 1 output
+  "905f010000000000" + // value 90000 sats LE
+  "16" + // scriptPubKey length
+  "0014" + "75".repeat(20) + // P2WPKH
+  "02" + "47" + "30".repeat(71) + "21" + "02".repeat(33) + // witness
+  "00000000"; // locktime
+
+describe("signBtcPsbt — two-pass mixed-input signing (Phase 23 Plan 23-04)", () => {
+  beforeEach(() => {
+    _resetLedgerBtcTransportForTesting();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("segwit-only PSBT → exactly ONE signPsbtBuffer call with accountPath m/84'/0'/0' and addressFormat bech32", async () => {
+    const { psbtBase64, inputs, knownAddressDerivations } = buildTestPsbt({
+      segwitCount: 1,
+      taprootCount: 0,
+    });
+
+    const mockTransport = makeMockTransport();
+    const signPsbtBufferSpy = makeMockSignPsbtBuffer();
+    const mockApp = {
+      getAppConfiguration: vi.fn(async () => ({ version: "2.1.3" })),
+      signPsbtBuffer: signPsbtBufferSpy,
+    };
+
+    vi.spyOn(_transport, "isSupported").mockResolvedValue(true);
+    vi.spyOn(_transport, "list").mockResolvedValue([{}]);
+    vi.spyOn(_transport, "open").mockResolvedValue(mockTransport);
+    vi.spyOn(_transport, "buildBtcApp").mockReturnValue(mockApp);
+
+    const result = await signBtcPsbt(psbtBase64, inputs, knownAddressDerivations);
+
+    expect(signPsbtBufferSpy).toHaveBeenCalledTimes(1);
+    const callArgs = signPsbtBufferSpy.mock.calls[0];
+    expect(callArgs[1]).toMatchObject({
+      accountPath: "m/84'/0'/0'",
+      addressFormat: "bech32",
+      finalizePsbt: false,
+    });
+    expect(typeof result.rawTxHex).toBe("string");
+    expect(result.rawTxHex.length).toBeGreaterThan(0);
+  });
+
+  it("taproot-only PSBT → exactly ONE signPsbtBuffer call with accountPath m/86'/0'/0' and addressFormat bech32m", async () => {
+    const { psbtBase64, inputs, knownAddressDerivations } = buildTestPsbt({
+      segwitCount: 0,
+      taprootCount: 1,
+    });
+
+    const mockTransport = makeMockTransport();
+    const signPsbtBufferSpy = makeMockSignPsbtBuffer();
+    const mockApp = {
+      getAppConfiguration: vi.fn(async () => ({ version: "2.1.3" })),
+      signPsbtBuffer: signPsbtBufferSpy,
+    };
+
+    vi.spyOn(_transport, "isSupported").mockResolvedValue(true);
+    vi.spyOn(_transport, "list").mockResolvedValue([{}]);
+    vi.spyOn(_transport, "open").mockResolvedValue(mockTransport);
+    vi.spyOn(_transport, "buildBtcApp").mockReturnValue(mockApp);
+
+    const result = await signBtcPsbt(psbtBase64, inputs, knownAddressDerivations);
+
+    expect(signPsbtBufferSpy).toHaveBeenCalledTimes(1);
+    const callArgs = signPsbtBufferSpy.mock.calls[0];
+    expect(callArgs[1]).toMatchObject({
+      accountPath: "m/86'/0'/0'",
+      addressFormat: "bech32m",
+      finalizePsbt: false,
+    });
+    expect(typeof result.rawTxHex).toBe("string");
+  });
+
+  it("mixed segwit+taproot PSBT → exactly TWO signPsbtBuffer calls (one per script-type group)", async () => {
+    const { psbtBase64, inputs, knownAddressDerivations } = buildTestPsbt({
+      segwitCount: 1,
+      taprootCount: 1,
+    });
+
+    const mockTransport = makeMockTransport();
+    const signPsbtBufferSpy = makeMockSignPsbtBuffer();
+    const mockApp = {
+      getAppConfiguration: vi.fn(async () => ({ version: "2.1.3" })),
+      signPsbtBuffer: signPsbtBufferSpy,
+    };
+
+    vi.spyOn(_transport, "isSupported").mockResolvedValue(true);
+    vi.spyOn(_transport, "list").mockResolvedValue([{}]);
+    vi.spyOn(_transport, "open").mockResolvedValue(mockTransport);
+    vi.spyOn(_transport, "buildBtcApp").mockReturnValue(mockApp);
+
+    const result = await signBtcPsbt(psbtBase64, inputs, knownAddressDerivations);
+
+    // SC#5 / BTC-PSBT-02: exactly TWO signPsbtBuffer calls for mixed inputs.
+    expect(signPsbtBufferSpy).toHaveBeenCalledTimes(2);
+
+    const call0Args = signPsbtBufferSpy.mock.calls[0];
+    const call1Args = signPsbtBufferSpy.mock.calls[1];
+
+    // First call: segwit group.
+    expect(call0Args[1]).toMatchObject({
+      accountPath: "m/84'/0'/0'",
+      addressFormat: "bech32",
+      finalizePsbt: false,
+    });
+    // Second call: taproot group.
+    expect(call1Args[1]).toMatchObject({
+      accountPath: "m/86'/0'/0'",
+      addressFormat: "bech32m",
+      finalizePsbt: false,
+    });
+
+    expect(typeof result.rawTxHex).toBe("string");
+  });
+
+  it("every signPsbtBuffer call receives a non-empty knownAddressDerivations that includes the change address", async () => {
+    const { psbtBase64, inputs, knownAddressDerivations } = buildTestPsbt({
+      segwitCount: 1,
+      taprootCount: 1,
+    });
+
+    const mockTransport = makeMockTransport();
+    const signPsbtBufferSpy = makeMockSignPsbtBuffer();
+    const mockApp = {
+      getAppConfiguration: vi.fn(async () => ({ version: "2.1.3" })),
+      signPsbtBuffer: signPsbtBufferSpy,
+    };
+
+    vi.spyOn(_transport, "isSupported").mockResolvedValue(true);
+    vi.spyOn(_transport, "list").mockResolvedValue([{}]);
+    vi.spyOn(_transport, "open").mockResolvedValue(mockTransport);
+    vi.spyOn(_transport, "buildBtcApp").mockReturnValue(mockApp);
+
+    await signBtcPsbt(psbtBase64, inputs, knownAddressDerivations);
+
+    // Both calls must have a non-empty knownAddressDerivations Map containing
+    // the change address (Pitfall 6 — T-23-17 mitigation).
+    for (const call of signPsbtBufferSpy.mock.calls) {
+      const kad = call[1].knownAddressDerivations as Map<string, unknown>;
+      expect(kad).toBeInstanceOf(Map);
+      expect(kad.size).toBeGreaterThan(0);
+      // The change address scriptPubKey hash must be present.
+      expect(kad.has(knownAddressDerivations[0]!.scriptPubKeyHashHex)).toBe(true);
+    }
+  });
+
+  it("transport-open failure → throws LedgerDeviceNotConnectedError; transport.close() called in finally", async () => {
+    const mockTransport = makeMockTransport();
+    const signPsbtBufferSpy = vi.fn();
+    const mockAppFails = {
+      // getAppConfiguration throws → LedgerBtcAppNotOpenError
+      getAppConfiguration: vi.fn(async () => {
+        throw new Error("transport error");
+      }),
+      signPsbtBuffer: signPsbtBufferSpy,
+    };
+
+    vi.spyOn(_transport, "isSupported").mockResolvedValue(true);
+    vi.spyOn(_transport, "list").mockResolvedValue([{}]);
+    vi.spyOn(_transport, "open").mockResolvedValue(mockTransport);
+    vi.spyOn(_transport, "buildBtcApp").mockReturnValue(mockAppFails);
+
+    const { psbtBase64, inputs, knownAddressDerivations } = buildTestPsbt({
+      segwitCount: 1,
+      taprootCount: 0,
+    });
+
+    await expect(
+      signBtcPsbt(psbtBase64, inputs, knownAddressDerivations),
+    ).rejects.toBeInstanceOf(LedgerBtcAppNotOpenError);
+
+    // Transport MUST be closed in the finally block even on the error path.
+    expect(mockTransport.close).toHaveBeenCalledTimes(1);
+    expect(signPsbtBufferSpy).not.toHaveBeenCalled();
+  });
+
+  it("_btcLedgerTransport.signBtcPsbt is exposed for vi.spyOn (ESM spy-affordance)", () => {
+    expect(typeof _btcLedgerTransport.signBtcPsbt).toBe("function");
   });
 });
 
