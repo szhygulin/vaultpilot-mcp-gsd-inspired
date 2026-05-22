@@ -45,8 +45,9 @@ import type { UtxoRow } from "./types.js";
 const ESPLORA_TIMEOUT_MS = 5000;
 const CACHE_MAX_ENTRIES = 256;
 
-// TTLs for time-sensitive caches (WR-05):
-const UTXOS_CACHE_TTL_MS = 30_000;      // 30 s
+// TTLs for time-sensitive caches (WR-03 + WR-05):
+const ADDRESS_INFO_CACHE_TTL_MS = 30_000;  // 30 s — confirmed balance surface (WR-03)
+const UTXOS_CACHE_TTL_MS = 30_000;         // 30 s
 const FEE_ESTIMATES_CACHE_TTL_MS = 60_000; // 60 s
 
 // Internal literal cache key for fee estimates (single endpoint, no
@@ -99,6 +100,7 @@ export type EsploraFeeEstimatesResult =
 // ───────────────────────── Module-scope LRU caches ─────────────────────
 
 const addressInfoCache = new Map<string, EsploraAddressResult>();
+const addressInfoCacheTs = new Map<string, number>(); // WR-03 TTL tracking
 const addressUtxosCache = new Map<string, EsploraUtxosResult>();
 const addressUtxosCacheTs = new Map<string, number>(); // WR-05 TTL tracking
 const addressTxsCache = new Map<string, EsploraTxsResult>();
@@ -203,7 +205,10 @@ export async function fetchAddressInfo(
   address: string,
 ): Promise<EsploraAddressResult> {
   const cached = addressInfoCache.get(address);
-  if (cached) return cached;
+  const cachedTs = addressInfoCacheTs.get(address);
+  if (cached && cachedTs !== undefined && Date.now() - cachedTs < ADDRESS_INFO_CACHE_TTL_MS) {
+    return cached;
+  }
 
   const url = `${_litecoinRegistry.getEsploraBaseUrl()}/address/${address}`;
   const outcome = await doFetch<EsploraAddressBody>(url);
@@ -268,6 +273,7 @@ export async function fetchAddressInfo(
   }
 
   cacheInsert(addressInfoCache, address, result);
+  addressInfoCacheTs.set(address, Date.now()); // WR-03 TTL stamp
   return result;
 }
 
@@ -614,6 +620,7 @@ export async function broadcastTx(
  */
 export function _resetEsploraCacheForTesting(): void {
   addressInfoCache.clear();
+  addressInfoCacheTs.clear(); // WR-03
   addressUtxosCache.clear();
   addressUtxosCacheTs.clear(); // WR-05
   addressTxsCache.clear();
