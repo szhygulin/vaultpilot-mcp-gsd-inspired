@@ -97,10 +97,15 @@ import {
 import {
   LedgerDeviceNotConnectedError as LedgerBtcDeviceNotConnectedError,
   LedgerBtcAppNotOpenError,
+  LedgerBtcAppVersionTooOldError,
   _btcLedgerTransport,
   type BtcPsbtSignInput,
   type KnownAddressDerivation,
 } from "../wallet/ledger-btc-transport.js";
+import {
+  loadMultisigWallet,
+  parseWshSortedMulti,
+} from "../wallet/btc-multisig-store.js";
 import { listAccounts } from "../wallet/non-evm-account-store.js";
 import {
   getActiveSessionTopic,
@@ -1430,8 +1435,10 @@ async function sendTransactionBtcBranch(
   }
 
   // ---- Pairing check (BTC — persistent non-EVM account store) ------------
-  const accounts = listAccounts({ chainFilter: "bitcoin" });
-  if (accounts.length === 0) {
+  // Skip for multisig-psbt handles: those use the multisig registry (btc-multisig-store)
+  // rather than the single-key paired account store (pair_btc_ledger).
+  const accounts = btcTx.kind === "multisig-psbt" ? [] : listAccounts({ chainFilter: "bitcoin" });
+  if (btcTx.kind !== "multisig-psbt" && accounts.length === 0) {
     return {
       isError: true,
       content: [
@@ -1448,7 +1455,7 @@ async function sendTransactionBtcBranch(
     };
   }
   const account = accounts[0];
-  if (!account) {
+  if (btcTx.kind !== "multisig-psbt" && !account) {
     return {
       isError: true,
       content: [{ type: "text", text: "error: no paired BTC account (unreachable narrowing)." }],
@@ -1456,21 +1463,28 @@ async function sendTransactionBtcBranch(
     };
   }
 
-  // ---- Build BtcPsbtSignInput[] from inputScriptTypes ---------------------
+  // ---- Build BtcPsbtSignInput[] from inputScriptTypes (single-key only) ---
   // Placeholder pubkey (33 bytes) and masterFingerprint (4 bytes) — the Ledger
   // BTC app uses the PSBT's bip32Derivation to determine the signing key;
   // the derivation path + masterFp in BtcPsbtSignInput tells it which key to use.
   // Phase 23 v1: we derive the path from account.derivationPath.
+  // Note: skipped for multisig-psbt — those dispatch early via the kind check below.
   const placeholderPubkey = new Uint8Array(33); // Ledger fills in from derivation
   const PLACEHOLDER_MASTER_FP = new Uint8Array(4); // 00000000 — Ledger uses its own fp
 
-  const signInputs: BtcPsbtSignInput[] = btcTx.inputScriptTypes.map((scriptType, idx) => ({
-    index: idx,
-    scriptType,
-    bip32Path: account.derivationPath,
-    pubkey: placeholderPubkey,
-    masterFingerprint: PLACEHOLDER_MASTER_FP,
-  }));
+  // Defer signInputs construction for non-multisig paths only.
+  // account is undefined for multisig-psbt (accounts=[] above); that branch
+  // returns early in the "Dispatch on kind" block below.
+  const signInputs: BtcPsbtSignInput[] =
+    btcTx.kind !== "multisig-psbt"
+      ? btcTx.inputScriptTypes.map((scriptType, idx) => ({
+          index: idx,
+          scriptType,
+          bip32Path: account!.derivationPath,
+          pubkey: placeholderPubkey,
+          masterFingerprint: PLACEHOLDER_MASTER_FP,
+        }))
+      : [];
 
   // ---- Build knownAddressDerivations for change output (CR-01 / Pitfall 6) ---
   // Without the change address in knownAddressDerivations, the Ledger BTC app
@@ -1504,6 +1518,157 @@ async function sendTransactionBtcBranch(
       // This is recoverable: the user sees it on-device and can reject.
     }
   }
+
+  // ---- Dispatch on kind: multisig-psbt vs native/rbf -----------------------
+
+  if (btcTx.kind === "multisig-psbt") {
+    // ---- Multisig PSBT path (Phase 25 Plan 25-03) ---------------------------
+    // Load wallet registry — walletHmac is re-checked here (belt-and-suspenders;
+    // also catches registry revocation between prepare and send).
+    const walletName = btcTx.multisigWalletName;
+    if (!walletName) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: "error: multisig-psbt handle missing multisigWalletName (internal error)" }],
+        structuredContent: errEnvelope("INTERNAL_ERROR", "multisig-psbt handle missing multisigWalletName"),
+      };
+    }
+
+    const wallet = loadMultisigWallet(walletName);
+    if (!wallet) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: multisig wallet "${walletName}" not found in registry at send time` }],
+        structuredContent: errEnvelope("MULTISIG_WALLET_NOT_FOUND", `wallet "${walletName}" not found at send time`),
+      };
+    }
+
+    if (!wallet.walletHmac) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text:
+              `error: multisig wallet "${walletName}" has no walletHmac at send time — ` +
+              "re-run register_btc_multisig_wallet with a Ledger connected to obtain the device-derived walletHmac.",
+          },
+        ],
+        structuredContent: errEnvelope(
+          "MULTISIG_WALLET_NOT_REGISTERED_ON_DEVICE",
+          `wallet "${walletName}" has no walletHmac at send time; re-run register_btc_multisig_wallet`,
+        ),
+      };
+    }
+
+    // Build descriptorTemplate and keys from the stored descriptor.
+    const parsed = parseWshSortedMulti(wallet.descriptor);
+    if (!parsed) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: could not parse wallet descriptor for "${walletName}"` }],
+        structuredContent: errEnvelope("INTERNAL_ERROR", `could not parse wallet descriptor for "${walletName}"`),
+      };
+    }
+    const { m, keys } = parsed;
+    const descriptorTemplate = `wsh(sortedmulti(${m},${keys.map((_, i) => `@${i}/**`).join(",")}))`;
+
+    // Sign via Ledger AppClient.signPsbt (no broadcast — multisig partial sign).
+    let updatedPsbtBase64: string;
+    try {
+      const result = await _btcLedgerTransport.signBtcMultisigPsbt(
+        btcTx.psbtBase64,
+        walletName,
+        descriptorTemplate,
+        keys,
+        wallet.walletHmac,
+      );
+      updatedPsbtBase64 = result.updatedPsbtBase64;
+    } catch (err) {
+      if (err instanceof LedgerBtcDeviceNotConnectedError) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `error: ${err.message}` }],
+          structuredContent: errEnvelope("LEDGER_NOT_CONNECTED", err.message),
+        };
+      }
+      if (err instanceof LedgerBtcAppNotOpenError) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `error: ${err.message}` }],
+          structuredContent: errEnvelope(
+            "BTC_APP_NOT_OPEN",
+            "Bitcoin app is not the active app on the Ledger. Open the Bitcoin app on the device and retry.",
+          ),
+        };
+      }
+      if (err instanceof LedgerBtcAppVersionTooOldError) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `error: ${err.message}` }],
+          structuredContent: errEnvelope(
+            "LEDGER_BTC_APP_VERSION_TOO_OLD",
+            "Ledger Bitcoin app is too old for multisig wallet-policy signing. Update via Ledger Live.",
+          ),
+        };
+      }
+      const cause = err instanceof Error ? err.message : String(err);
+      if (/reject/i.test(cause)) {
+        return {
+          isError: true,
+          content: [{ type: "text", text: `error: user rejected on Ledger device: ${cause}` }],
+          structuredContent: errEnvelope("LEDGER_REJECTED", "user rejected on Ledger device", cause),
+        };
+      }
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: BTC multisig Ledger signing failed: ${cause}` }],
+        structuredContent: errEnvelope("INTERNAL_ERROR", "BTC multisig Ledger signing failed", cause),
+      };
+    }
+
+    // Stamp handle as sent. Use a synthetic "txHash" = "multisig-partial:<walletName>"
+    // since there is no broadcast txid — the Ledger contributed one partial signature.
+    const partialSignedMarker = `multisig-partial:${walletName}`;
+    const trans = transitionToSent(handleArg, partialSignedMarker);
+    if (!trans.ok) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `error: state transition failed after multisig sign: ${trans.errorCode}`,
+          },
+        ],
+        structuredContent: errEnvelope(
+          "INTERNAL_ERROR",
+          `state transition failed after multisig sign: ${trans.errorCode}`,
+        ),
+      };
+    }
+
+    return {
+      content: [
+        {
+          type: "text",
+          text:
+            `Ledger multisig signature added (BTC — ${walletName})\n` +
+            `  updatedPsbtBase64: ${updatedPsbtBase64}\n\n` +
+            "Share the updated PSBT with remaining co-signers, then call finalize_btc_psbt when all signatures are collected.",
+        },
+      ],
+      structuredContent: {
+        updatedPsbtBase64,
+        handle: handleArg,
+        txType: "btc" as const,
+        kind: "multisig-psbt" as const,
+        walletName,
+        sessionTopicLast8: null,
+      },
+    };
+  }
+
+  // ---- Single-key native/rbf path (Phase 23/24) ----------------------------
 
   // ---- Sign via Ledger BTC app (USB-HID) ----------------------------------
   let rawTxHex: string;

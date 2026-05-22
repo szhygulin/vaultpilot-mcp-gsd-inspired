@@ -257,18 +257,18 @@ UTXO model means structurally distinct primitives from account-model chains. PSB
 - [x] **BTC-PREP-03**: `send_transaction` BTC branch enforces `previewToken` + `userDecision: "send"` + `payloadFingerprint` drift gate identically to EVM/Solana/TRON paths
 - [x] **BTC-PSBT-01**: `prepare_btc_send({ to, sats, feeRate? })` returns `{ handle, psbt, inputs[], outputs[], feeSats, payloadFingerprint, prepareReceipt }`; coin-selection via branch-and-bound (BnB) with manual override; native segwit (bc1q…) AND taproot (bc1p…) sends both work via the same prepare tool
 - [x] **BTC-PSBT-02**: Mixed-script-type inputs supported (some segwit + some taproot inputs in one tx) — common case for users with derived addresses across both script types
-- [ ] **BTC-PSBT-03**: `register_btc_multisig_wallet({ name, descriptor, threshold })` records a known M-of-N multisig descriptor (sortedmulti or musig-aware); descriptor validated against Bitcoin script rules; stored at `~/.vaultpilot-mcp/btc-multisig.json` (0o600 file)
-- [ ] **BTC-PSBT-04**: `get_btc_multisig_balance({ walletName })` + `get_btc_multisig_utxos({ walletName })` aggregate UTXOs at the multisig descriptor's derived addresses via Esplora
-- [ ] **BTC-PSBT-05**: `combine_btc_psbts({ psbts: [...] })` merges partially-signed PSBTs from multiple co-signers; conflicts surfaced as structured errors (input-by-input + key-by-key conflict detection)
-- [ ] **BTC-PSBT-06**: `sign_btc_multisig_psbt({ psbt, walletName })` adds the user's signature to each input they're a signer on; preview surfaces the inputs being signed
-- [ ] **BTC-PSBT-07**: `finalize_btc_psbt({ psbt })` builds the final witness data; refuses if signature threshold not met
+- [x] **BTC-PSBT-03**: `register_btc_multisig_wallet({ name, descriptor, threshold })` records a known M-of-N multisig descriptor (sortedmulti or musig-aware); descriptor validated against Bitcoin script rules; stored at `~/.vaultpilot-mcp/btc-multisig.json` (0o600 file)
+- [x] **BTC-PSBT-04**: `get_btc_multisig_balance({ walletName })` + `get_btc_multisig_utxos({ walletName })` aggregate UTXOs at the multisig descriptor's derived addresses via Esplora
+- [x] **BTC-PSBT-05**: `combine_btc_psbts({ psbts: [...] })` merges partially-signed PSBTs from multiple co-signers; conflicts surfaced as structured errors (input-by-input + key-by-key conflict detection)
+- [x] **BTC-PSBT-06**: `sign_btc_multisig_psbt({ psbt, walletName })` adds the user's signature to each input they're a signer on; preview surfaces the inputs being signed
+- [x] **BTC-PSBT-07**: `finalize_btc_psbt({ psbt })` builds the final witness data; refuses if signature threshold not met
 
 #### Writes (BTC-W-* + LTC-W-* + BTC-LIFI-*)
 
 - [x] **BTC-W-01**: `prepare_btc_send` produces the canonical PSBT-based unsigned transaction (see BTC-PSBT-01); native segwit + taproot both supported
 - [x] **BTC-W-02**: `prepare_btc_rbf_bump({ txid, newFeeRate })` produces an unsigned RBF replacement PSBT with the higher fee rate; original input set preserved; BIP-125 sequence-number rules enforced; refused on confirmed transactions (mempool-only) or transactions that didn't signal RBF (sequence ≥ `0xfffffffe`)
 - [x] **BTC-W-03**: `sign_message_btc({ wallet, message })` produces a BIP-137 compact signature over `magic_bytes ‖ varint_length ‖ message`; works against the segwit address by default; BIP-322 taproot message-signing deferred to a future `sign_message_btc_bip322` tool
-- [ ] **BTC-W-04**: PSBT multisig flow (see BTC-PSBT-03..07) — combine / sign / finalize lifecycle for M-of-N multisig participation
+- [x] **BTC-W-04**: PSBT multisig flow (see BTC-PSBT-03..07) — combine / sign / finalize lifecycle for M-of-N multisig participation
 - [ ] **LTC-W-01**: `prepare_litecoin_native_send({ to, litoshi })` mirrors `prepare_btc_send` PSBT-based shape; same `payloadFingerprint` shape with LTC domain tag `"VaultPilot-ltctx-v1:"`
 - [ ] **LTC-W-02**: `sign_message_ltc({ wallet, message })` mirrors `sign_message_btc` with LTC magic bytes
 - [ ] **BTC-LIFI-01**: `prepare_btc_lifi_swap({ fromToken: "BTC", toChain, toToken, amount, toAddress })` produces an unsigned LiFi-routed bridge transaction; BTC → EVM and BTC → Solana both supported; server-side `decodedFinalRecipient == userSuppliedToAddress` assertion at preview time (Inv #6b extension — mirrors v2.0 SOL-W-21 + v2.1 TRON-W-11 + v2.6 BRIDGE-T1)

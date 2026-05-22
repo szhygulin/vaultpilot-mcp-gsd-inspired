@@ -197,3 +197,71 @@ export const LEDGER_BLIND_SIGN_HASH_MSG_BTC_TEMPLATE: string = [
   "  Compare the displayed message character-for-character against the agent's claim.",
   "  If they match → approve. If they differ → REJECT.",
 ].join("\n");
+
+// ─── Phase 25 Plan 25-03 — BTC multisig PSBT signing templates ───────────────
+
+/**
+ * PREPARE RECEIPT — BTC multisig PSBT sign (externally-supplied PSBT, verbatim
+ * agent args, NO normalization). Substituted by `sign_btc_multisig_psbt.ts`
+ * (Plan 25-03).
+ * Slots:
+ *   - `{WALLET_NAME}`        — registered multisig wallet name.
+ *   - `{THRESHOLD}`          — M (signing threshold).
+ *   - `{TOTAL_SIGNERS}`      — N (total signers).
+ *   - `{INPUT_ROWS}`         — one line per input (reuses INPUT_ROW_BTC_TEMPLATE).
+ *   - `{OUTPUT_ROWS}`        — one line per output (reuses OUTPUT_ROW_BTC_TEMPLATE).
+ *   - `{FEE_SATS}`           — miner fee in sats (decimal string).
+ *   - `{COSIGNER_STATUS_ROWS}` — one line per input showing signature count vs threshold
+ *                               (reuses COSIGNER_STATUS_ROW_TEMPLATE).
+ *
+ * PREP-02 invariant: receipt surfaces verbatim agent args + server-derived
+ * co-signer status. The cryptographic anchor (payloadFingerprint over per-input
+ * sighashes) catches drift between prepare and send.
+ */
+export const PREPARE_RECEIPT_BTC_MULTISIG_TEMPLATE: string = [
+  "PREPARE RECEIPT (BTC — multisig PSBT sign)",
+  "  chain:          Bitcoin mainnet",
+  "  walletName:     {WALLET_NAME}",
+  "  threshold:      {THRESHOLD}-of-{TOTAL_SIGNERS}",
+  "  inputs:",
+  "{INPUT_ROWS}",
+  "  outputs:",
+  "{OUTPUT_ROWS}",
+  "  feeSats:  {FEE_SATS}",
+  "  co-signer status per input:",
+  "{COSIGNER_STATUS_ROWS}",
+].join("\n");
+
+/**
+ * Co-signer status row — substituted once per PSBT input.
+ * Slots:
+ *   - `{INPUT_INDEX}`   — 0-based input index.
+ *   - `{SIGS_PRESENT}`  — number of partial signatures already present.
+ *   - `{THRESHOLD}`     — M signing threshold.
+ *   - `{STILL_NEEDED}`  — max(0, M - sigsPresent).
+ */
+export const COSIGNER_STATUS_ROW_TEMPLATE: string =
+  "    input[{INPUT_INDEX}]: {SIGS_PRESENT} of {THRESHOLD} sigs present — {STILL_NEEDED} still needed";
+
+/**
+ * VERIFY ON DEVICE template for BTC multisig wallet registration with on-device
+ * `registerWallet`. Surfaced by `register_btc_multisig_wallet.ts` (Plan 25-03
+ * device-present path).
+ * Slots:
+ *   - `{WALLET_NAME}`   — registered multisig wallet name.
+ *   - `{THRESHOLD}`     — M.
+ *   - `{TOTAL_SIGNERS}` — N.
+ *   - `{ADDRESS_ROWS}`  — first 5 derived P2WSH receive addresses.
+ */
+export const VERIFY_ON_DEVICE_MULTISIG_TEMPLATE: string = [
+  "VERIFY ON DEVICE (BTC — multisig wallet registration)",
+  "────────────────────────────────────────────────────",
+  "walletName:  {WALLET_NAME}",
+  "threshold:   {THRESHOLD}-of-{TOTAL_SIGNERS}",
+  "",
+  "First 5 derived P2WSH receive addresses — verify against your co-signers:",
+  "{ADDRESS_ROWS}",
+  "",
+  "If these addresses match your co-signers' view, registration is correct.",
+  "If any address differs — STOP. Do not use this wallet for signing.",
+].join("\n");

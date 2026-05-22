@@ -51,7 +51,7 @@
 import { erc20Abi, type Address, type Hex } from "viem";
 import { estimateFeesPerGas, estimateGas, getTransactionCount } from "viem/actions";
 import { Message, Transaction } from "@solana/web3.js";
-import { Transaction as BtcTransaction } from "bitcoinjs-lib";
+import { Psbt as BtcPsbt, Transaction as BtcTransaction } from "bitcoinjs-lib";
 
 import { _compoundChains } from "../chains/compound-v3.js";
 import { getChainClient } from "../chains/registry.js";
@@ -100,8 +100,10 @@ import {
 } from "../signing/blocks.js";
 import "../chains/bitcoin/types.js"; // ensure initEccLib(tinySecp256k1) fires
 import {
+  COSIGNER_STATUS_ROW_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_BTC_TEMPLATE,
   INPUT_SIGHASH_ROW_BTC_TEMPLATE,
+  PREPARE_RECEIPT_BTC_MULTISIG_TEMPLATE,
   PREPARE_RECEIPT_BTC_NATIVE_TEMPLATE,
   PREPARE_RECEIPT_BTC_RBF_TEMPLATE,
   INPUT_ROW_BTC_TEMPLATE,
@@ -2105,7 +2107,12 @@ async function previewSendBtcBranch(
 
   if (recomputed !== record.payloadFingerprint) {
     // WR-03: branch on handle kind so the error message names the correct prepare tool.
-    const rerunTool = btcTx.kind === "rbf" ? "prepare_btc_rbf_bump" : "prepare_btc_send";
+    const rerunTool =
+      btcTx.kind === "rbf"
+        ? "prepare_btc_rbf_bump"
+        : btcTx.kind === "multisig-psbt"
+          ? "sign_btc_multisig_psbt"
+          : "prepare_btc_send";
     const message =
       `error: payloadFingerprint drift detected between prepare and preview; abort and re-run ${rerunTool}`;
     return {
@@ -2174,6 +2181,38 @@ async function previewSendBtcBranch(
       .replace("{FEE_DELTA_SATS}", String(feeDeltaSats))
       .replace("{INPUT_ROWS}", inputRows)
       .replace("{OUTPUT_ROWS}", outputRows);
+  } else if (btcTx.kind === "multisig-psbt") {
+    // Phase 25 Plan 25-03: multisig PSBT sign — include per-input co-signer status.
+    // Re-parse the stored PSBT to read current partialSig counts at preview time.
+    const threshold = btcTx.multisigThreshold ?? 1;
+    let cosignerStatusRows: string;
+    try {
+      const psbt = BtcPsbt.fromBase64(btcTx.psbtBase64);
+      cosignerStatusRows = psbt.data.inputs.map((inp, idx) => {
+        const sigsPresent = (inp.partialSig ?? []).length;
+        const stillNeeded = Math.max(0, threshold - sigsPresent);
+        return COSIGNER_STATUS_ROW_TEMPLATE
+          .replace("{INPUT_INDEX}", String(idx))
+          .replace("{SIGS_PRESENT}", String(sigsPresent))
+          .replace("{THRESHOLD}", String(threshold))
+          .replace("{STILL_NEEDED}", String(stillNeeded));
+      }).join("\n");
+    } catch {
+      // PSBT re-parse failed — emit a placeholder row.
+      cosignerStatusRows = COSIGNER_STATUS_ROW_TEMPLATE
+        .replace("{INPUT_INDEX}", "?")
+        .replace("{SIGS_PRESENT}", "?")
+        .replace("{THRESHOLD}", String(threshold))
+        .replace("{STILL_NEEDED}", "?");
+    }
+    prepareReceiptBlock = PREPARE_RECEIPT_BTC_MULTISIG_TEMPLATE
+      .replace("{WALLET_NAME}", btcTx.multisigWalletName ?? record.args.to)
+      .replace("{THRESHOLD}", String(threshold))
+      .replace("{TOTAL_SIGNERS}", String(btcTx.multisigTotalSigners ?? 0))
+      .replace("{INPUT_ROWS}", inputRows)
+      .replace("{OUTPUT_ROWS}", outputRows)
+      .replace("{FEE_SATS}", btcTx.feeSats.toString())
+      .replace("{COSIGNER_STATUS_ROWS}", cosignerStatusRows);
   } else {
     // Phase 23 (default): native send receipt.
     prepareReceiptBlock = PREPARE_RECEIPT_BTC_NATIVE_TEMPLATE

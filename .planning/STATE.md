@@ -2,15 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Bitcoin + Litecoin
-status: executing
-last_updated: "2026-05-22T17:45:23.955Z"
-last_activity: 2026-05-22 -- Phase 25 planning complete
+status: ready_to_plan
+last_updated: 2026-05-22T19:27:53.731Z
+last_activity: 2026-05-22
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 13
-  completed_plans: 10
-  percent: 50
+  completed_plans: 48
+  percent: 67
+stopped_at: Phase 25 complete (3/3) — ready to discuss Phase 26
 ---
 
 # Project State
@@ -20,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-12)
 
 **Core value:** The user trusts what the Ledger screen shows — nothing else. Tampering at any layer between the agent and the device produces a visible mismatch on-screen before signing.
-**Current focus:** Phase 25 — btc psbt multisig flow
+**Current focus:** Phase 26 — ltc scaffolding lifi btc bridging
 
 ## Current Position
 
-Phase: 25
+Phase: 26
 Plan: Not started
-Status: Ready to execute
-Last activity: 2026-05-22 -- Phase 25 planning complete
+Status: Ready to plan
+Last activity: 2026-05-22
 
 Prior activity: 2026-05-18 — Phase 9 (Hardening — v1.3 skill + verification tools + dispatch allowlist) closed code-complete. 5 atomic execute PRs landed sequentially under auto-mode in wave order 09-01 → 09-02 → 09-03 → 09-04 → 09-05: PR #48 (09-01 sister repo `szhygulin/vaultpilot-preflight-skill` bootstrap via `gh repo create --private`; BUSL-1.1 license mirrored from main repo; SKILL.md + Step 0 self-check + invariants #1/#2/#2.5/#5/#11/#14 encoded; v1.3.0 tag deferred to coordinated 09-02 step per plan-checker W-1; CI workflow `.github/workflows/ci.yml` deferred because gh OAuth lacks `workflow` scope; 789 → 789 +0), PR #49 (09-02 `src/security/skill-integrity.ts` SHA-256 lazy probe via Node `crypto` + personal + project scope; `VAULTPILOT_NOTICE_TEMPLATE` missing + tampered variants in `blocks.ts` APPEND-ONLY; dispatcher-wrap NOTICE prepend at `server.ts` with `skillNoticeEmitted` dedup flag set BEFORE return for race-defense; 789 → 810 +21), PR #50 (09-03 `get_verification_artifact` tool + sparse JSON structuredContent + `pasteableBlock` byte-stable 32-line template; 810 → 828 +18), PR #51 (09-04 `src/security/canonical-dispatch.ts` parallel `CANONICAL_DISPATCH_TARGETS` per-chain table; Layer 0.5 wiring; `DISPATCH_TARGET_REFUSED` errorCode; 828 → 858 +30), PR #52 (09-05 `verify_tx_decode` 3-arm discriminated union + `get_tx_verification` v1.3 additive fields + register-all consolidation; 858 → 890 +32). Test trajectory 789 → 890 (+101 net across 5 plans). FROZEN-area zero-diff held END-TO-END. Sister repo `szhygulin/vaultpilot-preflight-skill` live at v1.3.0.
 
@@ -53,7 +54,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 6
+- Total plans completed: 9
 - Average duration: —
 - Total execution time: —
 
@@ -63,6 +64,7 @@ Progress: [██████████] 100%
 |-------|-------|-------|----------|
 | 23 | 4 | - | - |
 | 24 | 2 | - | - |
+| 25 | 3 | - | - |
 
 **Recent Trend:**
 
@@ -73,6 +75,9 @@ Progress: [██████████] 100%
 | Phase 23 P04 | 180 | 3 tasks | 8 files |
 | Phase 24 P01 | 90 | 3 tasks | 12 files |
 | Phase 24 P02 | 35 | 3 tasks | 6 files |
+| Phase 25 P01 | 45 | 3 tasks | 10 files |
+| Phase 25-btc-psbt-multisig-flow P02 | 22 | 2 tasks | 5 files |
+| Phase 25-btc-psbt-multisig-flow P03 | 38 | 3 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -97,6 +102,12 @@ Recent decisions affecting current work:
 - Docs sync (PR #672): BTC + LTC ship as one v2.2 milestone (shared Esplora + Ledger BTC infra); not split into separate milestones
 - Docs sync (PR #672): v1.3 hardening expanded from one verification tool (`get_verification_artifact`) to three (`get_verification_artifact` + `verify_tx_decode` + `get_tx_verification`) — each covers a distinct attacker model
 - Docs sync (PR #672): v1.1 scope expanded to include the full ERC-20 lifecycle (transfer + approve + revoke + WETH unwrap), not just transfer; approval-class surfacing becomes load-bearing here
+- [Phase ?]: HMAC-less registration in Plan 25-01; device on-chain registration via AppClient.registerWallet deferred to Plan 25-03
+- [Phase ?]: BIP-67 key sort on derived child pubkeys (not descriptor xpubs) — per RESEARCH Pitfall 1; confirmed by hardcoded fixture addresses in test
+- [Phase ?]: Descriptor validation: only /** key expression suffix accepted; parseWshSortedMulti returns null on /* or /0/* (Pitfall 6)
+- [Phase ?]: v1 tx reconstruction for BIP-143 Fixture X consistency — Psbt creates v2 by default
+- [Phase ?]: finalize_btc_psbt is direct transform — no handle, no payloadFingerprint — mirrors combine_btc_psbts pattern for pure PSBT transforms
+- [Phase ?]: multisig-psbt send skips single-key account pairing — multisig uses btc-multisig-store registry not non-evm-account-store
 
 ### Pending Todos
 
@@ -296,6 +307,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-22T16:40:39.903Z
-Stopped at: Phase 23 context gathered
+Last session: 2026-05-22T19:02:36.232Z
+Stopped at: Completed 25-btc-psbt-multisig-flow/25-03-PLAN.md
 Resume file: None
