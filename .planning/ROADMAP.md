@@ -647,8 +647,8 @@ Plans:
 
 **Wave 1**
 
-- [ ] 23-01-PLAN.md — `src/signing/btc-sighash.ts` (per-input BIP-143/341 sighash) + `src/signing/btc-fingerprint.ts` (domain-tagged keccak256 over concatenated sighashes, `"VaultPilot-btctx-v1:"`); Fixture O segwit literal anchor; FROZEN discipline for EVM/Solana/TRON fingerprint modules
-- [ ] 23-02-PLAN.md — `src/signing/btc-coin-select.ts` (BnB + largest-first fallback, in-repo no new dep) + `src/protocols/btc-psbt.ts` (PSBT-v0 construction, segwit/taproot/mixed) + `src/chains/bitcoin/change-index.ts` (chain-1 next-unused index); fee-rate sanity bounds (D-03) + dust-threshold (D-07)
+- [x] 23-01-PLAN.md — `src/signing/btc-sighash.ts` (per-input BIP-143/341 sighash) + `src/signing/btc-fingerprint.ts` (domain-tagged keccak256 over concatenated sighashes, `"VaultPilot-btctx-v1:"`); Fixture O segwit literal anchor; FROZEN discipline for EVM/Solana/TRON fingerprint modules
+- [x] 23-02-PLAN.md — `src/signing/btc-coin-select.ts` (BnB + largest-first fallback, in-repo no new dep) + `src/protocols/btc-psbt.ts` (PSBT-v0 construction, segwit/taproot/mixed) + `src/chains/bitcoin/change-index.ts` (chain-1 next-unused index); fee-rate sanity bounds (D-03) + dust-threshold (D-07)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -1100,7 +1100,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 20. SunSwap + LiFi-routed TRON↔EVM bridging | v2.1 | 0/2 | Not started | - |
 | 21. TRON diagnostics + v2.1 milestone close-out (portfolio leg shipped in Phase 17) | v2.1 | 0/1 | Not started | - |
 | 22. BTC scaffolding — Esplora reads + USB-HID + persistent BTC account | v2.2 | 0/4 | Not started | - |
-| 23. BTC native + segwit + taproot trust pipeline (PSBT-based) | v2.2 | 0/4 | Not started | - |
+| 23. BTC native + segwit + taproot trust pipeline (PSBT-based) | v2.2 | 2/4 | In Progress|  |
 | 24. BIP-125 RBF + BIP-137 message signing | v2.2 | 0/2 | Not started | - |
 | 25. PSBT multisig flow (combine / sign / finalize + multisig wallet registry) | v2.2 | 0/3 | Not started | - |
 | 26. LTC scaffolding + LiFi BTC→EVM/Solana bridging | v2.2 | 0/3 | Not started | - |
