@@ -111,6 +111,20 @@ export function getBtcEsploraUrl(): string | null {
   return read("BTC_ESPLORA_URL") ?? null;
 }
 
+// Phase 26 Plan 26-01 — LTC Esplora URL reader. Mirrors `getBtcEsploraUrl()`
+// shape via the in-tree `read(name)` helper (trims whitespace, returns
+// `undefined` for empty/missing). The resolution priority lives in
+// `src/chains/litecoin/registry.ts::resolveEsploraUrl()`:
+//   (1) `LITECOIN_ESPLORA_URL` env override wins
+//   (2) Public litecoinspace.org fallback (`https://litecoinspace.org/api`) with
+//       once-per-process stderr warn
+// litecoinspace.org is a mempool.space fork — address/utxo/txs paths are
+// Esplora-compatible; the fee-estimates endpoint uses `/api/v1/fees/recommended`
+// (mempool.space shape, not the Esplora `/fee-estimates` shape — RESEARCH Pitfall 1).
+export function getLitecoinEsploraUrl(): string | null {
+  return read("LITECOIN_ESPLORA_URL") ?? null;
+}
+
 // Plan 08-05 — multi-chain WalletConnect pairing.
 //
 // Returns the list of EVM chains this v1.2 build supports. Drives
