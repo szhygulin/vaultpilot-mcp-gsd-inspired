@@ -244,9 +244,9 @@ Adds Bitcoin + Litecoin support via USB-HID Ledger transport (Ledger BTC app han
 - [ ] **BTC-READ-03**: `get_btc_account_balance({ xpub })` aggregates across all derived addresses under an xpub (gap-limit-respecting scan)
 - [ ] **BTC-READ-04**: `get_btc_tx_history({ wallet, limit })` returns recent transactions via Esplora `/address/{addr}/txs`
 - [ ] **BTC-READ-05**: `get_btc_fee_estimates()` returns Esplora's fee-rate estimates (sat/vB) for 1/2/3/6/144-block confirmation targets
-- [ ] **LTC-PAIR-01**: `pair_litecoin_ledger()` opens the Ledger BTC app in LTC account-config mode (or Ledger Litecoin app per the device firmware revision); returns LTC base58 (M-prefixed) AND ltc1q-segwit addresses; PAIR-NEV-* `chain: "litecoin"` record key reuse
-- [ ] **LTC-READ-01**: `get_litecoin_balance({ wallet })` returns litoshi + LTC-formatted balance via litecoinspace.org Esplora-compatible endpoint
-- [ ] **LTC-READ-02**: `get_litecoin_tx_history` + `get_litecoin_fee_estimates` mirror the BTC equivalents against litecoinspace.org
+- [x] **LTC-PAIR-01**: `pair_litecoin_ledger()` opens the Ledger BTC app in LTC account-config mode (or Ledger Litecoin app per the device firmware revision); returns LTC base58 (M-prefixed) AND ltc1q-segwit addresses; PAIR-NEV-* `chain: "litecoin"` record key reuse
+- [x] **LTC-READ-01**: `get_litecoin_balance({ wallet })` returns litoshi + LTC-formatted balance via litecoinspace.org Esplora-compatible endpoint
+- [x] **LTC-READ-02**: `get_litecoin_tx_history` + `get_litecoin_fee_estimates` mirror the BTC equivalents against litecoinspace.org
 
 #### Prepare → Preview → Send (BTC-PREP-* + BTC-PSBT-*)
 
@@ -269,9 +269,9 @@ UTXO model means structurally distinct primitives from account-model chains. PSB
 - [x] **BTC-W-02**: `prepare_btc_rbf_bump({ txid, newFeeRate })` produces an unsigned RBF replacement PSBT with the higher fee rate; original input set preserved; BIP-125 sequence-number rules enforced; refused on confirmed transactions (mempool-only) or transactions that didn't signal RBF (sequence ≥ `0xfffffffe`)
 - [x] **BTC-W-03**: `sign_message_btc({ wallet, message })` produces a BIP-137 compact signature over `magic_bytes ‖ varint_length ‖ message`; works against the segwit address by default; BIP-322 taproot message-signing deferred to a future `sign_message_btc_bip322` tool
 - [x] **BTC-W-04**: PSBT multisig flow (see BTC-PSBT-03..07) — combine / sign / finalize lifecycle for M-of-N multisig participation
-- [ ] **LTC-W-01**: `prepare_litecoin_native_send({ to, litoshi })` mirrors `prepare_btc_send` PSBT-based shape; same `payloadFingerprint` shape with LTC domain tag `"VaultPilot-ltctx-v1:"`
-- [ ] **LTC-W-02**: `sign_message_ltc({ wallet, message })` mirrors `sign_message_btc` with LTC magic bytes
-- [ ] **BTC-LIFI-01**: `prepare_btc_lifi_swap({ fromToken: "BTC", toChain, toToken, amount, toAddress })` produces an unsigned LiFi-routed bridge transaction; BTC → EVM and BTC → Solana both supported; server-side `decodedFinalRecipient == userSuppliedToAddress` assertion at preview time (Inv #6b extension — mirrors v2.0 SOL-W-21 + v2.1 TRON-W-11 + v2.6 BRIDGE-T1)
+- [x] **LTC-W-01**: `prepare_litecoin_native_send({ to, litoshi })` mirrors `prepare_btc_send` PSBT-based shape; same `payloadFingerprint` shape with LTC domain tag `"VaultPilot-ltctx-v1:"`
+- [x] **LTC-W-02**: `sign_message_ltc({ wallet, message })` mirrors `sign_message_btc` with LTC magic bytes
+- [x] **BTC-LIFI-01**: `prepare_btc_lifi_swap({ fromToken: "BTC", toChain, toToken, amount, toAddress })` produces an unsigned LiFi-routed bridge transaction; BTC → EVM and BTC → Solana both supported; server-side `decodedFinalRecipient == userSuppliedToAddress` assertion at preview time (Inv #6b extension — mirrors v2.0 SOL-W-21 + v2.1 TRON-W-11 + v2.6 BRIDGE-T1)
 
 #### Forensic chain reads (BTC-FORENSIC-* + LTC-FORENSIC-*)
 

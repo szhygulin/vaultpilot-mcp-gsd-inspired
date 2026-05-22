@@ -20,11 +20,15 @@ import "./pair_solana_ledger.js";
 import "./get_solana_status.js";
 import "./pair_tron_ledger.js"; // Phase 17 Plan 17-03 (TRON-PAIR-01)
 import "./pair_btc_ledger.js"; // Phase 22 Plan 22-02 (BTC-PAIR-01) — dual-address (segwit + taproot) pair
+import "./pair_litecoin_ledger.js"; // Phase 26 Plan 26-01 (LTC-PAIR-01) — dual-address (legacy + segwit) LTC pair
 import "./get_btc_balance.js"; // Phase 22 Plan 22-03 (BTC-READ-01) — single-address BalanceReport via Esplora
 import "./get_btc_balances.js"; // Phase 22 Plan 22-03 (BTC-READ-02) — parallel segwit + taproot via Promise.allSettled
 import "./get_btc_account_balance.js"; // Phase 22 Plan 22-03 (BTC-READ-03) — xpub gap-limit-respecting scan
 import "./get_btc_tx_history.js"; // Phase 22 Plan 22-03 (BTC-READ-04) — paginated tx history via Esplora cursor
 import "./get_btc_fee_estimates.js"; // Phase 22 Plan 22-03 (BTC-READ-05) — Esplora /fee-estimates → 5-key projection (ROADMAP SC #7)
+import "./get_litecoin_balance.js"; // Phase 26 Plan 26-01 (LTC-READ-01) — single-address litoshi BalanceReport via litecoinspace.org
+import "./get_litecoin_tx_history.js"; // Phase 26 Plan 26-01 (LTC-READ-02) — paginated tx history via litecoinspace.org Esplora cursor
+import "./get_litecoin_fee_estimates.js"; // Phase 26 Plan 26-01 (LTC-READ-02) — /v1/fees/recommended → 5-key sat/vB shape
 import "./get_btc_status.js"; // Phase 22 Plan 22-04 (BTC-PAIR-02) — dual-address (segwit + taproot) pairing status
 import "./get_tron_status.js"; // Phase 17 Plan 17-03 (TRON-PAIR-02)
 import "./get_tron_balance.js"; // Phase 17 Plan 17-03 (TRON-READ-01)
@@ -38,7 +42,10 @@ import "./prepare_solana_native_send.js"; // Phase 12 Plan 12-02 (SOL-W-01) — 
 import "./prepare_solana_spl_send.js"; // Phase 12 Plan 12-03 (SOL-W-02) — Solana SPL TransferChecked send
 import "./prepare_btc_send.js"; // Phase 23 Plan 23-03 (BTC-PSBT-01) — BTC native segwit+taproot PSBT send
 import "./prepare_btc_rbf_bump.js"; // Phase 24 Plan 24-01 (BTC-W-02) — BIP-125 RBF fee bump
+import "./prepare_litecoin_native_send.js"; // Phase 26 Plan 26-02 (LTC-W-01) — LTC native segwit P2WPKH PSBT send
+import "./prepare_btc_lifi_swap.js"; // Phase 26 Plan 26-03 (BTC-LIFI-01) — BTC→EVM/SOL LiFi cross-chain swap
 import "./sign_message_btc.js"; // Phase 24 Plan 24-02 (BTC-W-03) — BIP-137 compact message signing
+import "./sign_message_ltc.js"; // Phase 26 Plan 26-02 (LTC-W-02) — BIP-137 compact message signing (LTC magic bytes)
 // Phase 25 Plan 25-01 — BTC multisig registry + read tools (BTC-PSBT-03/04)
 import "./register_btc_multisig_wallet.js"; // Phase 25 Plan 25-01 (BTC-PSBT-03) — multisig wallet registration
 import "./get_btc_multisig_balance.js"; // Phase 25 Plan 25-01 (BTC-PSBT-04) — aggregate balance via Esplora gap-limit scan

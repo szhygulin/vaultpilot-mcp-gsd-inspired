@@ -181,6 +181,12 @@ export const _transport = {
   open: (path: string | null): Promise<unknown> => TransportNodeHid.open(path),
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   buildBtcApp: (t: unknown): any => new BtcApp({ transport: t, currency: "bitcoin" }),
+  // Phase 26 Plan 26-01 (LTC-PAIR-01) — APPEND-ONLY to _transport.
+  // `currency: "litecoin"` routes to the BtcOld legacy APDU path —
+  // verified in @ledgerhq/hw-app-btc/lib/Btc.js switch statement
+  // (RESEARCH Pattern 3). Single point of change for all LTC signing.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  buildLtcApp: (t: unknown): any => new BtcApp({ transport: t, currency: "litecoin" }),
 };
 
 interface TransportLike {
@@ -784,3 +790,309 @@ export const _btcLedgerTransport = {
 export function _resetLedgerBtcTransportForTesting(): void {
   // No singleton state — intentional no-op.
 }
+
+// ─── Phase 26 Plan 26-01 — LTC transport + pairing ───────────────────────────
+//
+// APPEND-ONLY section. Does NOT modify any existing BTC code above.
+//
+// `buildLtcApp` is already in `_transport` above (one-line addition to the
+// existing _transport object literal). Error classes, `fetchLtcAddresses`,
+// and the `_ltcLedgerTransport` spy-affordance live here.
+//
+// REGRESSION ANCHOR (Pitfall 3 + RESEARCH Assumption A1): `fetchLtcAddresses`
+// calls `getAppConfiguration()` and asserts `config.name === "Litecoin"`.
+// The exact string is ASSUMED per Assumption A1 — add a comment so the
+// verify-phase catches it against a real device.
+
+/**
+ * Thrown when the transport opens but the active app on the device is
+ * not the Litecoin app (typically Bitcoin app is open — the BTC app's
+ * APDU table overlaps with the LTC app; `getAppConfiguration` is the
+ * canonical gate). Distinct error class from `LedgerBtcAppNotOpenError`
+ * so `pair_litecoin_ledger` surfaces `LITECOIN_APP_NOT_OPEN` while
+ * `pair_btc_ledger` surfaces `BITCOIN_APP_NOT_OPEN` — agents can route
+ * recovery instructions correctly.
+ */
+export class LedgerLtcAppNotOpenError extends Error {
+  constructor() {
+    super(
+      "Litecoin app is not the active app on the Ledger. Open the Litecoin app on the device, then retry.",
+    );
+    this.name = "LedgerLtcAppNotOpenError";
+  }
+}
+
+/**
+ * Thrown when the 60s approval budget is exceeded during `fetchLtcAddresses`.
+ * Distinct class from `BtcApprovalTimeoutError` — module-local per the
+ * per-chain duplication convention (mirror of `TronApprovalTimeoutError`,
+ * `BtcApprovalTimeoutError` in the corresponding pair tools).
+ */
+export class LtcApprovalTimeoutError extends Error {
+  constructor() {
+    super(
+      "Ledger did not approve the LTC address fetch within 60 seconds. Re-call pair_litecoin_ledger to retry; ensure your Ledger is unlocked and the Litecoin app is open.",
+    );
+    this.name = "LtcApprovalTimeoutError";
+  }
+}
+
+/**
+ * Default LTC legacy derivation path — BIP-44, coin_type=2. m/44'/2'/0'/0/0
+ * → L-prefix P2PKH legacy address. Format: "legacy".
+ */
+export const DEFAULT_LTC_LEGACY_PATH = "44'/2'/0'/0/0";
+
+/**
+ * Default LTC segwit derivation path — BIP-84, coin_type=2. m/84'/2'/0'/0/0
+ * → ltc1q P2WPKH segwit address. Format: "bech32".
+ */
+export const DEFAULT_LTC_SEGWIT_PATH = "84'/2'/0'/0/0";
+
+/**
+ * Fetch BOTH legacy AND segwit LTC addresses from the Ledger in ONE device
+ * session.
+ *
+ * Returns `{ legacy, segwit, appVersion }`:
+ *   - `legacy`: BIP-44 (`m/44'/2'/0'/0/0`) → `L…` (P2PKH legacy).
+ *     Format: "legacy". coin_type=2 via BtcOld APDU path.
+ *   - `segwit`: BIP-84 (`m/84'/2'/0'/0/0`) → `ltc1q…` (P2WPKH segwit).
+ *     Format: "bech32". coin_type=2.
+ *   - `appVersion`: the Litecoin app version string from `getAppConfiguration()`.
+ *
+ * `getAppConfiguration()` runs FIRST — asserts the active app name is
+ * `"Litecoin"` (RESEARCH Assumption A1 — exact string ASSUMED; verify
+ * against real device at execute time). Wrong app → `LedgerLtcAppNotOpenError`
+ * (Pitfall 3 REGRESSION ANCHOR — map distinct error, NOT LedgerBtcAppNotOpenError).
+ *
+ * `verify: true` passed on both `getWalletPublicKey` calls — forces
+ * on-device address display + user confirmation (same pattern as BTC
+ * `fetchBtcAddresses`).
+ *
+ * ONE `try/finally` wraps BOTH `getWalletPublicKey` calls — transport
+ * handle closed unconditionally (Pitfall 5 handle-leak prevention).
+ */
+export async function fetchLtcAddresses(
+  legacyPath: string = DEFAULT_LTC_LEGACY_PATH,
+  segwitPath: string = DEFAULT_LTC_SEGWIT_PATH,
+): Promise<{
+  legacy: { address: string; publicKey: string; chainCode: string; derivationPath: string };
+  segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string };
+  appVersion: string;
+}> {
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildLtcApp(transport);
+
+    // Guard: Litecoin app MUST be open.
+    // ASSUMED A1: exact name string from getAppConfiguration().name for
+    // the Ledger Litecoin app is "Litecoin" — verify against real device
+    // at execute time. If the real device returns a different string
+    // (e.g. "LTC"), update this assertion.
+    let cfgName: string;
+    try {
+      const cfg = await app.getAppConfiguration();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      cfgName = (cfg?.name as string) ?? "";
+    } catch {
+      throw new LedgerLtcAppNotOpenError();
+    }
+    if (cfgName !== "Litecoin") {
+      // ASSUMED A1 — verify string against real device
+      throw new LedgerLtcAppNotOpenError();
+    }
+
+    // Address exchanges (2 APDU calls).
+    // Format / path mapping is HARDCODED — never agent-input (Pitfall 7 mirror).
+    // BIP-44 → format:"legacy" (L-prefix); BIP-84 → format:"bech32" (ltc1q prefix).
+    const legacy = await app.getWalletPublicKey(`m/${legacyPath}`, {
+      format: "legacy",
+      verify: true,
+    });
+    const segwit = await app.getWalletPublicKey(`m/${segwitPath}`, {
+      format: "bech32",
+      verify: true,
+    });
+
+    return {
+      legacy: {
+        address: legacy.bitcoinAddress,
+        publicKey: legacy.publicKey,
+        chainCode: legacy.chainCode,
+        derivationPath: legacyPath,
+      },
+      segwit: {
+        address: segwit.bitcoinAddress,
+        publicKey: segwit.publicKey,
+        chainCode: segwit.chainCode,
+        derivationPath: segwitPath,
+      },
+      appVersion: cfgName, // app name doubles as version context
+    };
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log("warn", `transport.close() failed during fetchLtcAddresses cleanup: ${message}`);
+    }
+  }
+}
+
+// ─── Phase 26 Plan 26-02 — LTC BIP-137 message signing ───────────────────────
+//
+// APPEND-ONLY. Zero modifications to existing BTC or Plan 26-01 code above.
+//
+// `signLtcMessage` mirrors `signBtcMessage` exactly — the ONLY difference is
+// `buildLtcApp` instead of `buildBtcApp` and `LedgerLtcAppNotOpenError` instead
+// of `LedgerBtcAppNotOpenError`. The Ledger LTC app (a fork of the BTC app)
+// applies the "Litecoin Signed Message:\n" magic prefix internally — do NOT
+// pre-apply it (same Pitfall 3 as BTC).
+
+/**
+ * Sign a raw message hex with the Ledger Litecoin app (BIP-137 variant).
+ *
+ * Mirrors `signBtcMessage` but opens the LTC app via `buildLtcApp`.
+ * The LTC app applies the "Litecoin Signed Message:\n" magic prefix internally —
+ * pass ONLY the raw message bytes (hex-encoded).
+ *
+ * Returns `{ v, r, s }` where `v` is the raw recovery_id (0 or 1).
+ *
+ * @param path       — BIP-32 derivation path (e.g. `"84'/2'/0'/0/0"`).
+ * @param messageHex — raw message bytes, hex-encoded (NOT magic-prefixed).
+ */
+export async function signLtcMessage(
+  path: string,
+  messageHex: string,
+): Promise<{ v: number; r: string; s: string }> {
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildLtcApp(transport);
+
+    // Guard: Litecoin app must be open.
+    try {
+      await app.getAppConfiguration();
+    } catch {
+      throw new LedgerLtcAppNotOpenError();
+    }
+
+    // Positional-arg call — same interface as signBtcMessage (LTC app is a fork
+    // of BTC app; APDU table is compatible). The LTC app applies the magic prefix
+    // internally (Pitfall 3 mirror for LTC).
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    const result = await app.signMessage(path, messageHex);
+    return result as { v: number; r: string; s: string };
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log(
+        "warn",
+        `transport.close() failed during signLtcMessage cleanup: ${message}`,
+      );
+    }
+  }
+}
+
+// ─── Phase 26 Plan 26-02 — LTC PSBT signing (send_transaction LTC branch) ────
+//
+// APPEND-ONLY. Mirrors `signBtcPsbt` with three LTC-specific adjustments:
+//   1. `buildLtcApp` instead of `buildBtcApp` (LedgerLtcAppNotOpenError on failure).
+//   2. Only P2WPKH inputs — LTC has no taproot in Phase 26 (single-pass sign).
+//   3. `accountPath: "m/84'/2'/0'"` — BIP-84 segwit with LTC coin_type=2.
+
+/**
+ * Sign an LTC P2WPKH PSBT via the Ledger Litecoin app.
+ *
+ * Phase 26 Plan 26-02 (LTC-W-01 send step). Mirrors `signBtcPsbt` but uses
+ * the Litecoin app (`buildLtcApp`) and LTC BIP-84 derivation path (coin_type=2).
+ * Only P2WPKH inputs are supported in Phase 26 — no taproot.
+ *
+ * @param psbtBase64 — PSBT-v0 in base64 (from `buildBtcPsbt({ network: LTC_NETWORK })`).
+ * @param inputs     — per-input sign descriptors (all must be `scriptType: "p2wpkh"`).
+ * @returns `{ rawTxHex }` — the broadcast-ready serialized transaction hex.
+ */
+export async function signLtcPsbt(
+  psbtBase64: string,
+  inputs: readonly BtcPsbtSignInput[],
+  knownAddressDerivations: readonly KnownAddressDerivation[],
+): Promise<{ rawTxHex: string }> {
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildLtcApp(transport);
+
+    // Guard: Litecoin app must be open.
+    try {
+      await app.getAppConfiguration();
+    } catch {
+      throw new LedgerLtcAppNotOpenError();
+    }
+
+    // LTC Phase 26: only P2WPKH — single pass (no taproot partition needed).
+    const knownMap = new Map<string, { pubkey: Uint8Array; path: string }>();
+    for (const kd of knownAddressDerivations) {
+      knownMap.set(kd.scriptPubKeyHashHex, { pubkey: kd.pubkey, path: kd.path });
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    const { psbt: signedBuffer } = await app.signPsbtBuffer(
+      Psbt.fromBase64(psbtBase64).toBuffer(),
+      {
+        finalizePsbt: false,
+        accountPath: "m/84'/2'/0'",  // LTC BIP-84 segwit, coin_type=2
+        addressFormat: "bech32",
+        knownAddressDerivations: knownMap,
+      },
+    );
+
+    const combined = Psbt.fromBuffer(Buffer.from(signedBuffer));
+
+    for (let idx = 0; idx < combined.data.inputs.length; idx++) {
+      const inp = combined.data.inputs[idx];
+      if (!inp?.finalScriptWitness && !inp?.finalScriptSig) {
+        combined.finalizeInput(idx);
+      }
+    }
+    return { rawTxHex: combined.extractTransaction().toHex() };
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log("warn", `transport.close() failed during signLtcPsbt cleanup: ${message}`);
+    }
+  }
+}
+
+/**
+ * ESM spy-affordance for the LTC address-probe path, message-signing path,
+ * and PSBT-signing path.
+ * `pair_litecoin_ledger` calls `_ltcLedgerTransport.fetchLtcAddresses`,
+ * `sign_message_ltc` calls `_ltcLedgerTransport.signLtcMessage`, and
+ * `send_transaction` (LTC branch) calls `_ltcLedgerTransport.signLtcPsbt` so
+ * `vi.spyOn(_ltcLedgerTransport, "…")` intercepts across the ESM module boundary.
+ */
+export const _ltcLedgerTransport = {
+  fetchLtcAddresses: (
+    legacyPath?: string,
+    segwitPath?: string,
+  ): Promise<{
+    legacy: { address: string; publicKey: string; chainCode: string; derivationPath: string };
+    segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string };
+    appVersion: string;
+  }> => fetchLtcAddresses(legacyPath, segwitPath),
+
+  signLtcMessage: (
+    path: string,
+    messageHex: string,
+  ): Promise<{ v: number; r: string; s: string }> =>
+    signLtcMessage(path, messageHex),
+
+  signLtcPsbt: (
+    psbtBase64: string,
+    inputs: readonly BtcPsbtSignInput[],
+    knownAddressDerivations: readonly KnownAddressDerivation[],
+  ): Promise<{ rawTxHex: string }> =>
+    signLtcPsbt(psbtBase64, inputs, knownAddressDerivations),
+};
