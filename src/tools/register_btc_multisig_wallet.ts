@@ -29,6 +29,7 @@ import {
   type StructuredError,
   makeStructuredError,
 } from "../signing/error-codes.js";
+import { VERIFY_ON_DEVICE_MULTISIG_TEMPLATE } from "../signing/blocks-btc.js";
 import {
   deriveMultisigAddress,
   extractXpubFromKeyExpr,
@@ -56,30 +57,8 @@ function errEnvelope(
     StructuredError;
 }
 
-// ─── VERIFY-ON-DEVICE template ────────────────────────────────────────────────
-
-/**
- * VERIFY-ON-DEVICE block for BTC multisig wallet registration.
- *
- * Surfaces the first 5 derived P2WSH receive addresses so the user can
- * cross-check them against their co-signers' view before using the wallet
- * for signing (T-25-02 mitigation — Wrong multisig address shown to user).
- *
- * Tests import this const and run the same substitution to assert byte-identity.
- * Do NOT duplicate the string into test files.
- */
-export const VERIFY_ON_DEVICE_MULTISIG_TEMPLATE: string = [
-  "VERIFY ON DEVICE (BTC — multisig wallet registration)",
-  "────────────────────────────────────────────────────",
-  "walletName:  {WALLET_NAME}",
-  "threshold:   {THRESHOLD}-of-{TOTAL_SIGNERS}",
-  "",
-  "First 5 derived P2WSH receive addresses — verify against your co-signers:",
-  "{ADDRESS_ROWS}",
-  "",
-  "If these addresses match your co-signers' view, registration is correct.",
-  "If any address differs — STOP. Do not use this wallet for signing.",
-].join("\n");
+// Re-export so tests importing from this module continue to work.
+export { VERIFY_ON_DEVICE_MULTISIG_TEMPLATE };
 
 // ─── Tool description ─────────────────────────────────────────────────────────
 
@@ -308,7 +287,7 @@ registerTool(
     const registeredAt = new Date().toISOString();
 
     let walletHmacHex: string | null = null;
-    let registrationNote: string;
+    let registrationNote = "Device registration status unknown.";
 
     if (!forceArg) {
       // Build the descriptor template for @ledgerhq/ledger-bitcoin:
