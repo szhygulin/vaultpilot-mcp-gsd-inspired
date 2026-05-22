@@ -675,7 +675,12 @@ Plans:
 
 Plans:
 
+**Wave 1**
+
 - [ ] 24-01-PLAN.md — `prepare_btc_rbf_bump` (BTC-W-02): RBF replacement PSBT, BIP-125 sequence/fee-rate validation, `buildBtcPsbt` `sequenceOverride?` param, `signalRbf` flag on `prepare_btc_send` (Design Fork 1 Option A), `PreparedTxBtc.kind` widening to `"rbf"`, Fixture V anchor (Wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 24-02-PLAN.md — `sign_message_btc` (BTC-W-03): BIP-137 compact-signature shape, `signBtcMessage` Ledger transport spy-affordance, magic-prefix-device-applied, Fixture W anchor; BIP-322 taproot deferred (Wave 2, depends on 24-01)
 
 #### Phase 25: PSBT multisig flow (combine / sign / finalize + multisig wallet registry)
