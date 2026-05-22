@@ -702,9 +702,9 @@ Plans:
 
 Plans:
 
-- [ ] 25-01: `register_btc_multisig_wallet` + `src/wallet/btc-multisig-registry.ts` (descriptor parsing + storage at `~/.vaultpilot-mcp/btc-multisig.json`, 0o600 file); `get_btc_multisig_balance` + `get_btc_multisig_utxos` read tools
-- [ ] 25-02: `combine_btc_psbts` + PSBT-merging logic + conflict detection (input-by-input + key-by-key); validation against descriptor
-- [ ] 25-03: `sign_btc_multisig_psbt` + `finalize_btc_psbt` + threshold-check + Ledger multisig PSBT signing flow (BTC app v2.1+ supports multisig); preview-time signer-key surfacing in CHECKS PERFORMED
+- [ ] 25-01-PLAN.md — multisig wallet registry: descriptor parse/validation + BIP-67 P2WSH address derivation + atomic-write persistence (0o600); register_btc_multisig_wallet + get_btc_multisig_balance + get_btc_multisig_utxos
+- [ ] 25-02-PLAN.md — combine_btc_psbts: PSBT merge with an explicit pre-combine same-key/same-input conflict scan raising PSBT_COMBINE_CONFLICT
+- [ ] 25-03-PLAN.md — sign_btc_multisig_psbt (prepare→preview→send via multisig-psbt handle) + finalize_btc_psbt (threshold-enforced) + Ledger multisig signing via @ledgerhq/ledger-bitcoin AppClient + Fixture X
 
 #### Phase 26: LTC scaffolding + LiFi BTC→EVM/Solana bridging
 
