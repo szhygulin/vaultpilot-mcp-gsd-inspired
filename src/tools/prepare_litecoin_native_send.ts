@@ -316,6 +316,24 @@ registerTool(
           a.address.startsWith("ltc1q"),
         );
 
+        // WR-05: refuse at prepare time rather than silently falling through to
+        // a default derivation path that causes a confusing Ledger rejection.
+        if (!segwitAccount) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: "error: no segwit LTC account found — re-run pair_litecoin_ledger",
+              },
+            ],
+            structuredContent: errEnvelope(
+              "WALLET_NOT_PAIRED",
+              "no segwit LTC account found — re-run pair_litecoin_ledger",
+            ),
+          };
+        }
+
         // Fetch pubkeys for PSBT BIP-32 derivation via Ledger LTC transport.
         let fetchedKeys: {
           segwit: { address: string; publicKey: string; derivationPath: string };
@@ -323,7 +341,7 @@ registerTool(
         };
         try {
           const result = await _ltcLedgerTransport.fetchLtcAddresses(
-            segwitAccount?.derivationPath,
+            segwitAccount.derivationPath,
           );
           fetchedKeys = {
             segwit: result.segwit,
