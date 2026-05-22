@@ -25,12 +25,14 @@
 //   fetchAddressUtxos:
 //    15. Happy-path returns kind:"ok" with utxos:UtxoRow[]
 //    16. UTXO valueSats is bigint; confirmed maps from status.confirmed
+//    WR-05. UTXO cache expires after 30s TTL (re-fetches on stale)
 //   fetchAddressTxs:
 //    17. Happy-path returns kind:"ok" with stripped-down rows
 //    18. afterTxid pagination cursor appended to URL when provided
 //   fetchFeeEstimates:
 //    19. Happy-path returns kind:"ok" with estimates Record<string, number>
 //    20. 24-key live shape preserved verbatim
+//    WR-05. Fee-estimates cache expires after 60s TTL (re-fetches on stale)
 //   reset:
 //    21. _resetEsploraCacheForTesting clears all caches
 //   contract:
@@ -414,6 +416,19 @@ describe("fetchAddressUtxos — happy path (BTC-READ-01, load-bearing for Phase 
       expect(result.utxos).toHaveLength(0);
     }
   });
+
+  it("WR-05 — UTXO cache expires after 30s (stale TTL causes re-fetch)", async () => {
+    const fetchMock = buildFetch({ payload: [] });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+
+    await fetchAddressUtxos(VALID_SEGWIT); // populates cache
+    vi.advanceTimersByTime(31_000); // advance past 30s TTL
+    await fetchAddressUtxos(VALID_SEGWIT); // should re-fetch after TTL
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
 });
 
 describe("fetchAddressTxs — happy path (BTC-READ-04, pagination cursor)", () => {
@@ -512,6 +527,20 @@ describe("fetchFeeEstimates — happy path (BTC-READ-05)", () => {
     await fetchFeeEstimates();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("WR-05 — fee-estimates cache expires after 60s (stale TTL causes re-fetch)", async () => {
+    const fetchMock = buildFetch({ payload: LIVE_FEE_ESTIMATES });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+
+    await fetchFeeEstimates(); // populates cache
+    vi.advanceTimersByTime(61_000); // advance past 60s TTL
+    _resetBitcoinRegistryForTesting(); // ensure URL helper still returns valid base
+    await fetchFeeEstimates(); // should re-fetch after TTL
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
   });
 });
 

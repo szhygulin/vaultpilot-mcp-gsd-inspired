@@ -47,6 +47,14 @@ import type { UtxoRow } from "./types.js";
 const ESPLORA_TIMEOUT_MS = 5000;
 const CACHE_MAX_ENTRIES = 256;
 
+// TTLs for time-sensitive caches (WR-05):
+//   UTXOs change frequently — a confirmed spend or incoming tx can appear
+//   within seconds. 30s TTL keeps coin-selection fresh without hammering Esplora.
+//   Fee estimates change every block (~10 min) but outlier spikes happen at any
+//   time — 60s provides a usable balance between freshness and rate limits.
+const UTXOS_CACHE_TTL_MS = 30_000;  // 30 s
+const FEE_ESTIMATES_CACHE_TTL_MS = 60_000; // 60 s
+
 // Internal literal cache key for /fee-estimates (single endpoint, no
 // per-input variation).
 const FEE_ESTIMATES_CACHE_KEY = "::fee-estimates::";
@@ -98,8 +106,13 @@ export type EsploraFeeEstimatesResult =
 
 const addressInfoCache = new Map<string, EsploraAddressResult>();
 const addressUtxosCache = new Map<string, EsploraUtxosResult>();
+// Per-entry TTL tracking for UTXOs (WR-05). Separate map avoids changing the
+// cache value type which would require updates at every read site.
+const addressUtxosCacheTs = new Map<string, number>();
 const addressTxsCache = new Map<string, EsploraTxsResult>();
 const feeEstimatesCache = new Map<string, EsploraFeeEstimatesResult>();
+// Per-entry TTL tracking for fee-estimates (WR-05).
+const feeEstimatesCacheTs = new Map<string, number>();
 
 function cacheInsert<T>(cache: Map<string, T>, key: string, result: T): void {
   if (cache.size >= CACHE_MAX_ENTRIES) {
@@ -284,7 +297,10 @@ export async function fetchAddressUtxos(
   address: string,
 ): Promise<EsploraUtxosResult> {
   const cached = addressUtxosCache.get(address);
-  if (cached) return cached;
+  const cachedTs = addressUtxosCacheTs.get(address);
+  if (cached && cachedTs !== undefined && Date.now() - cachedTs < UTXOS_CACHE_TTL_MS) {
+    return cached;
+  }
 
   const url = `${_bitcoinRegistry.getEsploraBaseUrl()}/address/${address}/utxo`;
   const outcome = await doFetch<EsploraUtxoBody[]>(url);
@@ -363,6 +379,7 @@ export async function fetchAddressUtxos(
   }
 
   cacheInsert(addressUtxosCache, address, result);
+  addressUtxosCacheTs.set(address, Date.now()); // WR-05: record cache timestamp
   return result;
 }
 
@@ -482,13 +499,16 @@ export async function fetchAddressTxs(
  * — Plan 22-03) per RESEARCH § Plan 22-03 #6 + ROADMAP SC #7.
  *
  * Single-endpoint cache key (`FEE_ESTIMATES_CACHE_KEY` literal); fee
- * estimates change every ~minute on a busy chain. Process-lifetime
- * cache; a TTL would land in a follow-up if staleness becomes a
- * problem.
+ * estimates change every ~block (~10 min) but spike at any time.
+ * WR-05: 60s TTL prevents stale fee rates from propagating across
+ * multiple prepare calls within a busy session.
  */
 export async function fetchFeeEstimates(): Promise<EsploraFeeEstimatesResult> {
   const cached = feeEstimatesCache.get(FEE_ESTIMATES_CACHE_KEY);
-  if (cached) return cached;
+  const cachedTs = feeEstimatesCacheTs.get(FEE_ESTIMATES_CACHE_KEY);
+  if (cached && cachedTs !== undefined && Date.now() - cachedTs < FEE_ESTIMATES_CACHE_TTL_MS) {
+    return cached;
+  }
 
   const url = `${_bitcoinRegistry.getEsploraBaseUrl()}/fee-estimates`;
   const outcome = await doFetch<Record<string, number>>(url);
@@ -555,6 +575,7 @@ export async function fetchFeeEstimates(): Promise<EsploraFeeEstimatesResult> {
   }
 
   cacheInsert(feeEstimatesCache, FEE_ESTIMATES_CACHE_KEY, result);
+  feeEstimatesCacheTs.set(FEE_ESTIMATES_CACHE_KEY, Date.now()); // WR-05: record cache timestamp
   return result;
 }
 
@@ -636,6 +657,8 @@ export async function broadcastTx(
 export function _resetEsploraCacheForTesting(): void {
   addressInfoCache.clear();
   addressUtxosCache.clear();
+  addressUtxosCacheTs.clear(); // WR-05
   addressTxsCache.clear();
   feeEstimatesCache.clear();
+  feeEstimatesCacheTs.clear(); // WR-05
 }
