@@ -60,9 +60,20 @@ interface MockTransport {
   disconnected: boolean;
 }
 
+// xpub fixtures derived from BIP-32 test seed (000102030405060708090a0b0c0d0e0f)
+// at m/84'/0'/0' (segwit) and m/86'/0'/0' (taproot) — both parseable by bip32@^5.
+// Not real-wallet keys; chosen for deterministic test vectors.
+const XPUB_FIXTURE_SEGWIT =
+  "xpub6C1HVMz946r433QEjZGpYYWYcspxXXBPys5PBGkmQboRXE6RLfFiStEkKbWKCZaPgDrzZh9nUEunxuiuy6MNdw23du2Ek7GoKYMJVH8eK5E";
+const XPUB_FIXTURE_TAPROOT =
+  "xpub6DRX1xNPHKaApgDnqaMNxJ8Lz35KCn3mRcW3LUep3JKhxWisRwaZJPn4BuZiaJ4kJ3cdqwbn4vZcsGiLGJJabZbqa65LGX2uhU9CtPWSgEn";
+
 interface MockBtcApp {
   getAppConfiguration: ReturnType<typeof vi.fn>;
   getWalletPublicKey: ReturnType<typeof vi.fn>;
+  /** CR-02 / CR-03: account-level xpub fetch (added to mock for Phase 23 fix).
+   *  Optional on stubs that throw before reaching this APDU. */
+  getWalletXpub?: ReturnType<typeof vi.fn>;
 }
 
 function makeMockTransport(): MockTransport {
@@ -86,9 +97,16 @@ function makeMockApp(
     }
     throw new Error(`unexpected format: ${String(opts?.format)}`);
   });
+  // CR-02 / CR-03: `getWalletXpub` returns the account-level xpub for the given path.
+  const getWalletXpub = vi.fn(async ({ path }: { path: string; xpubVersion: number }) => {
+    if (path === "84'/0'/0'") return XPUB_FIXTURE_SEGWIT;
+    if (path === "86'/0'/0'") return XPUB_FIXTURE_TAPROOT;
+    throw new Error(`unexpected getWalletXpub path: ${path}`);
+  });
   return {
     getAppConfiguration: vi.fn(async () => ({ version })),
     getWalletPublicKey,
+    getWalletXpub,
   };
 }
 
@@ -194,11 +212,15 @@ describe("fetchBtcAddresses — dual-address fetch in ONE try/finally close", ()
     expect(result.segwit.derivationPath).toBe("84'/0'/0'/0/0");
     expect(result.taproot.derivationPath).toBe("86'/0'/0'/0/0");
     expect(result.appVersion).toBe("2.1.3");
+    // CR-02 / CR-03: xpubs now returned alongside addresses.
+    expect(result.segwit.xpub).toBe(XPUB_FIXTURE_SEGWIT);
+    expect(result.taproot.xpub).toBe(XPUB_FIXTURE_TAPROOT);
 
-    // ONE transport open + ONE close for BOTH addresses (Pitfall 5).
+    // ONE transport open + ONE close for BOTH addresses + xpubs (Pitfall 5).
     expect(stubTransport.close).toHaveBeenCalledTimes(1);
-    // TWO getWalletPublicKey calls within ONE session.
+    // TWO getWalletPublicKey calls + TWO getWalletXpub calls within ONE session.
     expect(stubApp.getWalletPublicKey).toHaveBeenCalledTimes(2);
+    expect(stubApp.getWalletXpub).toHaveBeenCalledTimes(2);
   });
 
   it("address-prefix regression anchor — segwit starts with `bc1q`, taproot with `bc1p` (Pitfall 7)", async () => {
@@ -279,6 +301,10 @@ describe("fetchBtcAddresses — dual-address fetch in ONE try/finally close", ()
         callOrder.push(`getWalletPublicKey:${opts?.format}`);
         return { publicKey: PUBKEY_FIXTURE_A, bitcoinAddress: opts?.format === "bech32" ? SEGWIT_FIXTURE : TAPROOT_FIXTURE, chainCode: CHAINCODE_FIXTURE };
       }),
+      // CR-02 / CR-03: getWalletXpub is called after both getWalletPublicKey calls.
+      getWalletXpub: vi.fn(async ({ path }: { path: string }) =>
+        path === "84'/0'/0'" ? XPUB_FIXTURE_SEGWIT : XPUB_FIXTURE_TAPROOT,
+      ),
     };
     vi.spyOn(_transport, "isSupported").mockResolvedValue(true);
     vi.spyOn(_transport, "list").mockResolvedValue([{ path: "/dev/hid0" }]);
@@ -301,6 +327,10 @@ describe("fetchBtcAddresses — dual-address fetch in ONE try/finally close", ()
         bitcoinAddress: opts?.format === "bech32" ? SEGWIT_FIXTURE : TAPROOT_FIXTURE,
         chainCode: CHAINCODE_FIXTURE,
       })),
+      // CR-02 / CR-03: must be present for fetchBtcAddresses to complete.
+      getWalletXpub: vi.fn(async ({ path }: { path: string }) =>
+        path === "84'/0'/0'" ? XPUB_FIXTURE_SEGWIT : XPUB_FIXTURE_TAPROOT,
+      ),
     };
     vi.spyOn(_transport, "isSupported").mockResolvedValue(true);
     vi.spyOn(_transport, "list").mockResolvedValue([{ path: "/dev/hid0" }]);

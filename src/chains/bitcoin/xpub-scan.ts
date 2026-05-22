@@ -128,14 +128,19 @@ function normalizeToXpub(extended: string): string {
  * - `p2wpkh` (BIP-84 segwit): `bc1q…` — full compressed pubkey input.
  * - `p2tr` (BIP-86 taproot): `bc1p…` — x-only internal pubkey (drop
  *   the first byte of the 33-byte compressed pubkey per BIP-340).
+ *
+ * Exported for CR-03: `change-index.ts` (and callers that need to derive a
+ * specific change address from the account xpub + a given index, without
+ * running a full gap-limit scan).  The function normalizes `zpub…` to
+ * `xpub…` internally so callers can pass either form.
  */
-function deriveAddress(
+export function deriveAddress(
   xpub: string,
   index: number,
   scriptType: "p2wpkh" | "p2tr",
   chain: 0 | 1 = 0,
 ): string {
-  const node = bip32.fromBase58(xpub);
+  const node = bip32.fromBase58(normalizeToXpub(xpub));
   const child = node.derive(chain).derive(index);
   const pubkey = child.publicKey;
   if (scriptType === "p2wpkh") {

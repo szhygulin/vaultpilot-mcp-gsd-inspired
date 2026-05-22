@@ -53,7 +53,7 @@
 import { type Hex, toHex } from "viem";
 import { call } from "viem/actions";
 import { Message, PublicKey, Transaction } from "@solana/web3.js";
-import { Transaction as BtcTransaction } from "bitcoinjs-lib";
+import { Transaction as BtcTransaction, address as btcAddressLib, networks as btcNetworks } from "bitcoinjs-lib";
 
 import { getEthereumClient } from "../chains/ethereum.js";
 import "../chains/bitcoin/types.js"; // ensure initEccLib(tinySecp256k1) fires
@@ -99,6 +99,7 @@ import {
   LedgerBtcAppNotOpenError,
   _btcLedgerTransport,
   type BtcPsbtSignInput,
+  type KnownAddressDerivation,
 } from "../wallet/ledger-btc-transport.js";
 import { listAccounts } from "../wallet/non-evm-account-store.js";
 import {
@@ -1471,13 +1472,46 @@ async function sendTransactionBtcBranch(
     masterFingerprint: PLACEHOLDER_MASTER_FP,
   }));
 
+  // ---- Build knownAddressDerivations for change output (CR-01 / Pitfall 6) ---
+  // Without the change address in knownAddressDerivations, the Ledger BTC app
+  // displays the change output as a second send recipient rather than "your change".
+  // The map key is the scriptPubKey hash hex (20 bytes for P2WPKH, 32 bytes for P2TR)
+  // extracted from the change address's output script (same approach as the
+  // @ledgerhq/psbtv2 `extractHashFromScriptPubKey` function used internally).
+  const knownDerivations: KnownAddressDerivation[] = [];
+  if (btcTx.changeAddress !== null && btcTx.changePath !== null) {
+    try {
+      const changeScript = btcAddressLib.toOutputScript(btcTx.changeAddress, btcNetworks.bitcoin);
+      // Extract the hash: P2WPKH = bytes[2..22] (20-byte hash160), P2TR = bytes[2..34] (32-byte x-only)
+      let hashHex: string | undefined;
+      if (changeScript.length === 22 && changeScript[0] === 0x00 && changeScript[1] === 0x14) {
+        // P2WPKH: OP_0 OP_PUSHDATA(20) <hash160>
+        hashHex = Buffer.from(changeScript.subarray(2, 22)).toString("hex");
+      } else if (changeScript.length === 34 && changeScript[0] === 0x51 && changeScript[1] === 0x20) {
+        // P2TR: OP_1 OP_PUSHDATA(32) <x-only-tweaked-key>
+        hashHex = Buffer.from(changeScript.subarray(2, 34)).toString("hex");
+      }
+      if (hashHex !== undefined) {
+        knownDerivations.push({
+          scriptPubKeyHashHex: hashHex,
+          pubkey: placeholderPubkey, // Ledger resolves from its own derivation tree
+          path: btcTx.changePath,
+        });
+      }
+    } catch {
+      // If the change address is not parseable, proceed without it — the
+      // worst case is the Ledger displays it as a send rather than change.
+      // This is recoverable: the user sees it on-device and can reject.
+    }
+  }
+
   // ---- Sign via Ledger BTC app (USB-HID) ----------------------------------
   let rawTxHex: string;
   try {
     const result = await _btcLedgerTransport.signBtcPsbt(
       btcTx.psbtBase64,
       signInputs,
-      [],
+      knownDerivations,
     );
     rawTxHex = result.rawTxHex;
   } catch (err) {

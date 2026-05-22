@@ -55,6 +55,7 @@ import { fetchAddressUtxos, fetchFeeEstimates } from "../chains/bitcoin/esplora-
 import { _changeIndex } from "../chains/bitcoin/change-index.js";
 import "../chains/bitcoin/types.js"; // initEccLib side-effect
 import { assertBtcSegwitAddress, assertBtcTaprootAddress } from "../chains/bitcoin/types.js";
+import { deriveAddress } from "../chains/bitcoin/xpub-scan.js";
 import { isDemoMode } from "../config/env.js";
 import { getActiveBtcPersona } from "../demo/state.js";
 import {
@@ -293,6 +294,9 @@ registerTool(
       let taprootPath: string;
       let segwitPubkeyHex: string;
       let taprootPubkeyHex: string;
+      /** CR-02 / CR-03: account-level xpub for change-chain derivation. null in demo mode. */
+      let segwitXpub: string | null = null;
+      let taprootXpub: string | null = null;
 
       if (demoActive) {
         if (!btcPersona) {
@@ -350,13 +354,14 @@ registerTool(
           a.address.startsWith("bc1p"),
         );
 
-        // Fetch pubkeys for PSBT BIP-32 derivation (without on-device verify).
-        // The transport call returns the pubkey hex from the Ledger.
+        // Fetch pubkeys + account xpubs for PSBT BIP-32 derivation.
+        // CR-02 / CR-03: `fetchBtcAddresses` now also returns account-level
+        // xpubs via `getWalletXpub` in the same USB-HID session.
         // verify-phase deferred: real hardware confirmation is deferred per
         // the 2026-05-16 directive (code-complete; no real device in CI).
         let fetchedKeys: {
-          segwit: { address: string; publicKey: string; derivationPath: string };
-          taproot: { address: string; publicKey: string; derivationPath: string };
+          segwit: { address: string; publicKey: string; derivationPath: string; xpub: string };
+          taproot: { address: string; publicKey: string; derivationPath: string; xpub: string };
         };
         try {
           fetchedKeys = await _btcLedgerTransport.fetchBtcAddresses(
@@ -387,6 +392,9 @@ registerTool(
         taprootPath = fetchedKeys.taproot.derivationPath;
         segwitPubkeyHex = fetchedKeys.segwit.publicKey;
         taprootPubkeyHex = fetchedKeys.taproot.publicKey;
+        // CR-02 / CR-03: store xpubs for change-chain derivation below.
+        segwitXpub = fetchedKeys.segwit.xpub;
+        taprootXpub = fetchedKeys.taproot.xpub;
       }
 
       // -----------------------------------------------------------------------
@@ -447,27 +455,52 @@ registerTool(
           fetchAddressUtxos(taprootAddress),
         ]);
 
+        // WR-01: only confirmed UTXOs are eligible for coin selection.
+        // Unconfirmed UTXOs (status.confirmed === false) are zero-conf spends —
+        // double-spend risk is real and Ledger / Esplora cannot guarantee finality.
+        // Refuse with BTC_NO_CONFIRMED_UTXOS if the confirmed set is empty.
         const segwitUtxos: UtxoForSelection[] =
           segwitResult.kind === "ok"
-            ? segwitResult.utxos.map((u) => ({
-                txid: u.txid,
-                vout: u.vout,
-                valueSats: u.valueSats,
-                scriptType: inferScriptType(u.address) as "p2wpkh" | "p2tr",
-              }))
+            ? segwitResult.utxos
+                .filter((u) => u.confirmed)
+                .map((u) => ({
+                  txid: u.txid,
+                  vout: u.vout,
+                  valueSats: u.valueSats,
+                  scriptType: inferScriptType(u.address) as "p2wpkh" | "p2tr",
+                }))
             : [];
 
         const taprootUtxos: UtxoForSelection[] =
           taprootResult.kind === "ok"
-            ? taprootResult.utxos.map((u) => ({
-                txid: u.txid,
-                vout: u.vout,
-                valueSats: u.valueSats,
-                scriptType: "p2tr" as const,
-              }))
+            ? taprootResult.utxos
+                .filter((u) => u.confirmed)
+                .map((u) => ({
+                  txid: u.txid,
+                  vout: u.vout,
+                  valueSats: u.valueSats,
+                  scriptType: "p2tr" as const,
+                }))
             : [];
 
         allUtxos = [...segwitUtxos, ...taprootUtxos];
+
+        // WR-01 refusal: if no confirmed UTXOs exist at all, surface a specific
+        // error rather than letting coin selection fail with a generic no-UTXOs message.
+        if (allUtxos.length === 0) {
+          const totalFetched =
+            (segwitResult.kind === "ok" ? segwitResult.utxos.length : 0) +
+            (taprootResult.kind === "ok" ? taprootResult.utxos.length : 0);
+          const reason =
+            totalFetched > 0
+              ? `no confirmed UTXOs available (${totalFetched} unconfirmed UTXO(s) exist — wait for on-chain confirmation before spending)`
+              : "no UTXOs found for the paired BTC addresses";
+          return {
+            isError: true,
+            content: [{ type: "text", text: `error: ${reason}` }],
+            structuredContent: errEnvelope("BTC_NO_UTXOS_AVAILABLE", reason),
+          };
+        }
       }
 
       // -----------------------------------------------------------------------
@@ -545,38 +578,49 @@ registerTool(
           ? "p2wpkh"
           : "p2tr";
 
-      // xpub for change-index derivation — derive from the path + address.
-      // Phase 23: use a deterministic xpub placeholder since the account store
-      // doesn't persist xpub (verify-phase will use the real xpub).
-      // The change address is derived from the path + change index via the
-      // existing xpub gap-limit scanner. For Phase 23 code-complete, we
-      // use a fixed change index of 0 from the nextChangeIndex scan.
-      let changeIdx: number;
-      try {
-        // Use segwit or taproot address as the xpub proxy for the change scan.
-        // The actual xpub is not stored in the account store — change-index.ts
-        // wraps xpub-scan.ts which derives child addresses from xpub.
-        // Phase 23 code-complete: use the segwit/taproot address as a placeholder
-        // xpub key so nextChangeIndex returns 0 (fresh account = no change history).
-        changeIdx = await _changeIndex.nextChangeIndex(
-          dominantScriptType === "p2wpkh" ? segwitAddress : taprootAddress,
-          dominantScriptType,
-        );
-      } catch {
-        changeIdx = 0; // graceful fallback on scan failure
-      }
+      // CR-02 / CR-03: derive change address from the stored account xpub.
+      // The xpub was fetched from the Ledger at pair time (pair_btc_ledger)
+      // and is now available on the account record (or in fetchedKeys for real mode).
+      //
+      // Derivation: `m/84'/0'/0'/1/changeIdx` (segwit) or `m/86'/0'/0'/1/changeIdx` (taproot).
+      // `nextChangeIndex(xpub, scriptType)` scans the chain-1 gap-limit and returns the
+      // next unused index. `deriveAddress(xpub, changeIdx, scriptType, 1)` then derives
+      // the actual change address from the account xpub + chain=1 + index.
+      //
+      // Demo mode + missing xpub fallback: if xpub is absent (old record pre-CR-02),
+      // changeSats is folded into the fee (no change output) rather than sending change
+      // to an unknown address. The user is instructed to re-pair for full change support.
+      const activeXpub = dominantScriptType === "p2wpkh" ? segwitXpub : taprootXpub;
 
-      // Derive the change address from the change index.
-      // For Phase 23 code-complete: use the first-slot segwit/taproot address
-      // as the change address. In production, derive m/84'/0'/0'/1/{changeIdx}.
-      // The change index is recorded in PreparedTxBtc for the verify-phase to
-      // surface the proper derivation.
-      const changeAddress =
-        dominantScriptType === "p2wpkh" ? segwitAddress : taprootAddress;
-      const changePath =
-        dominantScriptType === "p2wpkh"
-          ? `${segwitPath.replace("/0/0", "")}/1/${changeIdx}`
-          : `${taprootPath.replace("/0/0", "")}/1/${changeIdx}`;
+      let changeIdx: number;
+      let changeAddress: string | null;
+      let changePath: string | null;
+
+      if (!activeXpub) {
+        // Demo mode or legacy account record (no xpub stored). Fold change into fee.
+        // This matches the WR-02 / CR-01 fallback: changePath===null, changeAddress===null.
+        changeIdx = 0;
+        changeAddress = null;
+        changePath = null;
+      } else {
+        // Real xpub available — derive next unused change index then the change address.
+        try {
+          changeIdx = await _changeIndex.nextChangeIndex(activeXpub, dominantScriptType);
+        } catch {
+          changeIdx = 0; // graceful fallback on scan failure
+        }
+        // CR-03: change address derived from xpub + chain=1 + index (never the receive address).
+        changeAddress = deriveAddress(activeXpub, changeIdx, dominantScriptType, 1);
+        // Build the 5-level BIP-44 derivation path for the change output.
+        // `segwitPath` / `taprootPath` are 5-level paths like "84'/0'/0'/0/0";
+        // strip the last two "/" segments to get the account-level prefix "84'/0'/0'".
+        const addressPath =
+          dominantScriptType === "p2wpkh" ? segwitPath : taprootPath;
+        const pathParts = addressPath.split("/");
+        // pathParts: ["84'", "0'", "0'", "0", "0"] — drop last 2 to get account level
+        const accountBase = pathParts.slice(0, pathParts.length - 2).join("/");
+        changePath = `m/${accountBase}/1/${changeIdx}`;
+      }
 
       // -----------------------------------------------------------------------
       // Step 7: Build PSBT via _btcPsbt.buildBtcPsbt.
@@ -610,6 +654,13 @@ registerTool(
         };
       });
 
+      // When changeAddress is null (demo mode / legacy account without xpub),
+      // fold changeSats into the fee by suppressing the change output.
+      // This is safe — the sats are lost to miners rather than going to an
+      // unknown address. The user is implicitly prompted to re-pair (see
+      // CR-02 / CR-03 notes in the xpub variable declarations above).
+      const hasChangeOutput = changeSats > 0n && changeAddress !== null;
+
       let psbtResult;
       try {
         psbtResult = _btcPsbt.buildBtcPsbt({
@@ -621,9 +672,9 @@ registerTool(
             role: "recipient",
           },
           changeOutput:
-            changeSats > 0n
+            hasChangeOutput
               ? {
-                  address: changeAddress,
+                  address: changeAddress!,
                   valueSats: changeSats,
                   scriptType: dominantScriptType,
                   role: "change",
@@ -631,7 +682,7 @@ registerTool(
                     dominantScriptType === "p2wpkh" ? segwitPubkey : taprootPubkey,
                   xOnlyPubkey:
                     dominantScriptType === "p2tr" ? taprootXOnly : undefined,
-                  bip32Path: changePath,
+                  bip32Path: changePath!,
                   masterFingerprint: ZERO_MASTER_FINGERPRINT,
                 }
               : null,
@@ -705,6 +756,12 @@ registerTool(
         outputs: psbtResult.outputs,
         feeSats: psbtResult.feeSats,
         changeSats: psbtResult.changeSats,
+        // WR-02: persist fee rate for preview_send receipt.
+        feeRate,
+        // CR-01 / CR-03: persist change derivation for knownAddressDerivations at send time.
+        // null when changeSats===0n or xpub was unavailable (demo/legacy account).
+        changePath: hasChangeOutput ? changePath : null,
+        changeAddress: hasChangeOutput ? changeAddress : null,
       };
 
       const prepareArgs: PrepareArgs = {

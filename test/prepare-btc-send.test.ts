@@ -141,19 +141,30 @@ const TEST_SEGWIT_ADDRESS = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4";
 const TEST_TAPROOT_ADDRESS =
   "bc1p0xlxvlhemja6c4dqv22uapctqupfhlxm9h8z3k2e72q4k9hcz7vqzk5jj0";
 
-// Stub fetchBtcAddresses return value — provides test pubkeys without device.
+// xpub test fixtures derived from BIP-32 test seed (000102030405060708090a0b0c0d0e0f)
+// at m/84'/0'/0' (segwit) and m/86'/0'/0' (taproot) — both parseable by bip32@^5.
+// Not real-wallet keys; chosen for deterministic, verifiable test vectors.
+const TEST_SEGWIT_XPUB =
+  "xpub6C1HVMz946r433QEjZGpYYWYcspxXXBPys5PBGkmQboRXE6RLfFiStEkKbWKCZaPgDrzZh9nUEunxuiuy6MNdw23du2Ek7GoKYMJVH8eK5E";
+const TEST_TAPROOT_XPUB =
+  "xpub6DRX1xNPHKaApgDnqaMNxJ8Lz35KCn3mRcW3LUep3JKhxWisRwaZJPn4BuZiaJ4kJ3cdqwbn4vZcsGiLGJJabZbqa65LGX2uhU9CtPWSgEn";
+
+// Stub fetchBtcAddresses return value — provides test pubkeys + xpubs without device.
+// CR-02 / CR-03: xpub field now required by the updated return type.
 const STUB_FETCH_BTC_ADDRESSES_RESULT = {
   segwit: {
     address: TEST_SEGWIT_ADDRESS,
     publicKey: TEST_PUBKEY_HEX,
     chainCode: "00".repeat(32),
     derivationPath: "84'/0'/0'/0/0",
+    xpub: TEST_SEGWIT_XPUB,
   },
   taproot: {
     address: TEST_TAPROOT_ADDRESS,
     publicKey: TEST_PUBKEY_HEX,
     chainCode: "00".repeat(32),
     derivationPath: "86'/0'/0'/0/0",
+    xpub: TEST_TAPROOT_XPUB,
   },
   appVersion: "2.1.0",
 };

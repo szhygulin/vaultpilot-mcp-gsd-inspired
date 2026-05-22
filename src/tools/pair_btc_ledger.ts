@@ -144,8 +144,8 @@ registerTool("pair_btc_ledger", DESCRIPTION, INPUT_SCHEMA, async () => {
     // 60s budget race: fetchBtcAddresses against a timer. Mirrors the
     // pair_tron_ledger.ts shape.
     const result = await Promise.race<{
-      segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string };
-      taproot: { address: string; publicKey: string; chainCode: string; derivationPath: string };
+      segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string; xpub: string };
+      taproot: { address: string; publicKey: string; chainCode: string; derivationPath: string; xpub: string };
       appVersion: string;
     }>([
       fetchBtcAddresses(),
@@ -162,19 +162,25 @@ registerTool("pair_btc_ledger", DESCRIPTION, INPUT_SCHEMA, async () => {
 
     // PAIR-NEV-03 multi-record-per-chain: TWO saveAccount calls under
     // `chain: "bitcoin"` produce two coexisting records — the (chain,
-    // address) upsert tuple is the discriminator. Zero schema change
-    // required (Meta-Decision 1).
+    // address) upsert tuple is the discriminator.
+    //
+    // CR-02 / CR-03: also persist the account-level xpub fetched in the same
+    // device session. `prepare_btc_send` uses it to derive fresh chain-1
+    // change addresses (m/84'/0'/0'/1/k segwit, m/86'/0'/0'/1/k taproot)
+    // without re-opening the Ledger transport.
     saveAccount({
       chain: "bitcoin",
       address: segwit.address,
       derivationPath: segwit.derivationPath,
       pairedAt,
+      xpub: segwit.xpub,
     });
     saveAccount({
       chain: "bitcoin",
       address: taproot.address,
       derivationPath: taproot.derivationPath,
       pairedAt,
+      xpub: taproot.xpub,
     });
 
     // Render the DUAL-address VERIFY-ON-DEVICE block. Two `.replace()`

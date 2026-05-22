@@ -201,12 +201,26 @@ export async function openTransport(): Promise<TransportLike> {
  * confirmation (RESEARCH § Plan 22-02 risks — pair-time on-device
  * confirm is the whole point of pairing).
  */
+/**
+ * xpub mainnet version bytes (0x0488B21E = 76067358). Passed to
+ * `getWalletXpub({ path, xpubVersion })` so the Ledger BTC app returns an
+ * `xpub…`-encoded extended public key (not zpub / ypub). This is the form
+ * bip32@^5.0.1 accepts directly without normalization.
+ *
+ * CR-02 / CR-03: the account-level xpub (m/84'/0'/0' segwit, m/86'/0'/0'
+ * taproot) is fetched in the SAME device session as the address exchange and
+ * persisted to the non-EVM account store at pair time. `prepare_btc_send`
+ * then derives fresh chain-1 change addresses from the stored xpub without
+ * opening a second transport session.
+ */
+export const XPUB_VERSION_MAINNET = 0x0488b21e;
+
 export async function fetchBtcAddresses(
   segwitPath: string = DEFAULT_BTC_SEGWIT_PATH,
   taprootPath: string = DEFAULT_BTC_TAPROOT_PATH,
 ): Promise<{
-  segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string };
-  taproot: { address: string; publicKey: string; chainCode: string; derivationPath: string };
+  segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string; xpub: string };
+  taproot: { address: string; publicKey: string; chainCode: string; derivationPath: string; xpub: string };
   appVersion: string;
 }> {
   const transport = await openTransport();
@@ -218,23 +232,42 @@ export async function fetchBtcAddresses(
     } catch {
       throw new LedgerBtcAppNotOpenError();
     }
-    // TWO sequential APDU exchanges within ONE transport open.
+    // Address exchanges (2 APDU calls).
     // Format / path mapping is HARDCODED — never agent-input (Pitfall 7).
     // BIP-84 → bech32 (`bc1q…`); BIP-86 → bech32m (`bc1p…`).
     const segwit = await app.getWalletPublicKey(segwitPath, { format: "bech32", verify: true });
     const taproot = await app.getWalletPublicKey(taprootPath, { format: "bech32m", verify: true });
+
+    // CR-02 / CR-03: fetch account-level xpubs for change-chain derivation.
+    // `getWalletXpub` takes the ACCOUNT path (3 levels) — strip the two trailing
+    // `/change/index` segments from the 5-level address paths. For the defaults
+    // that is `84'/0'/0'` and `86'/0'/0'`.
+    // `xpubVersion: 0x0488B21E` → mainnet xpub encoding (bip32@^5.0.1 compatible).
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
+    const segwitXpub: string = await app.getWalletXpub({
+      path: "84'/0'/0'",
+      xpubVersion: XPUB_VERSION_MAINNET,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
+    const taprootXpub: string = await app.getWalletXpub({
+      path: "86'/0'/0'",
+      xpubVersion: XPUB_VERSION_MAINNET,
+    });
+
     return {
       segwit: {
         address: segwit.bitcoinAddress,
         publicKey: segwit.publicKey,
         chainCode: segwit.chainCode,
         derivationPath: segwitPath,
+        xpub: segwitXpub,
       },
       taproot: {
         address: taproot.bitcoinAddress,
         publicKey: taproot.publicKey,
         chainCode: taproot.chainCode,
         derivationPath: taprootPath,
+        xpub: taprootXpub,
       },
       appVersion: cfg.version ?? "unknown",
     };
@@ -444,8 +477,8 @@ export const _btcLedgerTransport = {
     segwitPath?: string,
     taprootPath?: string,
   ): Promise<{
-    segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string };
-    taproot: { address: string; publicKey: string; chainCode: string; derivationPath: string };
+    segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string; xpub: string };
+    taproot: { address: string; publicKey: string; chainCode: string; derivationPath: string; xpub: string };
     appVersion: string;
   }> => fetchBtcAddresses(segwitPath, taprootPath),
   signBtcPsbt: (

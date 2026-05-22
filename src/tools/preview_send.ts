@@ -2162,7 +2162,7 @@ async function previewSendBtcBranch(
     .replace("{TO}", record.args.to)
     .replace("{SATS}", record.args.sats ?? btcTx.outputs[0]?.valueSats.toString() ?? "0")
     .replace("{FEE_SATS}", btcTx.feeSats.toString())
-    .replace("{FEE_RATE}", "auto")
+    .replace("{FEE_RATE}", String(btcTx.feeRate))
     .replace("{INPUT_ROWS}", inputRows)
     .replace("{OUTPUT_ROWS}", outputRows);
 

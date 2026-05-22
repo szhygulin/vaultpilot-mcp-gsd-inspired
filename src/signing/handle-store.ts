@@ -634,6 +634,31 @@ export interface PreparedTxBtc {
   /** Change amount in sats (0n if no change output — dust folded into fee). */
   changeSats: bigint;
 
+  /**
+   * WR-02: fee rate used for coin selection (sat/vByte, integer). Populated by
+   * `prepare_btc_send` at prepare time and surfaced in `preview_send`'s
+   * PREPARE RECEIPT block (replacing the former literal `"auto"`).
+   */
+  feeRate: number;
+
+  /**
+   * CR-01 / CR-03: derivation path of the change output address (BIP-44
+   * 5-level — e.g. `"m/84'/0'/0'/1/0"` for segwit change at index 0).
+   * `null` when there is no change output (dust folded into fee, changeSats===0n).
+   *
+   * `send_transaction` populates `knownAddressDerivations` from this field so
+   * the Ledger BTC app displays the change output as "yours" rather than a
+   * second send recipient (Pitfall 6).
+   */
+  changePath: string | null;
+
+  /**
+   * CR-01 / CR-03: change output address (bech32 / bech32m). Paired with
+   * `changePath` — always non-null when `changePath` is non-null.
+   * `null` when changeSats===0n.
+   */
+  changeAddress: string | null;
+
   /** Optional decoded instruction summary for the DECODED ARGS block in preview_send. */
   instructionSummary?: BtcInstructionSummary[];
 }
