@@ -43,6 +43,7 @@ import "./sign_message_btc.js"; // Phase 24 Plan 24-02 (BTC-W-03) — BIP-137 co
 import "./register_btc_multisig_wallet.js"; // Phase 25 Plan 25-01 (BTC-PSBT-03) — multisig wallet registration
 import "./get_btc_multisig_balance.js"; // Phase 25 Plan 25-01 (BTC-PSBT-04) — aggregate balance via Esplora gap-limit scan
 import "./get_btc_multisig_utxos.js"; // Phase 25 Plan 25-01 (BTC-PSBT-04) — raw UTXO list via Esplora gap-limit scan
+import "./combine_btc_psbts.js"; // Phase 25 Plan 25-02 (BTC-PSBT-05) — co-signer PSBT merge with pre-combine conflict scan
 import "./prepare_tron_native_send.js"; // Phase 18 Plan 18-02 (TRON-W-01) — TRON native transfer
 import "./prepare_tron_trc20_send.js";  // Phase 18 Plan 18-03 (TRON-W-02) — TRC-20 transfer
 import "./prepare_tron_token_approve.js";   // Phase 19 Plan 19-01 (TRON-PREP-05) — TRC-20 approve
