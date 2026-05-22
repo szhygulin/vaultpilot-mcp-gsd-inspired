@@ -217,9 +217,14 @@ const STUB_COIN_SELECT_OK = {
 };
 
 // Stub buildBtcPsbt result.
+// unsignedTxHex is a minimal valid segwit transaction (version=2, 1-input, 1-output).
+// Must be parseable by bitcoinjs-lib Transaction.fromHex (called in the handler at step 8).
+// Generated from: tx.version=2, addInput(0xaa*32, 0), addOutput(P2WPKH-script, 90000n).
+const STUB_UNSIGNED_TX_HEX =
+  "0200000001aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0000000000feffffff01905f010000000000160014751e76e8199196f454f032d4f736b8f03f6dc1bc00000000";
 const STUB_PSBT_RESULT = {
   psbtBase64: "cHNidP8B", // minimal valid base64 stub
-  unsignedTxHex: "01000000" + "00".repeat(32),
+  unsignedTxHex: STUB_UNSIGNED_TX_HEX,
   perInputPrevouts: [
     {
       script: new Uint8Array(22).fill(0),

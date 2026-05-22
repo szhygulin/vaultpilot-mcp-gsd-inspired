@@ -82,6 +82,8 @@ export interface PrepareArgs {
   outputToken?: string;
   /** Phase 20 — SunSwap V2 slippage tolerance in basis points as decimal string (e.g. "50"). */
   slippageBps?: string;
+  /** Phase 23 — BTC native amount as raw satoshis decimal string (e.g. "100000"). Populated by `prepare_btc_send` (Plan 23-03). */
+  sats?: string;
 }
 
 /**
