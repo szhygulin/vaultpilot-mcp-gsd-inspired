@@ -60,10 +60,7 @@ import {
   type PreparedTxBtc,
   createHandle,
 } from "../signing/handle-store.js";
-import {
-  loadMultisigWallet,
-  parseWshSortedMulti,
-} from "../wallet/btc-multisig-store.js";
+import { loadMultisigWallet } from "../wallet/btc-multisig-store.js";
 import { registerTool } from "./index.js";
 
 // ─── Error envelope boundary cast ─────────────────────────────────────────────
@@ -436,10 +433,6 @@ registerTool(
       // EVM-shape sentinel fields set to zero per convention.
       // -----------------------------------------------------------------------
 
-      // Parse the descriptor to extract keys for the wallet-policy descriptor template
-      const parsed = parseWshSortedMulti(wallet.descriptor);
-      const descriptorKeys: string[] = parsed?.keys ?? [];
-
       const tx: PreparedTxBtc = {
         txType: "btc",
         // EVM-shape sentinel fields.
@@ -512,13 +505,6 @@ registerTool(
       const responseText =
         `${prepareReceipt}\n\nHandle: ${handle}\npayloadFingerprint: ${payloadFingerprint}\n\n` +
         "Next step: pass this handle to preview_send.";
-
-      // Store the descriptor keys in structuredContent for use by send_transaction
-      // (the descriptor template is rebuilt from wallet.descriptor at send time).
-      const descriptorTemplate =
-        `wsh(sortedmulti(${threshold},${descriptorKeys.map((_, i) => `@${i}/**`).join(",")}))`;
-
-      void descriptorTemplate; // Used at send time via wallet.descriptor re-lookup
 
       return {
         content: [{ type: "text", text: responseText }],
