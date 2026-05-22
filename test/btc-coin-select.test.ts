@@ -57,6 +57,7 @@ describe("selectCoinsBnb — BnB exact match", () => {
       feeRate: 5,
       highPriorityEstimate: HIGH_PRIORITY_ESTIMATE,
       changeScriptType: "p2wpkh",
+      recipientScriptType: "p2wpkh",
       dustThresholdSats: 330n,
     };
     const result = _btcCoinSelect.selectCoinsBnb(args);
@@ -90,6 +91,7 @@ describe("selectCoinsBnb — largest-first fallback", () => {
       feeRate: 5,
       highPriorityEstimate: HIGH_PRIORITY_ESTIMATE,
       changeScriptType: "p2wpkh",
+      recipientScriptType: "p2wpkh",
       dustThresholdSats: 330n,
     };
     const result = selectCoinsBnb(args);
@@ -116,6 +118,7 @@ describe("selectCoinsBnb — fee-rate lower bound", () => {
       feeRate: 0.5, // below the 1 sat/vB lower bound
       highPriorityEstimate: HIGH_PRIORITY_ESTIMATE,
       changeScriptType: "p2wpkh",
+      recipientScriptType: "p2wpkh",
       dustThresholdSats: 330n,
     };
     const result = selectCoinsBnb(args);
@@ -131,6 +134,7 @@ describe("selectCoinsBnb — fee-rate lower bound", () => {
       feeRate: 0,
       highPriorityEstimate: HIGH_PRIORITY_ESTIMATE,
       changeScriptType: "p2wpkh",
+      recipientScriptType: "p2wpkh",
       dustThresholdSats: 330n,
     };
     const result = selectCoinsBnb(args);
@@ -148,6 +152,7 @@ describe("selectCoinsBnb — fee-rate upper bound", () => {
       feeRate: 51, // > 10 × 5 = 50
       highPriorityEstimate: 5,
       changeScriptType: "p2wpkh",
+      recipientScriptType: "p2wpkh",
       dustThresholdSats: 330n,
     };
     const result = selectCoinsBnb(args);
@@ -163,6 +168,7 @@ describe("selectCoinsBnb — fee-rate upper bound", () => {
       feeRate: 50, // exactly 10 × 5
       highPriorityEstimate: 5,
       changeScriptType: "p2wpkh",
+      recipientScriptType: "p2wpkh",
       dustThresholdSats: 330n,
     };
     const result = selectCoinsBnb(args);
@@ -186,6 +192,7 @@ describe("selectCoinsBnb — mixed segwit+taproot", () => {
       feeRate: 5,
       highPriorityEstimate: HIGH_PRIORITY_ESTIMATE,
       changeScriptType: "p2wpkh",
+      recipientScriptType: "p2wpkh",
       dustThresholdSats: 330n,
     };
     const result = selectCoinsBnb(args);
@@ -213,6 +220,7 @@ describe("selectCoinsBnb — mixed segwit+taproot", () => {
       feeRate: 2,
       highPriorityEstimate: HIGH_PRIORITY_ESTIMATE,
       changeScriptType: "p2tr",
+      recipientScriptType: "p2tr",
       dustThresholdSats: 330n,
     };
     const result = selectCoinsBnb(args);
@@ -234,6 +242,7 @@ describe("selectCoinsBnb — dust asymmetry (D-07 / Pitfall 4)", () => {
       feeRate: 5,
       highPriorityEstimate: HIGH_PRIORITY_ESTIMATE,
       changeScriptType: "p2wpkh",
+      recipientScriptType: "p2wpkh",
       dustThresholdSats: 330n,
     };
     const result = selectCoinsBnb(args);
@@ -267,6 +276,7 @@ describe("selectCoinsBnb — dust asymmetry (D-07 / Pitfall 4)", () => {
       feeRate: 1,
       highPriorityEstimate: HIGH_PRIORITY_ESTIMATE,
       changeScriptType: "p2wpkh",
+      recipientScriptType: "p2wpkh",
       dustThresholdSats: 330n,
     };
     const result = selectCoinsBnb(args);

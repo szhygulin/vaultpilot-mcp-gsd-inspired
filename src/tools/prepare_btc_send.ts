@@ -483,6 +483,9 @@ registerTool(
         feeRate,
         highPriorityEstimate,
         changeScriptType,
+        // WR-03: pass the caller-inferred recipient script type (bc1q→p2wpkh, bc1p→p2tr)
+        // rather than proxying through changeScriptType inside btc-coin-select.ts.
+        recipientScriptType: toScriptType,
         dustThresholdSats: DUST_THRESHOLD_SATS,
       });
 

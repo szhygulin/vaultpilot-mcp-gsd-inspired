@@ -63,6 +63,12 @@ export interface CoinSelectArgs {
    */
   readonly changeScriptType: "p2wpkh" | "p2tr";
   /**
+   * Script type of the recipient output. Inferred from the `to` address prefix:
+   * `bc1q…` → `p2wpkh`, `bc1p…` → `p2tr`. WR-03 fix: pass the caller-inferred
+   * recipient script type rather than proxying via change script type.
+   */
+  readonly recipientScriptType: "p2wpkh" | "p2tr";
+  /**
    * Dust threshold in sats. Outputs below this value are "dust":
    *   - recipient below dust → refused
    *   - change below dust → folded into fee (D-07)
@@ -151,14 +157,8 @@ function estimateFee(
   return BigInt(Math.ceil(vbytes * feeRate));
 }
 
-/** Infer the recipient's script type from the change script type — used to estimate output cost. */
-function recipientScriptType(changeScriptType: "p2wpkh" | "p2tr"): "p2wpkh" | "p2tr" {
-  // The recipient can be either type; we use the change type as a proxy for the
-  // "majority" type in this tx to keep the estimate simple. In practice the vbyte
-  // difference between P2WPKH and P2TR outputs is only 12 bytes — an acceptable
-  // estimation error within BnB tolerance.
-  return changeScriptType;
-}
+// (WR-03) recipientScriptType() proxy function removed — callers now pass
+// the recipient script type directly via CoinSelectArgs.recipientScriptType.
 
 // ─── BnB coin-selection algorithm (Erhardt 2016) ─────────────────────────────
 //
@@ -254,7 +254,7 @@ function bnbSearch(
  * Returns a discriminated-union result — never throws on valid input.
  */
 export function selectCoinsBnb(args: CoinSelectArgs): CoinSelectResult {
-  const { utxos, targetSats, feeRate, highPriorityEstimate, changeScriptType, dustThresholdSats } = args;
+  const { utxos, targetSats, feeRate, highPriorityEstimate, changeScriptType, recipientScriptType: recType, dustThresholdSats } = args;
 
   // ── D-03: fee-rate sanity bounds ──────────────────────────────────────────
   if (feeRate < 1) {
@@ -289,7 +289,7 @@ export function selectCoinsBnb(args: CoinSelectArgs): CoinSelectResult {
   // Sort UTXOs by value descending (BnB prunes on remaining-sum).
   const sorted = [...utxos].sort((a, b) => (a.valueSats > b.valueSats ? -1 : a.valueSats < b.valueSats ? 1 : 0));
 
-  const recType = recipientScriptType(changeScriptType);
+  // recType is destructured from args above (WR-03 — use caller-supplied recipientScriptType)
   const totalUtxoSum = sorted.reduce((acc, u) => acc + u.valueSats, 0n);
 
   // ── Attempt BnB: look for a zero-change solution ──────────────────────────
