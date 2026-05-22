@@ -768,7 +768,7 @@ Plans:
 
 **Wave 1**
 
-- [ ] 27-01-PLAN.md — Bitcoin Core JSON-RPC client (`src/clients/bitcoin-core-rpc.ts`, NEVER-throws + 5-arm union + basic-auth) + `src/config/bitcoin-core-env.ts` env readers + 4 BTC forensic tools (`get_btc_block_tip` Core+Esplora-fallback / `get_btc_block_stats` / `get_btc_blocks_recent` / `get_btc_chain_tips`) (BTC-FORENSIC-01..04)
+- [x] 27-01-PLAN.md — Bitcoin Core JSON-RPC client (`src/clients/bitcoin-core-rpc.ts`, NEVER-throws + 5-arm union + basic-auth) + `src/config/bitcoin-core-env.ts` env readers + 4 BTC forensic tools (`get_btc_block_tip` Core+Esplora-fallback / `get_btc_block_stats` / `get_btc_blocks_recent` / `get_btc_chain_tips`) (BTC-FORENSIC-01..04)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -1135,7 +1135,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 24. BIP-125 RBF + BIP-137 message signing | v2.2 | 2/2 | Complete    | 2026-05-22 |
 | 25. PSBT multisig flow (combine / sign / finalize + multisig wallet registry) | v2.2 | 3/3 | Complete    | 2026-05-22 |
 | 26. LTC scaffolding + LiFi BTC→EVM/Solana bridging | v2.2 | 3/3 | Complete    | 2026-05-22 |
-| 27. Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics | v2.2 | 0/3 | Not started | - |
+| 27. Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics | v2.2 | 1/3 | In Progress|  |
 | 28. Compound V3 — multi-Comet supply/withdraw/borrow/repay (Ethereum mainnet — 6 Comets) | v2.3 | 4/4 | Complete (verify-phase open); closes #64 | 2026-05-20 |
 | 29. Morpho Blue — supply/withdraw/borrow/repay | v2.3 | 0/3 | Not started | - |
 | 30. Lido — stake/unstake/wrap/unwrap (stETH↔wstETH) | v2.3 | 0/3 | Not started | - |

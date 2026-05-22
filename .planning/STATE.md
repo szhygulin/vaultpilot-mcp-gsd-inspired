@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Bitcoin + Litecoin
 status: executing
-last_updated: "2026-05-22T23:02:25.902Z"
+last_updated: "2026-05-22T23:15:31.463Z"
 last_activity: 2026-05-22 -- Phase 27 planning complete
 progress:
   total_phases: 6
   completed_phases: 5
   total_plans: 19
-  completed_plans: 16
+  completed_plans: 17
   percent: 83
 ---
 
@@ -47,7 +47,7 @@ Prior activity: 2026-05-13 — Quick task 260513-c8e (issue #25 WC session persi
 
 Prior activity: 2026-05-12 — Phase 5 planned + executed. Planning bundle (RESEARCH + VALIDATION + PATTERNS + 3 PLAN files) shipped as PR #18 (PASS after 2 inline plan-checker fixes + 1 accepted residual; Q-CONTRADICTION-PREP Option B + Q-NPM resolved via AskUserQuestion before planning). Then 05-01 (demo state + persona registry + ErrorCode 13→14 with WRONG_MODE + get/set_demo_wallet) shipped as PR #19 (+29 tests, 3 ESM-mechanics deviations). Then 05-02 (Q-CONTRADICTION-PREP Option B — REMOVES demo refusal from prepare_native_send + preview_send; persona address as `from`; integration test re-anchors Fixture A + C under demo `from`) shipped as PR #20 (+9 net tests, zero substantive deviations). Finally 05-03 (DIAG tools + update check + auto-demo NOTICE dispatcher-wrap + INSTRUCTIONS rewrite) shipped as PR #21 (+26 tests, 2 minor deviations; secret-safety audit via 3-sentinel substring scan; dispatcher-wrap at src/server.ts one-change architectural-scope-correct per Phase 4 precedent).
 
-Progress: [██████████] 100%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 
@@ -312,6 +312,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-22T21:54:06.095Z
+Last session: 2026-05-22T23:15:31.451Z
 Stopped at: Completed 26-ltc-scaffolding-lifi-btc-bridging-26-01-PLAN.md
 Resume file: None
