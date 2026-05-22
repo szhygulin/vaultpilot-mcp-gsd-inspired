@@ -99,17 +99,21 @@ import {
   chunkHex,
 } from "../signing/blocks.js";
 import "../chains/bitcoin/types.js"; // ensure initEccLib(tinySecp256k1) fires
+import "../chains/litecoin/types.js"; // ensure initEccLib fires for LTC address derivation
 import {
   COSIGNER_STATUS_ROW_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_BTC_TEMPLATE,
+  LEDGER_BLIND_SIGN_HASH_LTC_NATIVE_TEMPLATE,
   INPUT_SIGHASH_ROW_BTC_TEMPLATE,
   PREPARE_RECEIPT_BTC_MULTISIG_TEMPLATE,
   PREPARE_RECEIPT_BTC_NATIVE_TEMPLATE,
   PREPARE_RECEIPT_BTC_RBF_TEMPLATE,
+  PREPARE_RECEIPT_LTC_NATIVE_TEMPLATE,
   INPUT_ROW_BTC_TEMPLATE,
   OUTPUT_ROW_BTC_TEMPLATE,
 } from "../signing/blocks-btc.js";
 import { _btcFingerprint } from "../signing/btc-fingerprint.js";
+import { _ltcFingerprint } from "../signing/ltc-fingerprint.js";
 import { _btcSighash } from "../signing/btc-sighash.js";
 import {
   LEDGER_BLIND_SIGN_HASH_SOLANA_TEMPLATE,
@@ -151,6 +155,7 @@ import {
   transitionToPreviewed,
   type HandleRecord,
   type PreparedTxBtc,
+  type PreparedTxLtc,
   type PreparedTxSolana,
   type PreparedTxTron,
   type SolanaInstructionSummary,
@@ -247,6 +252,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     }
     if (txType === "btc") {
       return await previewSendBtcBranch(record as HandleRecord & { tx: PreparedTxBtc });
+    }
+    if (txType === "litecoin") {
+      return await previewSendLtcBranch(record as HandleRecord & { tx: PreparedTxLtc });
     }
 
     // Phase 9 — Plan 09-04. Layer 0.5 outer dispatch-target allowlist
@@ -2265,6 +2273,166 @@ async function previewSendBtcBranch(
       inputCount: btcTx.inputs.length,
       outputCount: btcTx.outputs.length,
       // Phase 23 — BTC uses USB-HID Ledger + Esplora direct broadcast (no WC relay).
+      sessionTopicLast8: null,
+    },
+  };
+}
+
+// ===========================================================================
+// Phase 26 — Plan 26-02 — LTC branch (additive; lives OUTSIDE the FROZEN
+// three-gate region). Dispatcher reads `record.tx.txType === "litecoin"` and
+// routes here. All other branches stay byte-identical.
+//
+// LTC preview vs BTC: byte-identical logic, different domain tag.
+//   - No RPC pin (UTXO model — no nonce/gas).
+//   - Layer 1 fingerprint recompute from CANONICAL ARTIFACT:
+//     `unsignedTxHex + perInputPrevouts` (Pitfall 5 — NOT re-parsed PSBT).
+//   - N per-input sighash rows in LEDGER BLIND-SIGN HASH (LTC) block.
+//   - `presignHash` = payloadFingerprint (same as BTC — no separate presign hash).
+//   - `sessionTopicLast8 = null` (LTC uses USB-HID + Esplora, not WC).
+//   - Uses `_ltcFingerprint.computeLtcPayloadFingerprint` (domain "VaultPilot-ltctx-v1:").
+// ===========================================================================
+
+/**
+ * Preview an LTC-typed handle. EVM/Solana/TRON/BTC bodies stay byte-identical;
+ * this branch is the additive Plan 26-02 surface.
+ *
+ * Steps:
+ *   1. Recompute payloadFingerprint from `unsignedTxHex + perInputPrevouts`
+ *      (canonical artifact — NOT re-parsed PSBT). Refuse on drift.
+ *   2. Mint a fresh previewToken UUID.
+ *   3. Pin via `transitionToPreviewed` (sentinel zeros for EVM-only fields;
+ *      presignHash = payloadFingerprint for LTC — same as BTC).
+ *   4. Render PREPARE RECEIPT (LTC) + LEDGER BLIND-SIGN HASH (LTC, N rows).
+ *   5. Return structuredContent with chain:"litecoin", previewToken, etc.
+ */
+async function previewSendLtcBranch(
+  record: HandleRecord & { tx: PreparedTxLtc },
+): Promise<{
+  isError?: boolean;
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent?: Record<string, unknown>;
+}> {
+  const ltcTx = record.tx;
+
+  // ---- Layer 1: fingerprint recompute from CANONICAL ARTIFACT (Pitfall 5) ----
+  // Do NOT re-parse the PSBT — use unsignedTxHex + perInputPrevouts.
+  const sighashInputs = ltcTx.perInputPrevouts.map((p) => ({
+    scriptType: p.scriptType,
+    prevOutScript: p.script,
+    valueSats: p.valueSats,
+  }));
+  const perInputSighashes = _btcSighash.computeAllSighashes(
+    BtcTransaction.fromHex(ltcTx.unsignedTxHex),
+    sighashInputs,
+  );
+  const recomputed = _ltcFingerprint.computeLtcPayloadFingerprint(perInputSighashes);
+
+  if (recomputed !== record.payloadFingerprint) {
+    const message =
+      "error: payloadFingerprint drift detected between prepare and preview; abort and re-run prepare_litecoin_native_send";
+    return {
+      isError: true,
+      content: [{ type: "text", text: message }],
+      structuredContent: errEnvelope(
+        "PAYLOAD_FINGERPRINT_DRIFT",
+        "payloadFingerprint drift (LTC preview) — re-run prepare_litecoin_native_send",
+      ),
+    };
+  }
+
+  // ---- Mint previewToken + pin via transitionToPreviewed ------------------
+  const previewToken = crypto.randomUUID();
+  // LTC has no separate presign hash — the payloadFingerprint IS the binding value.
+  const presignHash = record.payloadFingerprint;
+
+  const trans = transitionToPreviewed(record.handle, {
+    nonce: 0,
+    gas: 0n,
+    maxFeePerGas: 0n,
+    maxPriorityFeePerGas: 0n,
+    previewToken,
+    presignHash,
+    selector: null,
+  });
+  if (!trans.ok) {
+    const message = `error: handle state changed during LTC preview (${trans.errorCode})`;
+    return {
+      isError: true,
+      content: [{ type: "text", text: message }],
+      structuredContent: errEnvelope(trans.errorCode, `handle transition failed: ${trans.errorCode}`),
+    };
+  }
+
+  // ---- Render PREPARE RECEIPT (LTC — native only in Phase 26) -------------
+  const inputRows = ltcTx.inputs
+    .map((inp) =>
+      INPUT_ROW_BTC_TEMPLATE
+        .replace("{TXID_SHORT}", inp.txid.slice(0, 8))
+        .replace("{VOUT}", String(inp.vout))
+        .replace("{VALUE_SATS}", inp.valueSats.toString())
+        .replace("{SCRIPT_TYPE}", inp.scriptType),
+    )
+    .join("\n");
+
+  const outputRows = ltcTx.outputs
+    .map((out) =>
+      OUTPUT_ROW_BTC_TEMPLATE
+        .replace("{ADDRESS_SHORT}", out.address.slice(0, 12))
+        .replace("{VALUE_SATS}", out.valueSats.toString())
+        .replace("{ROLE}", out.role),
+    )
+    .join("\n");
+
+  const prepareReceiptBlock = PREPARE_RECEIPT_LTC_NATIVE_TEMPLATE
+    .replace("{TO}", record.args.to)
+    .replace("{LITOSHIS}", record.args.litoshi ?? ltcTx.outputs[0]?.valueSats.toString() ?? "0")
+    .replace("{FEE_SATS}", ltcTx.feeSats.toString())
+    .replace("{FEE_RATE}", String(ltcTx.feeRate))
+    .replace("{INPUT_ROWS}", inputRows)
+    .replace("{OUTPUT_ROWS}", outputRows);
+
+  // ---- Render LEDGER BLIND-SIGN HASH (LTC) — N rows, one per input --------
+  const sighashRows = perInputSighashes
+    .map((sh, idx) => {
+      const shHex = "0x" + Buffer.from(sh).toString("hex");
+      const scriptType = ltcTx.perInputPrevouts[idx]?.scriptType ?? "p2wpkh";
+      return INPUT_SIGHASH_ROW_BTC_TEMPLATE
+        .replace("{INPUT_INDEX}", String(idx))
+        .replace("{SCRIPT_TYPE}", scriptType)
+        .replace("{SIGHASH_HEX}", shHex);
+    })
+    .join("\n");
+
+  const blindSignHashBlock = LEDGER_BLIND_SIGN_HASH_LTC_NATIVE_TEMPLATE
+    .replace("{INPUT_COUNT}", String(ltcTx.inputs.length))
+    .replace("{FEE_SATS}", ltcTx.feeSats.toString())
+    .replace("{INPUT_SIGHASH_ROWS}", sighashRows);
+
+  // ---- Assemble response text ---------------------------------------------
+  const nextStepLine = `Next step: send_transaction({ handle: "${record.handle}", previewToken: "${previewToken}", userDecision: "send" })`;
+
+  const text = [
+    prepareReceiptBlock,
+    "",
+    blindSignHashBlock,
+    "",
+    nextStepLine,
+  ].join("\n");
+
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: {
+      handle: record.handle,
+      chain: "litecoin",
+      kind: ltcTx.kind,
+      previewToken,
+      presignHash,
+      payloadFingerprint: record.payloadFingerprint,
+      feeSats: ltcTx.feeSats.toString(),
+      inputCount: ltcTx.inputs.length,
+      outputCount: ltcTx.outputs.length,
+      // Phase 26 — LTC uses USB-HID Ledger + Esplora direct broadcast (no WC relay).
       sessionTopicLast8: null,
     },
   };

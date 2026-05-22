@@ -995,10 +995,82 @@ export async function signLtcMessage(
   }
 }
 
+// ─── Phase 26 Plan 26-02 — LTC PSBT signing (send_transaction LTC branch) ────
+//
+// APPEND-ONLY. Mirrors `signBtcPsbt` with three LTC-specific adjustments:
+//   1. `buildLtcApp` instead of `buildBtcApp` (LedgerLtcAppNotOpenError on failure).
+//   2. Only P2WPKH inputs — LTC has no taproot in Phase 26 (single-pass sign).
+//   3. `accountPath: "m/84'/2'/0'"` — BIP-84 segwit with LTC coin_type=2.
+
 /**
- * ESM spy-affordance for the LTC address-probe path AND message-signing path.
- * `pair_litecoin_ledger` calls `_ltcLedgerTransport.fetchLtcAddresses` and
- * `sign_message_ltc` calls `_ltcLedgerTransport.signLtcMessage` so
+ * Sign an LTC P2WPKH PSBT via the Ledger Litecoin app.
+ *
+ * Phase 26 Plan 26-02 (LTC-W-01 send step). Mirrors `signBtcPsbt` but uses
+ * the Litecoin app (`buildLtcApp`) and LTC BIP-84 derivation path (coin_type=2).
+ * Only P2WPKH inputs are supported in Phase 26 — no taproot.
+ *
+ * @param psbtBase64 — PSBT-v0 in base64 (from `buildBtcPsbt({ network: LTC_NETWORK })`).
+ * @param inputs     — per-input sign descriptors (all must be `scriptType: "p2wpkh"`).
+ * @returns `{ rawTxHex }` — the broadcast-ready serialized transaction hex.
+ */
+export async function signLtcPsbt(
+  psbtBase64: string,
+  inputs: readonly BtcPsbtSignInput[],
+  knownAddressDerivations: readonly KnownAddressDerivation[],
+): Promise<{ rawTxHex: string }> {
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildLtcApp(transport);
+
+    // Guard: Litecoin app must be open.
+    try {
+      await app.getAppConfiguration();
+    } catch {
+      throw new LedgerLtcAppNotOpenError();
+    }
+
+    // LTC Phase 26: only P2WPKH — single pass (no taproot partition needed).
+    const knownMap = new Map<string, { pubkey: Uint8Array; path: string }>();
+    for (const kd of knownAddressDerivations) {
+      knownMap.set(kd.scriptPubKeyHashHex, { pubkey: kd.pubkey, path: kd.path });
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    const { psbt: signedBuffer } = await app.signPsbtBuffer(
+      Psbt.fromBase64(psbtBase64).toBuffer(),
+      {
+        finalizePsbt: false,
+        accountPath: "m/84'/2'/0'",  // LTC BIP-84 segwit, coin_type=2
+        addressFormat: "bech32",
+        knownAddressDerivations: knownMap,
+      },
+    );
+
+    const combined = Psbt.fromBuffer(Buffer.from(signedBuffer));
+
+    for (let idx = 0; idx < combined.data.inputs.length; idx++) {
+      const inp = combined.data.inputs[idx];
+      if (!inp?.finalScriptWitness && !inp?.finalScriptSig) {
+        combined.finalizeInput(idx);
+      }
+    }
+    return { rawTxHex: combined.extractTransaction().toHex() };
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log("warn", `transport.close() failed during signLtcPsbt cleanup: ${message}`);
+    }
+  }
+}
+
+/**
+ * ESM spy-affordance for the LTC address-probe path, message-signing path,
+ * and PSBT-signing path.
+ * `pair_litecoin_ledger` calls `_ltcLedgerTransport.fetchLtcAddresses`,
+ * `sign_message_ltc` calls `_ltcLedgerTransport.signLtcMessage`, and
+ * `send_transaction` (LTC branch) calls `_ltcLedgerTransport.signLtcPsbt` so
  * `vi.spyOn(_ltcLedgerTransport, "…")` intercepts across the ESM module boundary.
  */
 export const _ltcLedgerTransport = {
@@ -1016,4 +1088,11 @@ export const _ltcLedgerTransport = {
     messageHex: string,
   ): Promise<{ v: number; r: string; s: string }> =>
     signLtcMessage(path, messageHex),
+
+  signLtcPsbt: (
+    psbtBase64: string,
+    inputs: readonly BtcPsbtSignInput[],
+    knownAddressDerivations: readonly KnownAddressDerivation[],
+  ): Promise<{ rawTxHex: string }> =>
+    signLtcPsbt(psbtBase64, inputs, knownAddressDerivations),
 };

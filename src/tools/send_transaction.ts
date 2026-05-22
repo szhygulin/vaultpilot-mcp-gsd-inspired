@@ -58,11 +58,15 @@ import { Transaction as BtcTransaction, address as btcAddressLib, networks as bt
 import { getEthereumClient } from "../chains/ethereum.js";
 import "../chains/bitcoin/types.js"; // ensure initEccLib(tinySecp256k1) fires
 import { broadcastTx as esploraBroadcastTx } from "../chains/bitcoin/esplora-client.js";
+import "../chains/litecoin/types.js"; // ensure initEccLib fires for LTC address derivation
+import { LTC_NETWORK } from "../chains/litecoin/types.js";
+import { broadcastTx as ltcEsploraBroadcastTx } from "../chains/litecoin/esplora-client.js";
 import { _solanaRegistry } from "../chains/solana/registry.js";
 import { _tronRegistry } from "../chains/tron/registry.js";
 import { isDemoMode } from "../config/env.js";
-import { getActivePersona, getActiveBtcPersona, getActiveSolanaPersona, getActiveTronPersona } from "../demo/state.js";
+import { getActivePersona, getActiveBtcPersona, getActiveLtcPersona, getActiveSolanaPersona, getActiveTronPersona } from "../demo/state.js";
 import { computeBtcPayloadFingerprint } from "../signing/btc-fingerprint.js";
+import { computeLtcPayloadFingerprint } from "../signing/ltc-fingerprint.js";
 import { _btcSighash } from "../signing/btc-sighash.js";
 import {
   type ErrorCode,
@@ -75,6 +79,7 @@ import {
   transitionToSent,
   type HandleRecord,
   type PreparedTxBtc,
+  type PreparedTxLtc,
   type PreparedTxSolana,
   type PreparedTxTron,
 } from "../signing/handle-store.js";
@@ -98,7 +103,9 @@ import {
   LedgerDeviceNotConnectedError as LedgerBtcDeviceNotConnectedError,
   LedgerBtcAppNotOpenError,
   LedgerBtcAppVersionTooOldError,
+  LedgerLtcAppNotOpenError,
   _btcLedgerTransport,
+  _ltcLedgerTransport,
   type BtcPsbtSignInput,
   type KnownAddressDerivation,
 } from "../wallet/ledger-btc-transport.js";
@@ -361,7 +368,18 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
                   })),
                 ),
               )
-            : computePayloadFingerprint({
+            : txType === "litecoin"
+              ? computeLtcPayloadFingerprint(
+                  _btcSighash.computeAllSighashes(
+                    BtcTransaction.fromHex((record.tx as PreparedTxLtc).unsignedTxHex),
+                    (record.tx as PreparedTxLtc).perInputPrevouts.map((p) => ({
+                      scriptType: p.scriptType,
+                      prevOutScript: p.script,
+                      valueSats: p.valueSats,
+                    })),
+                  ),
+                )
+              : computePayloadFingerprint({
                 chainId: record.tx.chainId,
                 to: record.tx.to,
                 valueWei: record.tx.valueWei,
@@ -401,6 +419,12 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
     if (txType === "btc") {
       return await sendTransactionBtcBranch(
         record as HandleRecord & { tx: PreparedTxBtc },
+        handleArg,
+      );
+    }
+    if (txType === "litecoin") {
+      return await sendTransactionLtcBranch(
+        record as HandleRecord & { tx: PreparedTxLtc },
         handleArg,
       );
     }
@@ -1766,6 +1790,230 @@ async function sendTransactionBtcBranch(
       // replacement tx to the original mempool tx (plan 24-01 Task 2 requirement).
       ...(btcTx.kind === "rbf" ? { originalTxid: btcTx.originalTxid } : {}),
       // Phase 23 — BTC uses Esplora direct broadcast (no WC relay).
+      sessionTopicLast8: null,
+    },
+  };
+}
+
+// ===========================================================================
+// Phase 26 — Plan 26-02 — LTC branch (additive; lives OUTSIDE the FROZEN
+// three-gate region). Dispatcher in the main handler reads
+// `record.tx.txType === "litecoin"` and routes here. All three FROZEN gates
+// (previewToken + userDecision + payloadFingerprint drift) fire identically
+// before reaching this function.
+// ===========================================================================
+
+/**
+ * Demo-mode simulation response for LTC handles (mirrors buildBtcDemoSimulationResponse).
+ * No device call; no broadcast. Returns a simulation envelope.
+ */
+async function buildLtcDemoSimulationResponse(
+  record: HandleRecord & { tx: PreparedTxLtc },
+  handleArg: string,
+): Promise<ToolHandlerResult> {
+  const ltcTx = record.tx;
+  const simulatedAt = new Date().toISOString();
+  const text = [
+    "SIMULATION (LTC — demo mode)",
+    `  kind:              ${ltcTx.kind}`,
+    `  inputs:            ${ltcTx.inputs.length}`,
+    `  outputs:           ${ltcTx.outputs.length}`,
+    `  feeSats:           ${ltcTx.feeSats.toString()}`,
+    `  psbtBase64:        ${ltcTx.psbtBase64.slice(0, 24)}…`,
+    `  envelopeShape:     psbt-mempool-replay`,
+    `  (no device call; no broadcast performed)`,
+  ].join("\n");
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: {
+      simulated: true,
+      demoMode: true,
+      simulationResult: "ok",
+      simulatedAt,
+      handle: handleArg,
+      txType: "litecoin" as const,
+      kind: ltcTx.kind,
+      envelopeShape: "psbt-mempool-replay",
+      sessionTopicLast8: null,
+    },
+  };
+}
+
+/**
+ * LTC branch of `send_transaction`. Dispatched by the main handler when
+ * `record.tx.txType === "litecoin"`. All three FROZEN gates and the cancel branch
+ * fired identically before reaching this function.
+ *
+ * Phase 26 Plan 26-02 (LTC-W-01): P2WPKH-only segwit send via Ledger Litecoin app.
+ * Demo-mode short-circuit returns a simulation envelope (no device call, no broadcast).
+ */
+async function sendTransactionLtcBranch(
+  record: HandleRecord & { tx: PreparedTxLtc },
+  handleArg: string,
+): Promise<ToolHandlerResult> {
+  const ltcTx = record.tx;
+
+  // ---- Demo-mode short-circuit (mirrors BTC D-04) --------------------------
+  if (isDemoMode()) {
+    const ltcPersona = getActiveLtcPersona();
+    if (ltcPersona === null) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text:
+              "error: demo mode is active but no LTC persona set. Call `set_demo_wallet` with an LTC persona slug (e.g. \"ltc-whale\") first.",
+          },
+        ],
+        structuredContent: errEnvelope(
+          "WRONG_MODE",
+          "demo mode active but no LTC persona set; call set_demo_wallet first",
+        ),
+      };
+    }
+    return buildLtcDemoSimulationResponse(record, handleArg);
+  }
+
+  // ---- Pairing check (LTC — persistent non-EVM account store) -------------
+  const accounts = listAccounts({ chainFilter: "litecoin" });
+  if (accounts.length === 0) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text:
+            "error: no paired LTC account. Call `pair_litecoin_ledger` first to pair your Litecoin Ledger account, then retry.",
+        },
+      ],
+      structuredContent: errEnvelope(
+        "WALLET_NOT_PAIRED",
+        "no paired LTC account; call pair_litecoin_ledger first",
+      ),
+    };
+  }
+  const account = accounts[0]!;
+
+  // ---- Build BtcPsbtSignInput[] for P2WPKH (LTC Phase 26 — no taproot) ----
+  const placeholderPubkey = new Uint8Array(33);
+  const PLACEHOLDER_MASTER_FP = new Uint8Array(4);
+
+  const signInputs: BtcPsbtSignInput[] = ltcTx.inputScriptTypes.map((scriptType, idx) => ({
+    index: idx,
+    scriptType,
+    bip32Path: account.derivationPath,
+    pubkey: placeholderPubkey,
+    masterFingerprint: PLACEHOLDER_MASTER_FP,
+  }));
+
+  // ---- Build knownAddressDerivations for LTC change output (CR-01 mirror) --
+  const knownDerivations: KnownAddressDerivation[] = [];
+  if (ltcTx.changeAddress !== null && ltcTx.changePath !== null) {
+    try {
+      const changeScript = btcAddressLib.toOutputScript(ltcTx.changeAddress, LTC_NETWORK);
+      let hashHex: string | undefined;
+      if (changeScript.length === 22 && changeScript[0] === 0x00 && changeScript[1] === 0x14) {
+        hashHex = Buffer.from(changeScript.subarray(2, 22)).toString("hex");
+      }
+      if (hashHex !== undefined) {
+        knownDerivations.push({
+          scriptPubKeyHashHex: hashHex,
+          pubkey: placeholderPubkey,
+          path: ltcTx.changePath,
+        });
+      }
+    } catch {
+      // Non-parseable change address — proceed; worst case Ledger displays it as a send.
+    }
+  }
+
+  // ---- Sign via Ledger Litecoin app (USB-HID) -----------------------------
+  let rawTxHex: string;
+  try {
+    const result = await _ltcLedgerTransport.signLtcPsbt(
+      ltcTx.psbtBase64,
+      signInputs,
+      knownDerivations,
+    );
+    rawTxHex = result.rawTxHex;
+  } catch (err) {
+    if (err instanceof LedgerBtcDeviceNotConnectedError) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${err.message}` }],
+        structuredContent: errEnvelope("LEDGER_NOT_CONNECTED", err.message),
+      };
+    }
+    if (err instanceof LedgerLtcAppNotOpenError) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${err.message}` }],
+        structuredContent: errEnvelope(
+          "BTC_APP_NOT_OPEN",
+          "Litecoin app is not the active app on the Ledger. Open the Litecoin app on the device and retry.",
+        ),
+      };
+    }
+    const cause = err instanceof Error ? err.message : String(err);
+    if (/reject/i.test(cause)) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: user rejected on Ledger device: ${cause}` }],
+        structuredContent: errEnvelope("LEDGER_REJECTED", "user rejected on Ledger device", cause),
+      };
+    }
+    return {
+      isError: true,
+      content: [{ type: "text", text: `error: LTC Ledger signing failed: ${cause}` }],
+      structuredContent: errEnvelope("INTERNAL_ERROR", "LTC Ledger signing failed", cause),
+    };
+  }
+
+  // ---- Broadcast via LTC Esplora POST /tx (direct — no WC relay) ----------
+  const broadcastResult = await ltcEsploraBroadcastTx(rawTxHex);
+  if (broadcastResult.kind !== "ok") {
+    const cause = "message" in broadcastResult ? broadcastResult.message : String(broadcastResult);
+    return {
+      isError: true,
+      content: [{ type: "text", text: `error: LTC broadcast failed: ${cause}` }],
+      structuredContent: errEnvelope("BROADCAST_FAILED", "LTC broadcast failed", cause),
+    };
+  }
+
+  // ---- Success — stamp handle, return txHash ------------------------------
+  const txHash = broadcastResult.txid;
+  const trans = transitionToSent(handleArg, txHash);
+  if (!trans.ok) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `error: state transition failed after LTC broadcast: ${trans.errorCode}`,
+        },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        `state transition failed after LTC broadcast: ${trans.errorCode}`,
+      ),
+    };
+  }
+  const broadcastedAt = new Date().toISOString();
+  return {
+    content: [
+      {
+        type: "text",
+        text: `broadcast OK (LTC)\n  txHash: ${txHash}\n  broadcastedAt: ${broadcastedAt}\n\nView on litecoinspace.org: https://litecoinspace.org/tx/${txHash}`,
+      },
+    ],
+    structuredContent: {
+      txHash,
+      broadcastedAt,
+      handle: handleArg,
+      txType: "litecoin" as const,
+      kind: ltcTx.kind,
+      // Phase 26 — LTC uses Esplora direct broadcast (no WC relay).
       sessionTopicLast8: null,
     },
   };
