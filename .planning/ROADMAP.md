@@ -652,7 +652,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 23-03-PLAN.md — `prepare_btc_send` tool + `blocks-btc.ts` PREPARE RECEIPT template + `handle-store.ts` `PreparedTxBtc` widening + BTC error codes; segwit/taproot/mixed-input + demo BTC whale persona; Fixture P + Q literal anchors
+- [x] 23-03-PLAN.md — `prepare_btc_send` tool + `blocks-btc.ts` PREPARE RECEIPT template + `handle-store.ts` `PreparedTxBtc` widening + BTC error codes; segwit/taproot/mixed-input + demo BTC whale persona; Fixture P + Q literal anchors
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -1100,7 +1100,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 20. SunSwap + LiFi-routed TRON↔EVM bridging | v2.1 | 0/2 | Not started | - |
 | 21. TRON diagnostics + v2.1 milestone close-out (portfolio leg shipped in Phase 17) | v2.1 | 0/1 | Not started | - |
 | 22. BTC scaffolding — Esplora reads + USB-HID + persistent BTC account | v2.2 | 0/4 | Not started | - |
-| 23. BTC native + segwit + taproot trust pipeline (PSBT-based) | v2.2 | 2/4 | In Progress|  |
+| 23. BTC native + segwit + taproot trust pipeline (PSBT-based) | v2.2 | 3/4 | In Progress|  |
 | 24. BIP-125 RBF + BIP-137 message signing | v2.2 | 0/2 | Not started | - |
 | 25. PSBT multisig flow (combine / sign / finalize + multisig wallet registry) | v2.2 | 0/3 | Not started | - |
 | 26. LTC scaffolding + LiFi BTC→EVM/Solana bridging | v2.2 | 0/3 | Not started | - |
