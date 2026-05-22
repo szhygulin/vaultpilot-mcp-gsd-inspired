@@ -702,8 +702,16 @@ Plans:
 
 Plans:
 
+**Wave 1**
+
 - [ ] 25-01-PLAN.md — multisig wallet registry: descriptor parse/validation + BIP-67 P2WSH address derivation + atomic-write persistence (0o600); register_btc_multisig_wallet + get_btc_multisig_balance + get_btc_multisig_utxos
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 25-02-PLAN.md — combine_btc_psbts: PSBT merge with an explicit pre-combine same-key/same-input conflict scan raising PSBT_COMBINE_CONFLICT
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 25-03-PLAN.md — sign_btc_multisig_psbt (prepare→preview→send via multisig-psbt handle) + finalize_btc_psbt (threshold-enforced) + Ledger multisig signing via @ledgerhq/ledger-bitcoin AppClient + Fixture X
 
 #### Phase 26: LTC scaffolding + LiFi BTC→EVM/Solana bridging
