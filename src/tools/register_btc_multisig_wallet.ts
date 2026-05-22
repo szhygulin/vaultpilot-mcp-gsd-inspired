@@ -13,9 +13,10 @@
 //     for user cross-check against co-signers (T-25-02 mitigation).
 //   - Atomic write at 0o600 via btc-multisig-store (T-25-03 mitigation).
 //
-// This plan stores records WITHOUT walletHmac (HMAC-less). Device on-chain
-// registration that writes walletHmac lands in Plan 25-03. The `force` flag
-// is accepted and reserved for the Plan 25-03 deliberate-HMAC-less path.
+// Plan 25-03 extends this tool: attempts on-device wallet-policy registration
+// via @ledgerhq/ledger-bitcoin AppClient.registerWallet when a Ledger is connected
+// (BTC app v2.1+ required). On success, walletHmac is stored in the registry.
+// If no device is connected or force=true, stores HMAC-less (signing disabled).
 //
 // Demo mode: refused with DEMO_MODE_REFUSED (same as pair_btc_ledger).
 // Name limit: ≤ 16 ASCII bytes (Ledger APDU limit — BTC app wallet policy name).
@@ -34,6 +35,11 @@ import {
   parseWshSortedMulti,
   saveMultisigWallet,
 } from "../wallet/btc-multisig-store.js";
+import {
+  LedgerBtcAppVersionTooOldError,
+  LedgerDeviceNotConnectedError,
+  _btcLedgerTransport,
+} from "../wallet/ledger-btc-transport.js";
 import { registerTool } from "./index.js";
 
 // ─── Error envelope helper ────────────────────────────────────────────────────
@@ -81,11 +87,13 @@ const DESCRIPTION = [
   "Register a known M-of-N multisig wallet by parsing and validating a wsh(sortedmulti(M,...)) BIP-380/381 descriptor string.",
   "Derives the first 5 P2WSH receive addresses for cross-checking with co-signers, then persists the record to the local registry (~/.vaultpilot-mcp/btc-multisig.json).",
   "The descriptor MUST use /** key expression suffixes (account-level xpubs); /* and /0/* forms are refused.",
-  "Persists the record WITHOUT a Ledger walletHmac at this stage — signing requires re-registering with the device connected (Plan 25-03).",
+  "Attempts on-device wallet-policy registration via @ledgerhq/ledger-bitcoin AppClient.registerWallet when a Ledger is connected (BTC app v2.1+ required).",
+  "On success, the 32-byte walletHmac is stored in the registry — required for sign_btc_multisig_psbt.",
+  "If no device is connected or force=true, stores the record HMAC-less; signing will require re-running this tool with device connected.",
+  "If BTC app < 2.1, returns LEDGER_BTC_APP_VERSION_TOO_OLD.",
   "Do NOT use in demo mode — refuses with DEMO_MODE_REFUSED.",
   "walletName must be ≤ 16 ASCII characters (Ledger APDU limit).",
   "threshold must equal the M value in the descriptor.",
-  "The force flag is accepted and reserved; for future deliberate HMAC-less re-registration.",
 ].join(" ");
 
 // ─── Input schema ─────────────────────────────────────────────────────────────
@@ -115,7 +123,7 @@ const INPUT_SCHEMA = {
     force: {
       type: "boolean",
       description:
-        "Reserved for Plan 25-03 deliberate-HMAC-less re-registration. Accepted but ignored in this plan.",
+        "When true, skip device registration and store HMAC-less even if a Ledger is connected. Use for balance-only registration without signing intent.",
     },
   },
   required: ["name", "descriptor", "threshold"],
@@ -294,10 +302,58 @@ registerTool(
       .replace("{TOTAL_SIGNERS}", String(parsed.keys.length))
       .replace("{ADDRESS_ROWS}", addressRows);
 
-    // Step 8: persist the record WITHOUT walletHmac (device on-chain registration
-    // is Plan 25-03 — this plan stores HMAC-less per the locked walletHmac-timing
-    // decision in RESEARCH.md Fork 2).
+    // Step 8: attempt on-device wallet-policy registration (Plan 25-03 Fork 2).
+    // If force=true, skip device registration and store HMAC-less regardless.
+    const forceArg = args.force === true;
     const registeredAt = new Date().toISOString();
+
+    let walletHmacHex: string | null = null;
+    let registrationNote: string;
+
+    if (!forceArg) {
+      // Build the descriptor template for @ledgerhq/ledger-bitcoin:
+      // e.g. "wsh(sortedmulti(2,@0/**,@1/**,@2/**))"
+      const descriptorTemplate = `wsh(sortedmulti(${parsed.m},${parsed.keys.map((_, i) => `@${i}/**`).join(",")}))`;
+
+      try {
+        const result = await _btcLedgerTransport.registerBtcMultisigWallet(
+          nameArg,
+          descriptorTemplate,
+          parsed.keys,
+        );
+        walletHmacHex = result.walletHmacHex;
+        registrationNote = "On-device registration complete. walletHmac stored — signing enabled.";
+      } catch (err) {
+        if (err instanceof LedgerBtcAppVersionTooOldError) {
+          return {
+            isError: true,
+            content: [{ type: "text", text: `error: ${err.message}` }],
+            structuredContent: errEnvelope(
+              "LEDGER_BTC_APP_VERSION_TOO_OLD",
+              err.message,
+            ),
+          };
+        }
+        if (err instanceof LedgerDeviceNotConnectedError) {
+          // Device absent — store HMAC-less (locked fallback from RESEARCH Fork 2)
+          registrationNote =
+            "No Ledger device connected — stored HMAC-less. Re-run register_btc_multisig_wallet " +
+            "with device connected and Bitcoin app open to enable signing.";
+        } else {
+          // Other device error — store HMAC-less with the error message
+          const cause = err instanceof Error ? err.message : String(err);
+          registrationNote =
+            `Device registration failed (${cause}) — stored HMAC-less. ` +
+            "Re-run register_btc_multisig_wallet with device connected to enable signing.";
+        }
+      }
+    } else {
+      registrationNote =
+        "force=true — HMAC-less registration (balance-only, signing disabled). " +
+        "Re-run without force=true and with device connected to enable signing.";
+    }
+
+    // Step 9: persist the record (with or without walletHmac)
     saveMultisigWallet({
       name: nameArg,
       descriptor: descriptorArg, // verbatim, never elided — per CLAUDE.md
@@ -306,21 +362,21 @@ registerTool(
       keyFingerprints,
       firstAddresses,
       registeredAt,
-      // walletHmac: absent — populated by Plan 25-03 on device registration
+      ...(walletHmacHex !== null ? { walletHmac: walletHmacHex } : {}),
     });
 
     // Build the response text — descriptor surfaced verbatim per CLAUDE.md
     const responseText = [
       verifyBlock,
       "",
-      "Registration complete (HMAC-less — signing requires device connection).",
+      registrationNote,
       "",
       "PREPARE RECEIPT (BTC — multisig wallet registration)",
       `  walletName:    ${nameArg}`,
       `  descriptor:    ${descriptorArg}`,
       `  threshold:     ${parsed.m}-of-${parsed.keys.length}`,
       `  registeredAt:  ${registeredAt}`,
-      `  walletHmac:    absent (re-register with device connected to enable signing)`,
+      `  walletHmac:    ${walletHmacHex !== null ? `${walletHmacHex.slice(0, 8)}… (stored)` : "absent (re-register with device connected to enable signing)"}`,
     ].join("\n");
 
     return {
@@ -333,7 +389,8 @@ registerTool(
         keyFingerprints,
         firstAddresses,
         registeredAt,
-        walletHmac: null,
+        walletHmac: walletHmacHex,
+        registrationNote,
         verifyBlock,
       },
     };

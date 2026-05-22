@@ -18,6 +18,7 @@ import {
   expect,
   it,
   vi,
+  type SpyInstance,
 } from "vitest";
 
 // Force memory mode throughout — no real disk writes
@@ -32,6 +33,11 @@ afterEach(() => {
 
 import { _resetBtcMultisigStoreForTesting } from "../src/wallet/btc-multisig-store.js";
 import { _resetDemoModeForTesting } from "../src/config/env.js";
+import {
+  LedgerBtcAppVersionTooOldError,
+  LedgerDeviceNotConnectedError,
+  _btcLedgerTransport,
+} from "../src/wallet/ledger-btc-transport.js";
 
 // Import the tool registrations to trigger side-effect registration
 import "../src/tools/register_btc_multisig_wallet.js";
@@ -208,6 +214,96 @@ describe("register_btc_multisig_wallet", () => {
     const result = await handler({ name: "force-test", descriptor: VALID_DESCRIPTOR, threshold: 2, force: true });
 
     expect(result.isError).toBeFalsy();
+  });
+});
+
+// ─── Plan 25-03: register_btc_multisig_wallet on-device transport paths ──────
+
+describe("register_btc_multisig_wallet — on-device registration (Plan 25-03)", () => {
+  beforeEach(() => {
+    _resetBtcMultisigStoreForTesting();
+    delete process.env["VAULTPILOT_DEMO"];
+  });
+
+  it("device-present path: stores walletHmac when registerBtcMultisigWallet succeeds", async () => {
+    const FAKE_HMAC = "deadbeefcafebabe".repeat(4); // 64 hex chars = 32 bytes
+    const spy = vi.spyOn(_btcLedgerTransport, "registerBtcMultisigWallet").mockResolvedValue({
+      walletHmacHex: FAKE_HMAC,
+    });
+
+    const handler = getToolHandler("register_btc_multisig_wallet")!;
+    const result = await handler({ name: "my-vault", descriptor: VALID_DESCRIPTOR, threshold: 2 });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as Record<string, unknown>;
+    expect(sc.walletHmac).toBe(FAKE_HMAC);
+
+    // Verify the record was persisted with walletHmac
+    const { loadMultisigWallet } = await import("../src/wallet/btc-multisig-store.js");
+    const record = loadMultisigWallet("my-vault");
+    expect(record?.walletHmac).toBe(FAKE_HMAC);
+
+    expect(spy).toHaveBeenCalledOnce();
+    spy.mockRestore();
+  });
+
+  it("device-absent path: stores HMAC-less when LedgerDeviceNotConnectedError thrown", async () => {
+    const spy = vi.spyOn(_btcLedgerTransport, "registerBtcMultisigWallet").mockRejectedValue(
+      new LedgerDeviceNotConnectedError(),
+    );
+
+    const handler = getToolHandler("register_btc_multisig_wallet")!;
+    const result = await handler({ name: "no-device", descriptor: VALID_DESCRIPTOR, threshold: 2 });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as Record<string, unknown>;
+    // walletHmac absent when device not connected
+    expect(sc.walletHmac).toBeNull();
+
+    // Verify record stored without walletHmac
+    const { loadMultisigWallet } = await import("../src/wallet/btc-multisig-store.js");
+    const record = loadMultisigWallet("no-device");
+    expect(record?.walletHmac).toBeUndefined();
+
+    // Response text should mention re-registration needed
+    const text = (result.content[0] as { type: string; text: string }).text;
+    expect(text).toMatch(/HMAC-less|re-run register/i);
+
+    spy.mockRestore();
+  });
+
+  it("app-too-old path: returns LEDGER_BTC_APP_VERSION_TOO_OLD", async () => {
+    const spy = vi.spyOn(_btcLedgerTransport, "registerBtcMultisigWallet").mockRejectedValue(
+      new LedgerBtcAppVersionTooOldError(),
+    );
+
+    const handler = getToolHandler("register_btc_multisig_wallet")!;
+    const result = await handler({ name: "old-app", descriptor: VALID_DESCRIPTOR, threshold: 2 });
+
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as Record<string, unknown>;
+    expect(sc.errorCode).toBe("LEDGER_BTC_APP_VERSION_TOO_OLD");
+
+    spy.mockRestore();
+  });
+
+  it("force=true: stores HMAC-less without calling registerBtcMultisigWallet", async () => {
+    const spy = vi.spyOn(_btcLedgerTransport, "registerBtcMultisigWallet").mockResolvedValue({
+      walletHmacHex: "deadbeef".repeat(8),
+    });
+
+    const handler = getToolHandler("register_btc_multisig_wallet")!;
+    const result = await handler({ name: "force-hmac", descriptor: VALID_DESCRIPTOR, threshold: 2, force: true });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as Record<string, unknown>;
+    // force=true → HMAC-less even though transport spy would return one
+    expect(sc.walletHmac).toBeNull();
+
+    // Transport function NOT called when force=true
+    expect(spy).not.toHaveBeenCalled();
+
+    spy.mockRestore();
   });
 });
 

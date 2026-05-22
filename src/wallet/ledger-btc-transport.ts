@@ -57,6 +57,7 @@
 
 import TransportNodeHidModule from "@ledgerhq/hw-transport-node-hid";
 import BtcAppModule from "@ledgerhq/hw-app-btc";
+import AppClientModule from "@ledgerhq/ledger-bitcoin";
 import { Psbt } from "bitcoinjs-lib";
 
 import { log } from "../diagnostics/logger.js";
@@ -74,6 +75,16 @@ const TransportNodeHid: any =
 const BtcApp: any =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (BtcAppModule as any).default ?? BtcAppModule;
+// NodeNext ESM default-export drift shim for @ledgerhq/ledger-bitcoin.
+// AppClient is the default export (class). WalletPolicy is a named export.
+// Under CJS-interop / NodeNext the namespace object carries both `.default`
+// (AppClient class) and named exports (WalletPolicy, etc.). Using the
+// `(Module as any).default ?? Module` shim picks the right runtime constructor
+// without leaking `any` through the rest of the file.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const AppClient: any = (AppClientModule as any).default ?? AppClientModule;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const WalletPolicy: any = (AppClientModule as any).WalletPolicy ?? ((AppClientModule as any).default?.WalletPolicy) ?? AppClientModule;
 
 /**
  * Ledger Live's default BTC segwit derivation path — 5-level BIP-44,
@@ -123,6 +134,24 @@ export class LedgerBtcAppNotOpenError extends Error {
       "Bitcoin app is not the active app on the Ledger. Open the Bitcoin app on the device, then retry.",
     );
     this.name = "LedgerBtcAppNotOpenError";
+  }
+}
+
+/**
+ * Thrown when the device's BTC app version is too old to support
+ * multisig wallet-policy registration (requires BTC app v2.1+).
+ * The `registerWallet` APDU is only available from v2.1 onward.
+ *
+ * T-25-13 mitigation: `registerBtcMultisigWallet` version-gates via
+ * `getAppConfiguration()` before any APDU exchange.
+ */
+export class LedgerBtcAppVersionTooOldError extends Error {
+  constructor() {
+    super(
+      "Ledger Bitcoin app version too old for multisig wallet policies. " +
+        "Update Ledger Live to install Bitcoin app 2.1+ on your device, then retry.",
+    );
+    this.name = "LedgerBtcAppVersionTooOldError";
   }
 }
 
@@ -515,6 +544,167 @@ export async function signBtcMessage(
   }
 }
 
+// ─── Phase 25 Plan 25-03 — Ledger multisig wallet-policy functions ───────────
+
+/**
+ * Register a multisig wallet policy on the Ledger device (BTC app v2.1+).
+ *
+ * Calls `AppClient.registerWallet(walletPolicy)` from `@ledgerhq/ledger-bitcoin`.
+ * The device displays the wallet name + policy on-screen and requires user approval.
+ * Returns the 32-byte HMAC (hex-encoded) that must be stored in the registry and
+ * passed on every subsequent `signBtcMultisigPsbt` call.
+ *
+ * Security gates (T-25-13 mitigation):
+ *   - `getAppConfiguration()` version-check: BTC app < 2.1.0 → throws
+ *     `LedgerBtcAppVersionTooOldError`.
+ *   - `getAppConfiguration()` open-check: non-BTC app → throws
+ *     `LedgerBtcAppNotOpenError`.
+ *
+ * @param walletName        — wallet policy name (max 16 ASCII chars).
+ * @param descriptorTemplate — e.g. `"wsh(sortedmulti(2,@0/**,@1/**,@2/**))"`.
+ * @param keys              — key expressions from the descriptor.
+ * @returns `{ walletHmacHex }` — 32-byte hex HMAC string.
+ */
+export async function registerBtcMultisigWallet(
+  walletName: string,
+  descriptorTemplate: string,
+  keys: readonly string[],
+): Promise<{ walletHmacHex: string }> {
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildBtcApp(transport);
+
+    // Gate 1: BTC app open check (non-BTC app throws here)
+    let appVersion: string;
+    try {
+      const cfg = await app.getAppConfiguration();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      appVersion = (cfg?.version as string) ?? "0.0.0";
+    } catch {
+      throw new LedgerBtcAppNotOpenError();
+    }
+
+    // Gate 2: version check — BTC app v2.1.0+ required for registerWallet APDU
+    const parts = appVersion.split(".").map((p) => parseInt(p, 10));
+    const major = parts[0] ?? 0;
+    const minor = parts[1] ?? 0;
+    if (major < 2 || (major === 2 && minor < 1)) {
+      throw new LedgerBtcAppVersionTooOldError();
+    }
+
+    // Build AppClient from @ledgerhq/ledger-bitcoin using the same transport.
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    const appClient = new AppClient(transport);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    const walletPolicy = new WalletPolicy(walletName, descriptorTemplate, keys);
+
+    // registerWallet returns [walletId, walletHmac: Buffer(32)]
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    const [, walletHmac] = await appClient.registerWallet(walletPolicy);
+    const walletHmacHex = Buffer.from(walletHmac as Uint8Array).toString("hex");
+
+    return { walletHmacHex };
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log("warn", `transport.close() failed during registerBtcMultisigWallet cleanup: ${message}`);
+    }
+  }
+}
+
+/**
+ * Sign a multisig PSBT using the Ledger BTC app v2.1+'s wallet-policy APDU.
+ *
+ * Calls `AppClient.signPsbt(psbtBase64, walletPolicy, walletHmac)` from
+ * `@ledgerhq/ledger-bitcoin`. Returns the updated PSBT base64 with the device's
+ * partial signatures inserted into `psbt.data.inputs[i].partialSig`.
+ *
+ * The Ledger device displays the multisig policy name + transaction outputs on
+ * screen for user approval. The caller must have stored `walletHmac` from a
+ * prior `registerBtcMultisigWallet` call.
+ *
+ * Security gate (T-25-13 mitigation): version-checks BTC app ≥ 2.1 before
+ * the APDU exchange, same as `registerBtcMultisigWallet`.
+ *
+ * DOES NOT broadcast — returns the updated PSBT for further co-signing or
+ * finalization. The Ledger does not have authority to finalize unilaterally.
+ *
+ * @param psbtBase64         — PSBT in base64 (externally supplied, co-signer assembled).
+ * @param walletName         — registered wallet name (max 16 ASCII chars).
+ * @param descriptorTemplate — e.g. `"wsh(sortedmulti(2,@0/**,@1/**,@2/**))"`.
+ * @param keys               — key expressions from the descriptor.
+ * @param walletHmacHex      — 32-byte hex HMAC from `registerBtcMultisigWallet`.
+ * @returns `{ updatedPsbtBase64 }` with the device's partial signatures inserted.
+ */
+export async function signBtcMultisigPsbt(
+  psbtBase64: string,
+  walletName: string,
+  descriptorTemplate: string,
+  keys: readonly string[],
+  walletHmacHex: string,
+): Promise<{ updatedPsbtBase64: string }> {
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildBtcApp(transport);
+
+    // Gate 1: BTC app open check
+    let appVersion: string;
+    try {
+      const cfg = await app.getAppConfiguration();
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+      appVersion = (cfg?.version as string) ?? "0.0.0";
+    } catch {
+      throw new LedgerBtcAppNotOpenError();
+    }
+
+    // Gate 2: version check
+    const parts = appVersion.split(".").map((p) => parseInt(p, 10));
+    const major = parts[0] ?? 0;
+    const minor = parts[1] ?? 0;
+    if (major < 2 || (major === 2 && minor < 1)) {
+      throw new LedgerBtcAppVersionTooOldError();
+    }
+
+    // Build AppClient + WalletPolicy from @ledgerhq/ledger-bitcoin
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    const appClient = new AppClient(transport);
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    const walletPolicy = new WalletPolicy(walletName, descriptorTemplate, keys);
+    const walletHmac = Buffer.from(walletHmacHex, "hex");
+
+    // signPsbt returns Map<inputIndex, PartialSignature> or an Array
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    const sigs: Map<number, { pubkey: Buffer; signature: Buffer }> | Array<[number, { pubkey: Buffer; signature: Buffer }]> =
+      await appClient.signPsbt(psbtBase64, walletPolicy, walletHmac);
+
+    // Insert signatures into PSBT.data.inputs[i].partialSig
+    const psbt = Psbt.fromBase64(psbtBase64);
+    const sigEntries: [number, { pubkey: Buffer; signature: Buffer }][] =
+      sigs instanceof Map ? [...sigs.entries()] : (sigs as [number, { pubkey: Buffer; signature: Buffer }][]);
+
+    for (const [inputIndex, partialSig] of sigEntries) {
+      const input = psbt.data.inputs[inputIndex];
+      if (!input) continue;
+      input.partialSig ??= [];
+      input.partialSig.push({
+        pubkey: partialSig.pubkey,
+        signature: partialSig.signature,
+      });
+    }
+
+    return { updatedPsbtBase64: psbt.toBase64() };
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log("warn", `transport.close() failed during signBtcMultisigPsbt cleanup: ${message}`);
+    }
+  }
+}
+
 /**
  * ESM spy-affordance for the BTC address-probe path. Plan 22-04
  * `get_btc_status` (deferred to Phase 27 for the lazy-probe diagnostic;
@@ -547,6 +737,21 @@ export const _btcLedgerTransport = {
     messageHex: string,
   ): Promise<{ v: number; r: string; s: string }> =>
     signBtcMessage(path, messageHex),
+  // Phase 25 Plan 25-03: multisig wallet-policy registration + signing.
+  registerBtcMultisigWallet: (
+    walletName: string,
+    descriptorTemplate: string,
+    keys: readonly string[],
+  ): Promise<{ walletHmacHex: string }> =>
+    registerBtcMultisigWallet(walletName, descriptorTemplate, keys),
+  signBtcMultisigPsbt: (
+    psbtBase64: string,
+    walletName: string,
+    descriptorTemplate: string,
+    keys: readonly string[],
+    walletHmacHex: string,
+  ): Promise<{ updatedPsbtBase64: string }> =>
+    signBtcMultisigPsbt(psbtBase64, walletName, descriptorTemplate, keys, walletHmacHex),
 };
 
 /**
