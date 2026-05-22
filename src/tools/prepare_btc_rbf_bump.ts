@@ -655,7 +655,12 @@ registerTool(
         )
         .join("\n");
 
-      const feeDeltaSats = newFeeSats - originalFeeSats;
+      // CR-02: compute feeDeltaSats from the ACTUAL PSBT fee (psbtResult.feeSats),
+      // not the pre-PSBT estimate (newFeeSats). When sub-dust change is folded into
+      // the miner fee, psbtResult.feeSats > newFeeSats, so the receipt delta must
+      // reflect what the user actually pays — consistent with preview_send.ts which
+      // computes feeDeltaSats = btcTx.feeSats - btcTx.originalFeeSats.
+      const feeDeltaSats = psbtResult.feeSats - originalFeeSats;
 
       const prepareReceipt = PREPARE_RECEIPT_BTC_RBF_TEMPLATE
         .replace("{ORIGINAL_TXID}", rawTxid)
