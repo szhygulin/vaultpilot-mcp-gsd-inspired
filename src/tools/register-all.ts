@@ -31,6 +31,8 @@ import "./get_litecoin_tx_history.js"; // Phase 26 Plan 26-01 (LTC-READ-02) — 
 import "./get_litecoin_fee_estimates.js"; // Phase 26 Plan 26-01 (LTC-READ-02) — /v1/fees/recommended → 5-key sat/vB shape
 import "./get_btc_block_tip.js"; // Phase 27 Plan 27-01 (BTC-FORENSIC-02) — chain tip via Core 2-call sequence + Esplora fallback
 import "./get_btc_block_stats.js"; // Phase 27 Plan 27-01 (BTC-FORENSIC-03) — per-block tx stats + fee percentiles + segwit adoption
+import "./get_btc_blocks_recent.js"; // Phase 27 Plan 27-01 (BTC-FORENSIC-04) — last N blocks via Core getblockstats batch + Esplora fallback
+import "./get_btc_chain_tips.js"; // Phase 27 Plan 27-01 (BTC-FORENSIC-04 / reorg detection) — getchaintips + reorgSignals derivation
 import "./get_btc_status.js"; // Phase 22 Plan 22-04 (BTC-PAIR-02) — dual-address (segwit + taproot) pairing status
 import "./get_tron_status.js"; // Phase 17 Plan 17-03 (TRON-PAIR-02)
 import "./get_tron_balance.js"; // Phase 17 Plan 17-03 (TRON-READ-01)
