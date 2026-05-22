@@ -53,12 +53,17 @@
 import { type Hex, toHex } from "viem";
 import { call } from "viem/actions";
 import { Message, PublicKey, Transaction } from "@solana/web3.js";
+import { Transaction as BtcTransaction } from "bitcoinjs-lib";
 
 import { getEthereumClient } from "../chains/ethereum.js";
+import "../chains/bitcoin/types.js"; // ensure initEccLib(tinySecp256k1) fires
+import { broadcastTx as esploraBroadcastTx } from "../chains/bitcoin/esplora-client.js";
 import { _solanaRegistry } from "../chains/solana/registry.js";
 import { _tronRegistry } from "../chains/tron/registry.js";
 import { isDemoMode } from "../config/env.js";
-import { getActivePersona, getActiveSolanaPersona, getActiveTronPersona } from "../demo/state.js";
+import { getActivePersona, getActiveBtcPersona, getActiveSolanaPersona, getActiveTronPersona } from "../demo/state.js";
+import { computeBtcPayloadFingerprint } from "../signing/btc-fingerprint.js";
+import { _btcSighash } from "../signing/btc-sighash.js";
 import {
   type ErrorCode,
   type StructuredError,
@@ -69,6 +74,7 @@ import {
   transitionToCancelled,
   transitionToSent,
   type HandleRecord,
+  type PreparedTxBtc,
   type PreparedTxSolana,
   type PreparedTxTron,
 } from "../signing/handle-store.js";
@@ -88,6 +94,12 @@ import {
   LedgerTronAppNotOpenError,
   _tronLedgerTransport,
 } from "../wallet/ledger-tron-transport.js";
+import {
+  LedgerDeviceNotConnectedError as LedgerBtcDeviceNotConnectedError,
+  LedgerBtcAppNotOpenError,
+  _btcLedgerTransport,
+  type BtcPsbtSignInput,
+} from "../wallet/ledger-btc-transport.js";
 import { listAccounts } from "../wallet/non-evm-account-store.js";
 import {
   getActiveSessionTopic,
@@ -332,12 +344,23 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
           ? computeTronPayloadFingerprint({
               rawDataBytes: new Uint8Array(Buffer.from((record.tx as PreparedTxTron).rawDataHex, "hex")),
             })
-          : computePayloadFingerprint({
-              chainId: record.tx.chainId,
-              to: record.tx.to,
-              valueWei: record.tx.valueWei,
-              data: record.tx.data,
-            });
+          : txType === "btc"
+            ? computeBtcPayloadFingerprint(
+                _btcSighash.computeAllSighashes(
+                  BtcTransaction.fromHex((record.tx as PreparedTxBtc).unsignedTxHex),
+                  (record.tx as PreparedTxBtc).perInputPrevouts.map((p) => ({
+                    scriptType: p.scriptType,
+                    prevOutScript: p.script,
+                    valueSats: p.valueSats,
+                  })),
+                ),
+              )
+            : computePayloadFingerprint({
+                chainId: record.tx.chainId,
+                to: record.tx.to,
+                valueWei: record.tx.valueWei,
+                data: record.tx.data,
+              });
     if (recomputed !== record.payloadFingerprint) {
       return {
         isError: true,
@@ -366,6 +389,12 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
     if (txType === "tron") {
       return await sendTransactionTronBranch(
         record as HandleRecord & { tx: PreparedTxTron },
+        handleArg,
+      );
+    }
+    if (txType === "btc") {
+      return await sendTransactionBtcBranch(
+        record as HandleRecord & { tx: PreparedTxBtc },
         handleArg,
       );
     }
@@ -1305,6 +1334,237 @@ async function sendTransactionTronBranch(
       txType: "tron" as const,
       kind: tronTx.kind,
       // Phase 18 — no WC session topic for TRON (USB-HID bypasses WC).
+      sessionTopicLast8: null,
+    },
+  };
+}
+
+// ===========================================================================
+// Phase 23 — Plan 23-04 — BTC branch (additive; lives OUTSIDE the FROZEN
+// three-gate region above). Dispatcher reads `record.tx.txType === "btc"`.
+//
+// BTC broadcast path:
+//   1. Demo-mode short-circuit (D-04) — mempool-replay envelope; NOTHING signed.
+//   2. Pairing check — non-EVM account store (chainFilter: "bitcoin").
+//   3. Build BtcPsbtSignInput[] from inputScriptTypes.
+//   4. Sign via Ledger BTC app over USB-HID (`_btcLedgerTransport.signBtcPsbt`).
+//   5. Broadcast via Esplora POST /tx (`esploraBroadcastTx`).
+//   6. State transition via `transitionToSent`.
+//
+// Error mapping:
+//   LedgerBtcDeviceNotConnectedError → LEDGER_NOT_CONNECTED
+//   LedgerBtcAppNotOpenError         → LEDGER_REJECTED
+//   /reject/i                        → LEDGER_REJECTED
+//   /combine|finalize|mixed/i        → BTC_MIXED_INPUT_SIGN_FAILURE
+//   Esplora { kind: "rejected" | "error" } → BROADCAST_FAILED
+// ===========================================================================
+
+/**
+ * Build the demo-mode simulation envelope for a BTC `userDecision: "send"`.
+ * Returns a mempool-replay envelope (D-04 shape). NOTHING signed; NOTHING broadcast.
+ */
+async function buildBtcDemoSimulationResponse(
+  record: HandleRecord & { tx: PreparedTxBtc },
+  handleArg: string,
+): Promise<ToolHandlerResult> {
+  const btcTx = record.tx;
+  const simulatedAt = new Date().toISOString();
+  const text = [
+    "SIMULATION (BTC — demo mode)",
+    `  kind:              ${btcTx.kind}`,
+    `  inputs:            ${btcTx.inputs.length}`,
+    `  outputs:           ${btcTx.outputs.length}`,
+    `  feeSats:           ${btcTx.feeSats.toString()}`,
+    `  psbtBase64:        ${btcTx.psbtBase64.slice(0, 24)}…`,
+    `  envelopeShape:     psbt-mempool-replay`,
+    `  (no device call; no broadcast performed)`,
+  ].join("\n");
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: {
+      simulated: true,
+      demoMode: true,
+      simulationResult: "ok",
+      simulatedAt,
+      handle: handleArg,
+      txType: "btc" as const,
+      kind: btcTx.kind,
+      envelopeShape: "psbt-mempool-replay",
+      sessionTopicLast8: null,
+    },
+  };
+}
+
+/**
+ * BTC branch of `send_transaction`. Dispatched by the main handler when
+ * `record.tx.txType === "btc"`. All three FROZEN gates and the cancel branch
+ * fired identically before reaching this function.
+ */
+async function sendTransactionBtcBranch(
+  record: HandleRecord & { tx: PreparedTxBtc },
+  handleArg: string,
+): Promise<ToolHandlerResult> {
+  const btcTx = record.tx;
+
+  // ---- Demo-mode short-circuit (D-04 — mempool-replay) --------------------
+  if (isDemoMode()) {
+    const btcPersona = getActiveBtcPersona();
+    if (btcPersona === null) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text:
+              "error: demo mode is active but no BTC persona set. Call `set_demo_wallet` with a BTC persona slug (e.g. \"btc-whale\") first.",
+          },
+        ],
+        structuredContent: errEnvelope(
+          "WRONG_MODE",
+          "demo mode active but no BTC persona set; call set_demo_wallet first",
+        ),
+      };
+    }
+    return buildBtcDemoSimulationResponse(record, handleArg);
+  }
+
+  // ---- Pairing check (BTC — persistent non-EVM account store) ------------
+  const accounts = listAccounts({ chainFilter: "bitcoin" });
+  if (accounts.length === 0) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text:
+            "error: no paired BTC account. Call `pair_btc_ledger` first to pair your Bitcoin Ledger account, then retry.",
+        },
+      ],
+      structuredContent: errEnvelope(
+        "WALLET_NOT_PAIRED",
+        "no paired BTC account; call pair_btc_ledger first",
+      ),
+    };
+  }
+  const account = accounts[0];
+  if (!account) {
+    return {
+      isError: true,
+      content: [{ type: "text", text: "error: no paired BTC account (unreachable narrowing)." }],
+      structuredContent: errEnvelope("WALLET_NOT_PAIRED", "no paired BTC account (unreachable narrowing)"),
+    };
+  }
+
+  // ---- Build BtcPsbtSignInput[] from inputScriptTypes ---------------------
+  // Placeholder pubkey (33 bytes) and masterFingerprint (4 bytes) — the Ledger
+  // BTC app uses the PSBT's bip32Derivation to determine the signing key;
+  // the derivation path + masterFp in BtcPsbtSignInput tells it which key to use.
+  // Phase 23 v1: we derive the path from account.derivationPath.
+  const placeholderPubkey = new Uint8Array(33); // Ledger fills in from derivation
+  const PLACEHOLDER_MASTER_FP = new Uint8Array(4); // 00000000 — Ledger uses its own fp
+
+  const signInputs: BtcPsbtSignInput[] = btcTx.inputScriptTypes.map((scriptType, idx) => ({
+    index: idx,
+    scriptType,
+    bip32Path: account.derivationPath,
+    pubkey: placeholderPubkey,
+    masterFingerprint: PLACEHOLDER_MASTER_FP,
+  }));
+
+  // ---- Sign via Ledger BTC app (USB-HID) ----------------------------------
+  let rawTxHex: string;
+  try {
+    const result = await _btcLedgerTransport.signBtcPsbt(
+      btcTx.psbtBase64,
+      signInputs,
+      [],
+    );
+    rawTxHex = result.rawTxHex;
+  } catch (err) {
+    if (err instanceof LedgerBtcDeviceNotConnectedError) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${err.message}` }],
+        structuredContent: errEnvelope("LEDGER_NOT_CONNECTED", err.message),
+      };
+    }
+    if (err instanceof LedgerBtcAppNotOpenError) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${err.message}` }],
+        structuredContent: errEnvelope(
+          "LEDGER_REJECTED",
+          "Ledger BTC app not open. Open the Bitcoin app on the device and retry.",
+          err.message,
+        ),
+      };
+    }
+    const cause = err instanceof Error ? err.message : String(err);
+    if (/reject/i.test(cause)) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: user rejected on Ledger device: ${cause}` }],
+        structuredContent: errEnvelope("LEDGER_REJECTED", "user rejected on Ledger device", cause),
+      };
+    }
+    if (/combine|finalize|mixed/i.test(cause)) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: BTC mixed-input signing failed: ${cause}` }],
+        structuredContent: errEnvelope("BTC_MIXED_INPUT_SIGN_FAILURE", "BTC mixed-input PSBT signing failed", cause),
+      };
+    }
+    return {
+      isError: true,
+      content: [{ type: "text", text: `error: BTC Ledger signing failed: ${cause}` }],
+      structuredContent: errEnvelope("INTERNAL_ERROR", "BTC Ledger signing failed", cause),
+    };
+  }
+
+  // ---- Broadcast via Esplora POST /tx (direct — no WC relay) -------------
+  const broadcastResult = await esploraBroadcastTx(rawTxHex);
+  if (broadcastResult.kind !== "ok") {
+    const cause = "message" in broadcastResult ? broadcastResult.message : String(broadcastResult);
+    return {
+      isError: true,
+      content: [{ type: "text", text: `error: BTC broadcast failed: ${cause}` }],
+      structuredContent: errEnvelope("BROADCAST_FAILED", "BTC broadcast failed", cause),
+    };
+  }
+
+  // ---- Success — stamp handle, return txHash ------------------------------
+  const txHash = broadcastResult.txid;
+  const trans = transitionToSent(handleArg, txHash);
+  if (!trans.ok) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `error: state transition failed after BTC broadcast: ${trans.errorCode}`,
+        },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        `state transition failed after BTC broadcast: ${trans.errorCode}`,
+      ),
+    };
+  }
+  const broadcastedAt = new Date().toISOString();
+  return {
+    content: [
+      {
+        type: "text",
+        text: `broadcast OK (BTC)\n  txHash: ${txHash}\n  broadcastedAt: ${broadcastedAt}\n\nView on mempool.space: https://mempool.space/tx/${txHash}`,
+      },
+    ],
+    structuredContent: {
+      txHash,
+      broadcastedAt,
+      handle: handleArg,
+      txType: "btc" as const,
+      kind: btcTx.kind,
+      // Phase 23 — BTC uses Esplora direct broadcast (no WC relay).
       sessionTopicLast8: null,
     },
   };

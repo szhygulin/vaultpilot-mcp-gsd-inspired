@@ -51,6 +51,7 @@
 import { erc20Abi, type Address, type Hex } from "viem";
 import { estimateFeesPerGas, estimateGas, getTransactionCount } from "viem/actions";
 import { Message, Transaction } from "@solana/web3.js";
+import { Transaction as BtcTransaction } from "bitcoinjs-lib";
 
 import { _compoundChains } from "../chains/compound-v3.js";
 import { getChainClient } from "../chains/registry.js";
@@ -97,6 +98,16 @@ import {
   buildSimulationBlock,
   chunkHex,
 } from "../signing/blocks.js";
+import "../chains/bitcoin/types.js"; // ensure initEccLib(tinySecp256k1) fires
+import {
+  LEDGER_BLIND_SIGN_HASH_BTC_TEMPLATE,
+  INPUT_SIGHASH_ROW_BTC_TEMPLATE,
+  PREPARE_RECEIPT_BTC_NATIVE_TEMPLATE,
+  INPUT_ROW_BTC_TEMPLATE,
+  OUTPUT_ROW_BTC_TEMPLATE,
+} from "../signing/blocks-btc.js";
+import { _btcFingerprint } from "../signing/btc-fingerprint.js";
+import { _btcSighash } from "../signing/btc-sighash.js";
 import {
   LEDGER_BLIND_SIGN_HASH_SOLANA_TEMPLATE,
   PREPARE_RECEIPT_SOLANA_NATIVE_TEMPLATE,
@@ -136,6 +147,7 @@ import {
   lookup,
   transitionToPreviewed,
   type HandleRecord,
+  type PreparedTxBtc,
   type PreparedTxSolana,
   type PreparedTxTron,
   type SolanaInstructionSummary,
@@ -229,6 +241,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     }
     if (txType === "tron") {
       return await previewSendTronBranch(record as HandleRecord & { tx: PreparedTxTron });
+    }
+    if (txType === "btc") {
+      return await previewSendBtcBranch(record as HandleRecord & { tx: PreparedTxBtc });
     }
 
     // Phase 9 — Plan 09-04. Layer 0.5 outer dispatch-target allowlist
@@ -2019,6 +2034,179 @@ async function previewSendTronBranch(
       },
       rawDataHex: tronTx.rawDataHex,
       // Phase 18 — no WC session topic for TRON (USB-HID bypasses WC).
+      sessionTopicLast8: null,
+    },
+  };
+}
+
+// ===========================================================================
+// Phase 23 — Plan 23-04 — BTC branch (additive; lives OUTSIDE the FROZEN
+// three-gate region). Dispatcher reads `record.tx.txType === "btc"` and
+// routes here. The EVM / Solana / TRON branches above stay byte-identical.
+//
+// BTC preview divergence from TRON/Solana:
+//   - No RPC pin (no chain client; UTXO model, no nonce/gas).
+//   - Layer 1 fingerprint recompute from the CANONICAL ARTIFACT:
+//     `unsignedTxHex + perInputPrevouts` (NOT a re-parsed PSBT — Pitfall 5).
+//   - N per-input sighash rows in LEDGER BLIND-SIGN HASH (BTC) block.
+//   - `presignHash` = payloadFingerprint (BTC has no separate presign hash).
+//   - `sessionTopicLast8 = null` (BTC uses USB-HID + Esplora, not WC).
+// ===========================================================================
+
+/**
+ * Chunk a 64-hex BTC sighash (no 0x prefix) into 8 groups of 8 chars for
+ * readable on-device comparison. Stays inline here (not in blocks-btc.ts
+ * which is format-fanout-frozen).
+ */
+function chunkBtcHash(hashFull: string): string {
+  const raw = hashFull.startsWith("0x") ? hashFull.slice(2) : hashFull;
+  const groups: string[] = [];
+  for (let i = 0; i < raw.length; i += 8) {
+    groups.push(raw.slice(i, i + 8));
+  }
+  return groups.join(" ");
+}
+
+/**
+ * Preview a BTC-typed handle. EVM/Solana/TRON bodies stay byte-identical;
+ * this branch is the additive Plan 23-04 surface.
+ *
+ * Steps:
+ *   1. Recompute payloadFingerprint from `unsignedTxHex + perInputPrevouts`
+ *      (canonical artifact — NOT re-parsed PSBT). Refuse on drift.
+ *   2. Mint a fresh previewToken UUID.
+ *   3. Pin via `transitionToPreviewed` (sentinel zeros for EVM-only fields;
+ *      presignHash = payloadFingerprint for BTC).
+ *   4. Render PREPARE RECEIPT (BTC) + LEDGER BLIND-SIGN HASH (BTC, N rows).
+ *   5. Return structuredContent with chain:"bitcoin", previewToken, etc.
+ */
+async function previewSendBtcBranch(
+  record: HandleRecord & { tx: PreparedTxBtc },
+): Promise<{
+  isError?: boolean;
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent?: Record<string, unknown>;
+}> {
+  const btcTx = record.tx;
+
+  // ---- Layer 1: fingerprint recompute from CANONICAL ARTIFACT (Pitfall 5) ----
+  // Do NOT re-parse the PSBT — use unsignedTxHex + perInputPrevouts.
+  const sighashInputs = btcTx.perInputPrevouts.map((p) => ({
+    scriptType: p.scriptType,
+    prevOutScript: p.script,
+    valueSats: p.valueSats,
+  }));
+  const perInputSighashes = _btcSighash.computeAllSighashes(
+    BtcTransaction.fromHex(btcTx.unsignedTxHex),
+    sighashInputs,
+  );
+  const recomputed = _btcFingerprint.computeBtcPayloadFingerprint(perInputSighashes);
+
+  if (recomputed !== record.payloadFingerprint) {
+    const message =
+      "error: payloadFingerprint drift detected between prepare and preview; abort and re-run prepare_btc_send";
+    return {
+      isError: true,
+      content: [{ type: "text", text: message }],
+      structuredContent: errEnvelope(
+        "PAYLOAD_FINGERPRINT_DRIFT",
+        "payloadFingerprint drift (BTC preview) — re-run prepare_btc_send",
+      ),
+    };
+  }
+
+  // ---- Mint previewToken + pin via transitionToPreviewed ------------------
+  const previewToken = crypto.randomUUID();
+  // BTC has no separate presign hash — the payloadFingerprint IS the binding value.
+  const presignHash = record.payloadFingerprint;
+
+  const trans = transitionToPreviewed(record.handle, {
+    nonce: 0,
+    gas: 0n,
+    maxFeePerGas: 0n,
+    maxPriorityFeePerGas: 0n,
+    previewToken,
+    presignHash,
+    selector: null,
+  });
+  if (!trans.ok) {
+    const message = `error: handle state changed during BTC preview (${trans.errorCode})`;
+    return {
+      isError: true,
+      content: [{ type: "text", text: message }],
+      structuredContent: errEnvelope(trans.errorCode, `handle transition failed: ${trans.errorCode}`),
+    };
+  }
+
+  // ---- Render PREPARE RECEIPT (BTC) ---------------------------------------
+  const inputRows = btcTx.inputs
+    .map((inp) =>
+      INPUT_ROW_BTC_TEMPLATE
+        .replace("{TXID_SHORT}", inp.txid.slice(0, 8))
+        .replace("{VOUT}", String(inp.vout))
+        .replace("{VALUE_SATS}", inp.valueSats.toString())
+        .replace("{SCRIPT_TYPE}", inp.scriptType),
+    )
+    .join("\n");
+
+  const outputRows = btcTx.outputs
+    .map((out) =>
+      OUTPUT_ROW_BTC_TEMPLATE
+        .replace("{ADDRESS_SHORT}", out.address.slice(0, 12))
+        .replace("{VALUE_SATS}", out.valueSats.toString())
+        .replace("{ROLE}", out.role),
+    )
+    .join("\n");
+
+  const prepareReceiptBlock = PREPARE_RECEIPT_BTC_NATIVE_TEMPLATE
+    .replace("{TO}", record.args.to)
+    .replace("{SATS}", record.args.sats ?? btcTx.outputs[0]?.valueSats.toString() ?? "0")
+    .replace("{FEE_SATS}", btcTx.feeSats.toString())
+    .replace("{FEE_RATE}", "auto")
+    .replace("{INPUT_ROWS}", inputRows)
+    .replace("{OUTPUT_ROWS}", outputRows);
+
+  // ---- Render LEDGER BLIND-SIGN HASH (BTC) — N rows, one per input --------
+  const sighashRows = perInputSighashes
+    .map((sh, idx) => {
+      const shHex = "0x" + Buffer.from(sh).toString("hex");
+      const scriptType = btcTx.perInputPrevouts[idx]?.scriptType ?? "p2wpkh";
+      return INPUT_SIGHASH_ROW_BTC_TEMPLATE
+        .replace("{INPUT_INDEX}", String(idx))
+        .replace("{SCRIPT_TYPE}", scriptType)
+        .replace("{SIGHASH_HEX}", shHex);
+    })
+    .join("\n");
+
+  const blindSignHashBlock = LEDGER_BLIND_SIGN_HASH_BTC_TEMPLATE
+    .replace("{INPUT_COUNT}", String(btcTx.inputs.length))
+    .replace("{FEE_SATS}", btcTx.feeSats.toString())
+    .replace("{INPUT_SIGHASH_ROWS}", sighashRows);
+
+  // ---- Assemble response text ---------------------------------------------
+  const nextStepLine = `Next step: send_transaction({ handle: "${record.handle}", previewToken: "${previewToken}", userDecision: "send" })`;
+
+  const text = [
+    prepareReceiptBlock,
+    "",
+    blindSignHashBlock,
+    "",
+    nextStepLine,
+  ].join("\n");
+
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: {
+      handle: record.handle,
+      chain: "bitcoin",
+      kind: btcTx.kind,
+      previewToken,
+      presignHash,
+      payloadFingerprint: record.payloadFingerprint,
+      feeSats: btcTx.feeSats.toString(),
+      inputCount: btcTx.inputs.length,
+      outputCount: btcTx.outputs.length,
+      // Phase 23 — BTC uses USB-HID Ledger + Esplora direct broadcast (no WC relay).
       sessionTopicLast8: null,
     },
   };
