@@ -645,10 +645,10 @@ Plans:
 
 Plans:
 
-- [ ] 23-01: `src/signing/btc-fingerprint.ts` — `payloadFingerprint` over BIP-143 sighashes per input concat (domain-tagged `"VaultPilot-btctx-v1:"`); UTXO-shape preimage assembly; Fixture O literal anchor; FROZEN discipline for EVM/Solana/TRON fingerprint modules
-- [ ] 23-02: `src/protocols/btc-psbt.ts` — PSBT-v0 (and PSBT-v2 if researcher recommends per `rnd` scope-probe of `bitcoinjs-lib` PSBT support); coin-selection (BnB with manual override DF); fee-rate sanity bounds + dust-threshold enforcement
-- [ ] 23-03: `prepare_btc_send` + BTC `PREPARE RECEIPT` template + segwit + taproot script-type support; mixed-input handling; Fixture P + Q literal anchors
-- [ ] 23-04: `preview_send` + `send_transaction` BTC branches — Ledger BTC-app PSBT signing flow; per-input sighash recompute at preview; full BTC trust-pipeline integration test (multi-persona-cycle byte-identity for UTXO-derived from-set); SECURITY.md BTC section
+- [ ] 23-01-PLAN.md — `src/signing/btc-sighash.ts` (per-input BIP-143/341 sighash) + `src/signing/btc-fingerprint.ts` (domain-tagged keccak256 over concatenated sighashes, `"VaultPilot-btctx-v1:"`); Fixture O segwit literal anchor; FROZEN discipline for EVM/Solana/TRON fingerprint modules
+- [ ] 23-02-PLAN.md — `src/signing/btc-coin-select.ts` (BnB + largest-first fallback, in-repo no new dep) + `src/protocols/btc-psbt.ts` (PSBT-v0 construction, segwit/taproot/mixed) + `src/chains/bitcoin/change-index.ts` (chain-1 next-unused index); fee-rate sanity bounds (D-03) + dust-threshold (D-07)
+- [ ] 23-03-PLAN.md — `prepare_btc_send` tool + `blocks-btc.ts` PREPARE RECEIPT template + `handle-store.ts` `PreparedTxBtc` widening + BTC error codes; segwit/taproot/mixed-input + demo BTC whale persona; Fixture P + Q literal anchors
+- [ ] 23-04-PLAN.md — `preview_send` + `send_transaction` BTC branches; `signBtcPsbt` two-pass mixed-input signing + Esplora `broadcastTx`; demo mempool-replay envelope (D-04); full BTC trust-pipeline integration test (persona-cycle byte-identity); SECURITY.md BTC section
 
 #### Phase 24: BIP-125 RBF + BIP-137 message signing
 
