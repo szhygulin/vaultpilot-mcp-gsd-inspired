@@ -57,7 +57,7 @@
 
 import TransportNodeHidModule from "@ledgerhq/hw-transport-node-hid";
 import BtcAppModule from "@ledgerhq/hw-app-btc";
-import AppClientModule from "@ledgerhq/ledger-bitcoin";
+import AppClientModule, { WalletPolicy as WalletPolicyNamed } from "@ledgerhq/ledger-bitcoin";
 import { Psbt } from "bitcoinjs-lib";
 
 import { log } from "../diagnostics/logger.js";
@@ -83,8 +83,16 @@ const BtcApp: any =
 // without leaking `any` through the rest of the file.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const AppClient: any = (AppClientModule as any).default ?? AppClientModule;
+// Resolve WalletPolicy — three lookup paths for CJS-interop + ESM namespace variance:
+//   1. Named import `WalletPolicyNamed` (works when bundler resolves named exports correctly).
+//   2. `(AppClientModule as any).WalletPolicy` (namespace object carries named exports under CJS).
+//   3. `(AppClientModule as any).default?.WalletPolicy` (rare: default object carries WalletPolicy).
+// If all three are undefined the package has a breaking export change; callers throw on first use.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const WalletPolicy: any = (AppClientModule as any).WalletPolicy ?? ((AppClientModule as any).default?.WalletPolicy) ?? AppClientModule;
+const WalletPolicy: any =
+  (WalletPolicyNamed as unknown) ??
+  (AppClientModule as any).WalletPolicy ??
+  (AppClientModule as any).default?.WalletPolicy;
 
 /**
  * Ledger Live's default BTC segwit derivation path — 5-level BIP-44,
@@ -593,6 +601,14 @@ export async function registerBtcMultisigWallet(
     }
 
     // Build AppClient from @ledgerhq/ledger-bitcoin using the same transport.
+    // Defensive assertion: if all three WalletPolicy lookup paths failed at module
+    // load time, surface a clear diagnostic here rather than a confusing
+    // "WalletPolicy is not a constructor" error.
+    if (!WalletPolicy) {
+      throw new Error(
+        "@ledgerhq/ledger-bitcoin: WalletPolicy export not found — check package version",
+      );
+    }
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     const appClient = new AppClient(transport);
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call
@@ -668,6 +684,11 @@ export async function signBtcMultisigPsbt(
     }
 
     // Build AppClient + WalletPolicy from @ledgerhq/ledger-bitcoin
+    if (!WalletPolicy) {
+      throw new Error(
+        "@ledgerhq/ledger-bitcoin: WalletPolicy export not found — check package version",
+      );
+    }
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call
     const appClient = new AppClient(transport);
     // eslint-disable-next-line @typescript-eslint/no-unsafe-call
