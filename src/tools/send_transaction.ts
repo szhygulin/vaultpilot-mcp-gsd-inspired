@@ -50,7 +50,7 @@
 // + `preview_send` ALSO succeed in demo (against persona address); the demo
 // pipeline is rehearsable end-to-end through the actual tool surface.
 
-import { type Hex, toHex } from "viem";
+import { type Hex, toBytes, toHex } from "viem";
 import { call } from "viem/actions";
 import { Message, PublicKey, Transaction } from "@solana/web3.js";
 import { Transaction as BtcTransaction, address as btcAddressLib, networks as btcNetworks } from "bitcoinjs-lib";
@@ -66,6 +66,7 @@ import { _tronRegistry } from "../chains/tron/registry.js";
 import { isDemoMode } from "../config/env.js";
 import { getActivePersona, getActiveBtcPersona, getActiveLtcPersona, getActiveSolanaPersona, getActiveTronPersona } from "../demo/state.js";
 import { computeBtcPayloadFingerprint } from "../signing/btc-fingerprint.js";
+import { _btcLifiFingerprint } from "../signing/btc-lifi-fingerprint.js";
 import { computeLtcPayloadFingerprint } from "../signing/ltc-fingerprint.js";
 import { _btcSighash } from "../signing/btc-sighash.js";
 import {
@@ -79,6 +80,7 @@ import {
   transitionToSent,
   type HandleRecord,
   type PreparedTxBtc,
+  type PreparedTxBtcLifi,
   type PreparedTxLtc,
   type PreparedTxSolana,
   type PreparedTxTron,
@@ -379,6 +381,10 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
                     })),
                   ),
                 )
+              : txType === "btc-lifi"
+                ? _btcLifiFingerprint.computeBtcLifiPayloadFingerprint(
+                    toBytes((record.tx as PreparedTxBtcLifi).psbtHex as `0x${string}`),
+                  )
               : computePayloadFingerprint({
                 chainId: record.tx.chainId,
                 to: record.tx.to,
@@ -425,6 +431,12 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
     if (txType === "litecoin") {
       return await sendTransactionLtcBranch(
         record as HandleRecord & { tx: PreparedTxLtc },
+        handleArg,
+      );
+    }
+    if (txType === "btc-lifi") {
+      return await sendTransactionBtcLifiBranch(
+        record as HandleRecord & { tx: PreparedTxBtcLifi },
         handleArg,
       );
     }
@@ -2014,6 +2026,207 @@ async function sendTransactionLtcBranch(
       txType: "litecoin" as const,
       kind: ltcTx.kind,
       // Phase 26 — LTC uses Esplora direct broadcast (no WC relay).
+      sessionTopicLast8: null,
+    },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 26 Plan 26-03 — BTC LiFi bridge send branch (BTC-LIFI-01).
+//
+// Signs the LiFi-supplied PSBT via Ledger Bitcoin app and broadcasts via
+// BTC Esplora. Mirrors sendTransactionBtcBranch but uses the LiFi PSBT
+// (no per-input sighash assembly — psbtHex is verbatim from LiFi).
+//
+// Demo-mode: simulation envelope (no device call, no broadcast).
+// Real mode: Ledger BTC app PSBT-sign → Esplora POST /tx broadcast.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * BTC LiFi bridge send branch of `send_transaction`.
+ * Dispatched by the main handler when `record.tx.txType === "btc-lifi"`.
+ * All three FROZEN gates fired identically before reaching this function.
+ *
+ * Phase 26 Plan 26-03 (BTC-LIFI-01).
+ */
+async function sendTransactionBtcLifiBranch(
+  record: HandleRecord & { tx: PreparedTxBtcLifi },
+  handleArg: string,
+): Promise<ToolHandlerResult> {
+  const btcLifiTx = record.tx;
+
+  // ---- Demo-mode short-circuit -----------------------------------------------
+  if (isDemoMode()) {
+    const simulatedAt = new Date().toISOString();
+    const psbtPreview = btcLifiTx.psbtHex.slice(0, 24);
+    const text = [
+      "SIMULATION (BTC LiFi — demo mode)",
+      `  txType:            btc-lifi`,
+      `  toChain:           ${btcLifiTx.toChain}`,
+      `  toToken:           ${btcLifiTx.toToken}`,
+      `  toAddress:         ${btcLifiTx.toAddress}`,
+      `  vaultAddress:      ${btcLifiTx.vaultAddress}`,
+      `  amountSats:        ${btcLifiTx.amountSats.toString()}`,
+      `  psbtHex (preview): ${psbtPreview}…`,
+      `  envelopeShape:     lifi-psbt-bridge`,
+      `  (no device call; no broadcast performed)`,
+    ].join("\n");
+    return {
+      content: [{ type: "text", text }],
+      structuredContent: {
+        simulated: true,
+        demoMode: true,
+        simulationResult: "ok",
+        simulatedAt,
+        handle: handleArg,
+        txType: "btc-lifi" as const,
+        toChain: btcLifiTx.toChain,
+        toToken: btcLifiTx.toToken,
+        toAddress: btcLifiTx.toAddress,
+        envelopeShape: "lifi-psbt-bridge",
+        sessionTopicLast8: null,
+      },
+    };
+  }
+
+  // ---- Pairing check (BTC — persistent non-EVM account store) ---------------
+  const accounts = listAccounts({ chainFilter: "bitcoin" });
+  if (accounts.length === 0) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text:
+            "error: no paired BTC account. Call `pair_btc_ledger` first to pair your Bitcoin Ledger account, then retry.",
+        },
+      ],
+      structuredContent: errEnvelope(
+        "WALLET_NOT_PAIRED",
+        "no paired BTC account; call pair_btc_ledger first",
+      ),
+    };
+  }
+  const account = accounts.find((a) => a.address.startsWith("bc1q")) ?? accounts[0]!;
+
+  // ---- Parse PSBT + build sign inputs for Ledger BTC app --------------------
+  // LiFi PSBT is verbatim — do NOT reconstruct. Parse for Ledger signing inputs.
+  let signInputs: BtcPsbtSignInput[];
+  let psbtBase64: string;
+  try {
+    const { Psbt: BtcPsbt } = await import("bitcoinjs-lib");
+    const psbtBytes = Buffer.from(btcLifiTx.psbtHex, "hex");
+    const psbt = BtcPsbt.fromBuffer(psbtBytes);
+    psbtBase64 = psbtBytes.toString("base64");
+
+    const placeholderPubkey = new Uint8Array(33);
+    const PLACEHOLDER_MASTER_FP = new Uint8Array(4);
+
+    signInputs = psbt.data.inputs.map((_, idx) => ({
+      index: idx,
+      scriptType: "p2wpkh" as const, // LiFi BTC bridge uses P2WPKH segwit inputs
+      bip32Path: account.derivationPath,
+      pubkey: placeholderPubkey,
+      masterFingerprint: PLACEHOLDER_MASTER_FP,
+    }));
+  } catch (err) {
+    const cause = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [{ type: "text", text: `error: LiFi PSBT parse failed: ${cause}` }],
+      structuredContent: errEnvelope("INTERNAL_ERROR", "LiFi PSBT parse failed", cause),
+    };
+  }
+
+  // ---- Sign via Ledger Bitcoin app (USB-HID) ---------------------------------
+  let rawTxHex: string;
+  try {
+    const result = await _btcLedgerTransport.signBtcPsbt(
+      psbtBase64,
+      signInputs,
+      [], // no known address derivations for LiFi bridge PSBT change output
+    );
+    rawTxHex = result.rawTxHex;
+  } catch (err) {
+    if (err instanceof LedgerBtcDeviceNotConnectedError) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${err.message}` }],
+        structuredContent: errEnvelope("LEDGER_NOT_CONNECTED", err.message),
+      };
+    }
+    if (err instanceof LedgerBtcAppNotOpenError) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${err.message}` }],
+        structuredContent: errEnvelope(
+          "BTC_APP_NOT_OPEN",
+          "Bitcoin app is not the active app on the Ledger. Open the Bitcoin app on the device and retry.",
+        ),
+      };
+    }
+    const cause = err instanceof Error ? err.message : String(err);
+    if (/reject/i.test(cause)) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: user rejected on Ledger device: ${cause}` }],
+        structuredContent: errEnvelope("LEDGER_REJECTED", "user rejected on Ledger device", cause),
+      };
+    }
+    return {
+      isError: true,
+      content: [{ type: "text", text: `error: BTC LiFi Ledger signing failed: ${cause}` }],
+      structuredContent: errEnvelope("INTERNAL_ERROR", "BTC LiFi Ledger signing failed", cause),
+    };
+  }
+
+  // ---- Broadcast via BTC Esplora POST /tx ------------------------------------
+  const broadcastResult = await esploraBroadcastTx(rawTxHex);
+  if (broadcastResult.kind !== "ok") {
+    const cause = "message" in broadcastResult ? broadcastResult.message : String(broadcastResult);
+    return {
+      isError: true,
+      content: [{ type: "text", text: `error: BTC LiFi broadcast failed: ${cause}` }],
+      structuredContent: errEnvelope("BROADCAST_FAILED", "BTC LiFi broadcast failed", cause),
+    };
+  }
+
+  // ---- Success — stamp handle, return txHash ----------------------------------
+  const txHash = broadcastResult.txid;
+  const trans = transitionToSent(handleArg, txHash);
+  if (!trans.ok) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `error: state transition failed after BTC LiFi broadcast: ${trans.errorCode}`,
+        },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        `state transition failed after BTC LiFi broadcast: ${trans.errorCode}`,
+      ),
+    };
+  }
+  const broadcastedAt = new Date().toISOString();
+  return {
+    content: [
+      {
+        type: "text",
+        text: `broadcast OK (BTC LiFi bridge)\n  txHash: ${txHash}\n  broadcastedAt: ${broadcastedAt}\n\nView on mempool.space: https://mempool.space/tx/${txHash}`,
+      },
+    ],
+    structuredContent: {
+      txHash,
+      broadcastedAt,
+      handle: handleArg,
+      txType: "btc-lifi" as const,
+      toChain: btcLifiTx.toChain,
+      toToken: btcLifiTx.toToken,
+      toAddress: btcLifiTx.toAddress,
+      vaultAddress: btcLifiTx.vaultAddress,
+      // Phase 26 — BTC LiFi uses Esplora direct broadcast (no WC relay).
       sessionTopicLast8: null,
     },
   };

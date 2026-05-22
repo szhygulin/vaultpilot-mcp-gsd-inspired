@@ -48,7 +48,7 @@
 // `src/signing/blocks.ts` (Plan 04-05) — NOT inlined here. Format-fanout-
 // sentinel: one helper, one home.
 
-import { erc20Abi, type Address, type Hex } from "viem";
+import { erc20Abi, toBytes, type Address, type Hex } from "viem";
 import { estimateFeesPerGas, estimateGas, getTransactionCount } from "viem/actions";
 import { Message, Transaction } from "@solana/web3.js";
 import { Psbt as BtcPsbt, Transaction as BtcTransaction } from "bitcoinjs-lib";
@@ -102,9 +102,11 @@ import "../chains/bitcoin/types.js"; // ensure initEccLib(tinySecp256k1) fires
 import "../chains/litecoin/types.js"; // ensure initEccLib fires for LTC address derivation
 import {
   COSIGNER_STATUS_ROW_TEMPLATE,
+  LEDGER_BLIND_SIGN_HASH_BTC_LIFI_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_BTC_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_LTC_NATIVE_TEMPLATE,
   INPUT_SIGHASH_ROW_BTC_TEMPLATE,
+  PREPARE_RECEIPT_BTC_LIFI_TEMPLATE,
   PREPARE_RECEIPT_BTC_MULTISIG_TEMPLATE,
   PREPARE_RECEIPT_BTC_NATIVE_TEMPLATE,
   PREPARE_RECEIPT_BTC_RBF_TEMPLATE,
@@ -113,6 +115,7 @@ import {
   OUTPUT_ROW_BTC_TEMPLATE,
 } from "../signing/blocks-btc.js";
 import { _btcFingerprint } from "../signing/btc-fingerprint.js";
+import { _btcLifiFingerprint } from "../signing/btc-lifi-fingerprint.js";
 import { _ltcFingerprint } from "../signing/ltc-fingerprint.js";
 import { _btcSighash } from "../signing/btc-sighash.js";
 import {
@@ -155,6 +158,7 @@ import {
   transitionToPreviewed,
   type HandleRecord,
   type PreparedTxBtc,
+  type PreparedTxBtcLifi,
   type PreparedTxLtc,
   type PreparedTxSolana,
   type PreparedTxTron,
@@ -255,6 +259,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     }
     if (txType === "litecoin") {
       return await previewSendLtcBranch(record as HandleRecord & { tx: PreparedTxLtc });
+    }
+    if (txType === "btc-lifi") {
+      return await previewSendBtcLifiBranch(record as HandleRecord & { tx: PreparedTxBtcLifi });
     }
 
     // Phase 9 — Plan 09-04. Layer 0.5 outer dispatch-target allowlist
@@ -2433,6 +2440,138 @@ async function previewSendLtcBranch(
       inputCount: ltcTx.inputs.length,
       outputCount: ltcTx.outputs.length,
       // Phase 26 — LTC uses USB-HID Ledger + Esplora direct broadcast (no WC relay).
+      sessionTopicLast8: null,
+    },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 26 Plan 26-03 — BTC LiFi bridge preview branch (BTC-LIFI-01).
+//
+// BTC→EVM/SOL LiFi bridge swap — whole-PSBT fingerprint recompute.
+// The PSBT is LiFi-constructed; VaultPilot commits to the whole PSBT bytes
+// (keccak256("VaultPilot-btclifi-v1:" ‖ psbtBytes)).
+//
+// STRUCTURAL DIVERGENCE from previewSendBtcBranch:
+//   - No per-input sighash recompute — psbtBytes is the canonical artifact.
+//   - LEDGER_BLIND_SIGN_HASH_BTC_LIFI_TEMPLATE renders the PSBT fingerprint
+//     (one hash, not N per-input rows).
+//   - PREPARE_RECEIPT_BTC_LIFI_TEMPLATE is already stored in the handle —
+//     re-render from the PreparedTxBtcLifi fields.
+//
+// presignHash = payloadFingerprint (same as BTC/LTC — the PSBT is the tx).
+// chain: "bitcoin" (LiFi BTC bridge originates from Bitcoin).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * preview_send branch for BTC LiFi bridge swap handles (txType="btc-lifi").
+ * Dispatched by the main handler after the three standard gates pass.
+ *
+ * Phase 26 Plan 26-03 (BTC-LIFI-01).
+ */
+async function previewSendBtcLifiBranch(
+  record: HandleRecord & { tx: PreparedTxBtcLifi },
+): Promise<{
+  isError?: boolean;
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent?: Record<string, unknown>;
+}> {
+  const btcLifiTx = record.tx;
+
+  // ---- Layer 1: fingerprint recompute from CANONICAL ARTIFACT ----
+  // Whole-PSBT bytes — DO NOT re-parse the PSBT. psbtHex is verbatim from LiFi.
+  // (PSBT output order is load-bearing for Chainflip bridge — RESEARCH Pitfall 6.)
+  const psbtBytes = toBytes(btcLifiTx.psbtHex as `0x${string}`);
+  const recomputed = _btcLifiFingerprint.computeBtcLifiPayloadFingerprint(psbtBytes);
+
+  if (recomputed !== record.payloadFingerprint) {
+    const message =
+      "error: payloadFingerprint drift detected between prepare and preview; abort and re-run prepare_btc_lifi_swap";
+    return {
+      isError: true,
+      content: [{ type: "text", text: message }],
+      structuredContent: errEnvelope(
+        "PAYLOAD_FINGERPRINT_DRIFT",
+        "payloadFingerprint drift (btc-lifi preview) — re-run prepare_btc_lifi_swap",
+      ),
+    };
+  }
+
+  // ---- Mint previewToken + pin via transitionToPreviewed ------------------
+  const previewToken = crypto.randomUUID();
+  // BTC LiFi has no separate presign hash — the payloadFingerprint IS the binding value.
+  const presignHash = record.payloadFingerprint;
+
+  const trans = transitionToPreviewed(record.handle, {
+    nonce: 0,
+    gas: 0n,
+    maxFeePerGas: 0n,
+    maxPriorityFeePerGas: 0n,
+    previewToken,
+    presignHash,
+    selector: null,
+  });
+  if (!trans.ok) {
+    const message = `error: handle state changed during btc-lifi preview (${trans.errorCode})`;
+    return {
+      isError: true,
+      content: [{ type: "text", text: message }],
+      structuredContent: errEnvelope(trans.errorCode, `handle transition failed: ${trans.errorCode}`),
+    };
+  }
+
+  // ---- Render PREPARE RECEIPT (BTC LiFi) from stored PreparedTxBtcLifi fields --
+  const psbtHexPreview = btcLifiTx.psbtHex.length > 80
+    ? `${btcLifiTx.psbtHex.slice(0, 80)}...[full PSBT]`
+    : btcLifiTx.psbtHex;
+
+  const prepareReceiptBlock = PREPARE_RECEIPT_BTC_LIFI_TEMPLATE
+    .replace("{FROM_TOKEN}", "BTC")
+    .replace("{TO_CHAIN}", btcLifiTx.toChain)
+    .replace("{TO_TOKEN}", btcLifiTx.toToken)
+    .replace("{AMOUNT}", record.args.valueWei) // satoshi amount stored in valueWei PrepareArgs field
+    .replace("{TO_ADDRESS}", btcLifiTx.toAddress)
+    .replace("{VAULT_ADDRESS}", btcLifiTx.vaultAddress)
+    .replace("{AMOUNT_SATS}", btcLifiTx.amountSats.toString())
+    .replace("{OUTPUT_COUNT}", String(btcLifiTx.outputCount))
+    .replace("{HAS_OP_RETURN}", String(btcLifiTx.hasOpReturn))
+    .replace("{DECODED_RECIPIENT}", btcLifiTx.toAddress)
+    .replace("{PSBT_HEX_PREVIEW}", psbtHexPreview);
+
+  // ---- Render LEDGER BLIND-SIGN HASH (BTC LiFi) — single whole-PSBT hash ----
+  const blindSignHashBlock = LEDGER_BLIND_SIGN_HASH_BTC_LIFI_TEMPLATE
+    .replace("{PSBT_FINGERPRINT}", record.payloadFingerprint)
+    .replace("{PSBT_HEX_PREVIEW}", psbtHexPreview)
+    .replace("{OUTPUT_COUNT}", String(btcLifiTx.outputCount));
+
+  // ---- Assemble response text ---------------------------------------------
+  const nextStepLine = `Next step: send_transaction({ handle: "${record.handle}", previewToken: "${previewToken}", userDecision: "send" })`;
+
+  const text = [
+    prepareReceiptBlock,
+    "",
+    blindSignHashBlock,
+    "",
+    nextStepLine,
+  ].join("\n");
+
+  return {
+    content: [{ type: "text", text }],
+    structuredContent: {
+      handle: record.handle,
+      chain: "bitcoin",
+      txType: "btc-lifi" as const,
+      previewToken,
+      presignHash,
+      payloadFingerprint: record.payloadFingerprint,
+      vaultAddress: btcLifiTx.vaultAddress,
+      amountSats: btcLifiTx.amountSats.toString(),
+      toAddress: btcLifiTx.toAddress,
+      toChain: btcLifiTx.toChain,
+      toToken: btcLifiTx.toToken,
+      outputCount: btcLifiTx.outputCount,
+      hasOpReturn: btcLifiTx.hasOpReturn,
+      // Phase 26 — BTC LiFi uses USB-HID Ledger BTC app + Esplora broadcast (no WC relay).
       sessionTopicLast8: null,
     },
   };

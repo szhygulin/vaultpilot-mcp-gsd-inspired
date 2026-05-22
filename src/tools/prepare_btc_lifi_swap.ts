@@ -304,6 +304,8 @@ registerTool("prepare_btc_lifi_swap", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     toAddress: decodedFinalRecipient,
     toChain: params.toChain,
     toToken: params.toToken,
+    outputCount: psbtSummary.outputCount,
+    hasOpReturn: psbtSummary.hasOpReturn,
     payloadFingerprint,
   };
 

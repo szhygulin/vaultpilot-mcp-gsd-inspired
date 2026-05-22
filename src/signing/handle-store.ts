@@ -913,6 +913,12 @@ export interface PreparedTxBtcLifi {
   /** Target token address or symbol (e.g. "WETH" or "0xC02aa..."). Display-only. */
   toToken: string;
 
+  /** Total PSBT output count (deposit + OP_RETURN + change). Display-only. */
+  outputCount: number;
+
+  /** Whether the PSBT has an OP_RETURN tracking memo output. Display-only. */
+  hasOpReturn: boolean;
+
   /**
    * payloadFingerprint = keccak256("VaultPilot-btclifi-v1:" ‖ psbtBytes).
    * Stored here AND in the HandleRecord.payloadFingerprint field.
