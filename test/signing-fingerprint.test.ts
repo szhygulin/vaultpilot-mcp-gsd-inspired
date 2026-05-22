@@ -13,6 +13,11 @@ import {
   _btcFingerprint,
   computeBtcPayloadFingerprint,
 } from "../src/signing/btc-fingerprint.js";
+import {
+  FINGERPRINT_DOMAIN_TAG_LTC,
+  _ltcFingerprint,
+  computeLtcPayloadFingerprint,
+} from "../src/signing/ltc-fingerprint.js";
 import { computeAllSighashes } from "../src/signing/btc-sighash.js";
 import { MAX_UINT256 } from "../src/protocols/erc20.js";
 import {
@@ -734,6 +739,156 @@ describe("computeBtcPayloadFingerprint — BTC-PREP-01 + D-05", () => {
     // breaks THIS assertion.
     expect(fp).toBe(
       "0xced8fc41b79311a8f7130aac2a45e382d4a0a6591731f706a96726d7b3cf5414",
+    );
+  });
+});
+
+// ============================================================================
+// Phase 26 — Plan 26-02. Fixture Y pins the payloadFingerprint for the
+// canonical LTC native segwit send, single-input single-output shape.
+// Domain tag: "VaultPilot-ltctx-v1:" (DISTINCT from BTC's "VaultPilot-btctx-v1:").
+//
+// Cross-link: consumed by test/prepare-litecoin-native-send.test.ts (Plan 26-02)
+// as the Fixture Y re-anchor — drift fails at BOTH this file AND the consumer test.
+//
+// Fixture Y also proves cross-chain distinctness: same sighash fed to BOTH
+// computeLtcPayloadFingerprint and computeBtcPayloadFingerprint produces
+// DIFFERENT values — the domain tag is the anti-collision mechanism (T-26-05).
+//
+// Computation script (recorded for reproducibility):
+//   node --input-type=module << 'EOF'
+//     import { keccak256, concat, toBytes } from "viem";
+//     import { Transaction, payments, initEccLib } from "bitcoinjs-lib";
+//     import * as tinySecp256k1 from "tiny-secp256k1";
+//     initEccLib(tinySecp256k1);
+//     const LTC_NETWORK = { messagePrefix: "\x19Litecoin Signed Message:\n",
+//       bech32: "ltc", bip32: { public: 0x019da462, private: 0x019d9cfe },
+//       pubKeyHash: 0x30, scriptHash: 0x32, wif: 0xb0 };
+//     const pubkey = Buffer.from("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798", "hex");
+//     const ltcScript = payments.p2wpkh({ pubkey, network: LTC_NETWORK }).output;
+//     const tx = new Transaction();
+//     tx.addInput(Buffer.alloc(32, 0xbb), 0, 0xfffffffe);
+//     tx.addOutput(ltcScript, BigInt(900_000));
+//     const sighash = tx.hashForWitnessV0(0, Buffer.from(ltcScript), BigInt(1_000_000), 0x01);
+//     const preimage = concat([toBytes("VaultPilot-ltctx-v1:"), new Uint8Array(sighash)]);
+//     console.log(keccak256(preimage));
+//   EOF
+// => 0x105386cbe7bf6195eb74acd493e3b24213342c679f3e1bb3a6fb54d88073eff4
+// ============================================================================
+
+// LTC network object (mirrors src/chains/litecoin/types.ts — for self-contained fixture).
+const LTC_NETWORK_FIXTURE = {
+  messagePrefix: "\x19Litecoin Signed Message:\n",
+  bech32: "ltc",
+  bip32: { public: 0x019da462, private: 0x019d9cfe },
+  pubKeyHash: 0x30,
+  scriptHash: 0x32,
+  wif: 0xb0,
+};
+
+// Stable pubkey for LTC fixture computation — same generator point G as BTC fixtures.
+const LTC_FIXTURE_PUBKEY = Buffer.from(
+  "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+  "hex",
+);
+const LTC_FIXTURE_SEGWIT_SCRIPT = payments.p2wpkh({
+  pubkey: LTC_FIXTURE_PUBKEY,
+  network: LTC_NETWORK_FIXTURE,
+}).output as Uint8Array;
+
+describe("computeLtcPayloadFingerprint — LTC-W-01 + T-26-05", () => {
+  // --------------------------------------------------------------------------
+  // Domain-tag byte-length invariant — matches BTC length but with distinct
+  // string content so the keccak preimage is byte-distinct.
+  // --------------------------------------------------------------------------
+  it("domain-tag length invariant: 20 UTF-8 bytes (same length as BTC but distinct string)", () => {
+    expect(FINGERPRINT_DOMAIN_TAG_LTC.length).toBe(20);
+    expect(Buffer.byteLength(FINGERPRINT_DOMAIN_TAG_LTC, "utf8")).toBe(20);
+    // Exact string anchor — drift in the tag string is a wire-shape break.
+    expect(FINGERPRINT_DOMAIN_TAG_LTC).toBe("VaultPilot-ltctx-v1:");
+    // Distinct from BTC tag — cross-chain collision impossible.
+    expect(FINGERPRINT_DOMAIN_TAG_LTC).not.toBe(FINGERPRINT_DOMAIN_TAG_BTC);
+  });
+
+  // --------------------------------------------------------------------------
+  // Fixture Y — LTC native segwit send, single-input P2WPKH.
+  //
+  // Input:  P2WPKH UTXO at txid=bb*32, vout=0; value=1_000_000 litoshis.
+  // Output: P2WPKH recipient (ltc1q...); value=900_000 litoshis (100_000 fee).
+  // Sighash: hashForWitnessV0(0, ltcSegwitScript, 1_000_000, SIGHASH_ALL).
+  // Fingerprint: keccak256("VaultPilot-ltctx-v1:" ‖ sighash₀).
+  //
+  // Hardcoded 0x… literal computed once at write-time (see computation script
+  // above); pinned forever. Drift in the LTC fingerprint preimage assembly
+  // (wrong domain tag / wrong sighash / wrong encoding) breaks THIS assertion.
+  //
+  // Cross-distinctness assertion: same sighash fed to computeBtcPayloadFingerprint
+  // produces a DIFFERENT value — proves the domain-tag cross-chain protection
+  // (T-26-05 mitigation). Fixture Y is the LTC anchor; Fixture O is the BTC
+  // equivalent for a different txid (aa*32 vs bb*32) but the distinctness
+  // assertion here uses the SAME sighash — proves the domain tag ALONE is the
+  // differentiator.
+  //
+  // Cross-link: re-anchored in test/prepare-litecoin-native-send.test.ts (Plan
+  // 26-02 Fixture Y re-anchor — drift fails at BOTH this file AND the consumer).
+  // --------------------------------------------------------------------------
+  it("Fixture Y — LTC native segwit send, single-input P2WPKH → 0x105386... byte-for-byte", () => {
+    const txidBuf = Buffer.alloc(32, 0xbb);
+    const valueSats = BigInt(1_000_000);
+
+    const tx = new Transaction();
+    tx.addInput(txidBuf, 0, 0xfffffffe); // RBF-disabled sequence
+    tx.addOutput(LTC_FIXTURE_SEGWIT_SCRIPT, BigInt(900_000));
+
+    const sighashes = computeAllSighashes(tx, [
+      {
+        scriptType: "p2wpkh",
+        prevOutScript: LTC_FIXTURE_SEGWIT_SCRIPT,
+        valueSats,
+      },
+    ]);
+    const fp = computeLtcPayloadFingerprint(sighashes);
+
+    // Hardcoded literal anchor (Plan 26-02 — execute-time computation pinned
+    // forever). Drift in the LTC domain tag OR sighash assembly breaks THIS
+    // exact assertion.
+    expect(fp).toBe(
+      "0x105386cbe7bf6195eb74acd493e3b24213342c679f3e1bb3a6fb54d88073eff4",
+    );
+
+    // T-26-05 cross-chain distinctness: same sighash, different domain tag →
+    // different fingerprint. This assertion fails if the LTC module accidentally
+    // reuses the BTC domain tag.
+    const btcFp = computeBtcPayloadFingerprint(sighashes);
+    expect(fp).not.toBe(btcFp);
+  });
+
+  // --------------------------------------------------------------------------
+  // Input guard: empty array → throws "LTC payloadFingerprint requires at least one input sighash".
+  // --------------------------------------------------------------------------
+  it("empty sighash array → throws with exact message", () => {
+    expect(() => computeLtcPayloadFingerprint([])).toThrowError(
+      "LTC payloadFingerprint requires at least one input sighash",
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // Input guard: sighash not exactly 32 bytes → throws naming the actual length.
+  // --------------------------------------------------------------------------
+  it("sighash of wrong length (e.g. 31 bytes) → throws naming the actual byte length", () => {
+    const badSh = new Uint8Array(31).fill(0xab);
+    expect(() => computeLtcPayloadFingerprint([badSh])).toThrowError(
+      "per-input sighash must be 32 bytes, got 31",
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // ESM spy-affordance: _ltcFingerprint object exposes computeLtcPayloadFingerprint.
+  // --------------------------------------------------------------------------
+  it("_ltcFingerprint spy-affordance exports computeLtcPayloadFingerprint", () => {
+    expect(typeof _ltcFingerprint.computeLtcPayloadFingerprint).toBe("function");
+    expect(_ltcFingerprint.computeLtcPayloadFingerprint).toBe(
+      computeLtcPayloadFingerprint,
     );
   });
 });

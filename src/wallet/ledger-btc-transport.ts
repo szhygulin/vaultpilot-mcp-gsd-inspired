@@ -939,11 +939,67 @@ export async function fetchLtcAddresses(
   }
 }
 
+// ─── Phase 26 Plan 26-02 — LTC BIP-137 message signing ───────────────────────
+//
+// APPEND-ONLY. Zero modifications to existing BTC or Plan 26-01 code above.
+//
+// `signLtcMessage` mirrors `signBtcMessage` exactly — the ONLY difference is
+// `buildLtcApp` instead of `buildBtcApp` and `LedgerLtcAppNotOpenError` instead
+// of `LedgerBtcAppNotOpenError`. The Ledger LTC app (a fork of the BTC app)
+// applies the "Litecoin Signed Message:\n" magic prefix internally — do NOT
+// pre-apply it (same Pitfall 3 as BTC).
+
 /**
- * ESM spy-affordance for the LTC address-probe path. `pair_litecoin_ledger`
- * calls `_ltcLedgerTransport.fetchLtcAddresses` rather than the raw named
- * export so `vi.spyOn(_ltcLedgerTransport, "fetchLtcAddresses")` intercepts
- * across the ESM module boundary.
+ * Sign a raw message hex with the Ledger Litecoin app (BIP-137 variant).
+ *
+ * Mirrors `signBtcMessage` but opens the LTC app via `buildLtcApp`.
+ * The LTC app applies the "Litecoin Signed Message:\n" magic prefix internally —
+ * pass ONLY the raw message bytes (hex-encoded).
+ *
+ * Returns `{ v, r, s }` where `v` is the raw recovery_id (0 or 1).
+ *
+ * @param path       — BIP-32 derivation path (e.g. `"84'/2'/0'/0/0"`).
+ * @param messageHex — raw message bytes, hex-encoded (NOT magic-prefixed).
+ */
+export async function signLtcMessage(
+  path: string,
+  messageHex: string,
+): Promise<{ v: number; r: string; s: string }> {
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildLtcApp(transport);
+
+    // Guard: Litecoin app must be open.
+    try {
+      await app.getAppConfiguration();
+    } catch {
+      throw new LedgerLtcAppNotOpenError();
+    }
+
+    // Positional-arg call — same interface as signBtcMessage (LTC app is a fork
+    // of BTC app; APDU table is compatible). The LTC app applies the magic prefix
+    // internally (Pitfall 3 mirror for LTC).
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+    const result = await app.signMessage(path, messageHex);
+    return result as { v: number; r: string; s: string };
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log(
+        "warn",
+        `transport.close() failed during signLtcMessage cleanup: ${message}`,
+      );
+    }
+  }
+}
+
+/**
+ * ESM spy-affordance for the LTC address-probe path AND message-signing path.
+ * `pair_litecoin_ledger` calls `_ltcLedgerTransport.fetchLtcAddresses` and
+ * `sign_message_ltc` calls `_ltcLedgerTransport.signLtcMessage` so
+ * `vi.spyOn(_ltcLedgerTransport, "…")` intercepts across the ESM module boundary.
  */
 export const _ltcLedgerTransport = {
   fetchLtcAddresses: (
@@ -954,4 +1010,10 @@ export const _ltcLedgerTransport = {
     segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string };
     appVersion: string;
   }> => fetchLtcAddresses(legacyPath, segwitPath),
+
+  signLtcMessage: (
+    path: string,
+    messageHex: string,
+  ): Promise<{ v: number; r: string; s: string }> =>
+    signLtcMessage(path, messageHex),
 };

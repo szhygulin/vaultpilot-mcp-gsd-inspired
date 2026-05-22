@@ -265,3 +265,110 @@ export const VERIFY_ON_DEVICE_MULTISIG_TEMPLATE: string = [
   "If these addresses match your co-signers' view, registration is correct.",
   "If any address differs — STOP. Do not use this wallet for signing.",
 ].join("\n");
+
+// ─── Phase 26 Plan 26-02 — LTC native send + message signing templates ────────
+//
+// APPEND-ONLY. Zero modifications to existing BTC or Phase 25 templates above.
+//
+// LTC structural note:
+//   - `PREPARE_RECEIPT_LTC_NATIVE_TEMPLATE` mirrors PREPARE_RECEIPT_BTC_NATIVE_TEMPLATE
+//     exactly with "Litecoin mainnet" and "litoshis" substituted.
+//   - `LEDGER_BLIND_SIGN_HASH_MSG_LTC_TEMPLATE` mirrors
+//     LEDGER_BLIND_SIGN_HASH_MSG_BTC_TEMPLATE with "LTC" and LTC magic bytes.
+//   - `LEDGER_BLIND_SIGN_HASH_LTC_NATIVE_TEMPLATE` mirrors
+//     LEDGER_BLIND_SIGN_HASH_BTC_TEMPLATE for PSBT (N per-input sighashes).
+//
+// Cross-chain disambiguation:
+//   - "VaultPilot-ltctx-v1:" domain tag (ltc-fingerprint.ts) distinguishes LTC
+//     PSBT fingerprints from BTC at the keccak preimage level (T-26-05).
+//   - "Litecoin Signed Message:\n" magic prefix (25 bytes, varint 0x19) distinguishes
+//     LTC message hashes from BTC (24 bytes, varint 0x18) at the SHA-256 preimage level.
+
+/**
+ * PREPARE RECEIPT — LTC native send (PSBT-based, verbatim agent args,
+ * NO normalization). Substituted by `prepare_litecoin_native_send.ts`
+ * (Plan 26-02 LTC-W-01).
+ * Slots:
+ *   - `{TO}`         — recipient ltc1q segwit address (raw agent string).
+ *   - `{LITOSHIS}`   — raw litoshi decimal string (raw agent string).
+ *   - `{FEE_SATS}`   — computed miner fee in litoshis (decimal string,
+ *                      server-derived via coin-selection + fee-rate).
+ *   - `{FEE_RATE}`   — fee rate in sat/vB (decimal string; either the
+ *                      agent-supplied feeRate or the D-03 default estimate).
+ *   - `{INPUT_ROWS}` — expanded inline: one line per selected UTXO.
+ *   - `{OUTPUT_ROWS}` — expanded inline: one line per PSBT output.
+ *
+ * PREP-02 invariant: the receipt surfaces what the agent claimed plus
+ * the server-derived coin-selection summary. The cryptographic anchor
+ * (payloadFingerprint = keccak256 over per-input sighashes with LTC domain tag)
+ * catches drift.
+ */
+export const PREPARE_RECEIPT_LTC_NATIVE_TEMPLATE: string = [
+  "PREPARE RECEIPT (LTC — native send)",
+  "  chain:      Litecoin mainnet",
+  "  to:         {TO}",
+  "  litoshis:   {LITOSHIS}",
+  "  feeSats:    {FEE_SATS}",
+  "  feeRate:    {FEE_RATE} sat/vB",
+  "  inputs:",
+  "{INPUT_ROWS}",
+  "  outputs:",
+  "{OUTPUT_ROWS}",
+].join("\n");
+
+/**
+ * LEDGER BLIND-SIGN HASH (LTC — message signing) — device-display hash surface
+ * emitted by `sign_message_ltc` (Plan 26-02 LTC-W-02). Two slots:
+ *   - `{MESSAGE_TEXT}` — the raw message the agent passed in (verbatim).
+ *   - `{MESSAGE_HASH}` — the server-computed LTC BIP-137 double-SHA256 message
+ *                       hash (0x-prefixed hex of double-SHA256(varint(25) ‖
+ *                       "Litecoin Signed Message:\n" ‖ varint(len) ‖ message)).
+ *                       This is what the device signs.
+ *
+ * Fixture Z anchor: computeLtcBip137MessageHash("Hello VaultPilot")
+ * === "0xa36092f90d13deb6c7c45317bfdefd101325fc919e40d46cf0532f7e99e4b676"
+ * (pinned in test/signing-bip137-ltc.test.ts).
+ *
+ * Security: the LTC Ledger app applies the "Litecoin Signed Message:\n" magic
+ * prefix internally — the message text shown on-device is the literal message,
+ * not a binary hash. The 0x19 varint prefix (25 bytes, vs BTC's 0x18/24 bytes)
+ * makes LTC BIP-137 signatures cross-chain distinct from BTC signatures
+ * (T-26-05 signing variant).
+ */
+export const LEDGER_BLIND_SIGN_HASH_MSG_LTC_TEMPLATE: string = [
+  "LEDGER BLIND-SIGN HASH (LTC — message signing)",
+  "  Message:      {MESSAGE_TEXT}",
+  "  BIP-137 hash: {MESSAGE_HASH}",
+  "  (double-SHA256 of ltc_magic_prefix ‖ varint_len ‖ message)",
+  "",
+  "  Your Ledger LTC app displays the message text above on-device.",
+  "  Compare the displayed message character-for-character against the agent's claim.",
+  "  If they match → approve. If they differ → REJECT.",
+].join("\n");
+
+/**
+ * LEDGER BLIND-SIGN HASH (LTC — native PSBT send) — device-display hash surface
+ * emitted by `preview_send` for LTC `txType: "litecoin"` handles (Plan 26-02).
+ * Mirrors `LEDGER_BLIND_SIGN_HASH_BTC_TEMPLATE` with "LTC" substituted.
+ * Slots:
+ *   - `{INPUT_COUNT}` — number of inputs (decimal string).
+ *   - `{FEE_SATS}`    — miner fee in litoshis (decimal string).
+ *   - `{INPUT_SIGHASH_ROWS}` — expanded: one INPUT_SIGHASH_ROW_BTC_TEMPLATE line
+ *                             per input (reuses the BTC per-input row template —
+ *                             BIP-143 sighash format is identical for LTC).
+ */
+export const LEDGER_BLIND_SIGN_HASH_LTC_NATIVE_TEMPLATE: string = [
+  "LEDGER BLIND-SIGN HASH (LTC)",
+  "  Inputs: {INPUT_COUNT}  Fee: {FEE_SATS} litoshis",
+  "  Per-input BIP-143 sighashes (one per UTXO being spent):",
+  "{INPUT_SIGHASH_ROWS}",
+  "",
+  "  The Ledger LTC app (Litecoin app, BIP-84 segwit, ltc1q…) displays",
+  "  the decoded INPUTS / OUTPUTS / FEE summary on-device and requests",
+  "  per-input approval. Compare the on-device amounts character-for-character",
+  "  against the PREPARE RECEIPT above.",
+  "",
+  "  After you say \"send\", your Ledger device will display the transaction",
+  "  summary (inputs, outputs, fee). Compare character-for-character.",
+  "  If they match → approve on the device. If they differ → REJECT (tamper signal).",
+].join("\n");

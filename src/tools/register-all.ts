@@ -43,6 +43,7 @@ import "./prepare_solana_spl_send.js"; // Phase 12 Plan 12-03 (SOL-W-02) — Sol
 import "./prepare_btc_send.js"; // Phase 23 Plan 23-03 (BTC-PSBT-01) — BTC native segwit+taproot PSBT send
 import "./prepare_btc_rbf_bump.js"; // Phase 24 Plan 24-01 (BTC-W-02) — BIP-125 RBF fee bump
 import "./sign_message_btc.js"; // Phase 24 Plan 24-02 (BTC-W-03) — BIP-137 compact message signing
+import "./sign_message_ltc.js"; // Phase 26 Plan 26-02 (LTC-W-02) — BIP-137 compact message signing (LTC magic bytes)
 // Phase 25 Plan 25-01 — BTC multisig registry + read tools (BTC-PSBT-03/04)
 import "./register_btc_multisig_wallet.js"; // Phase 25 Plan 25-01 (BTC-PSBT-03) — multisig wallet registration
 import "./get_btc_multisig_balance.js"; // Phase 25 Plan 25-01 (BTC-PSBT-04) — aggregate balance via Esplora gap-limit scan
