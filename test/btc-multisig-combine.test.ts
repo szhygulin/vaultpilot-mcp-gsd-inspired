@@ -118,6 +118,21 @@ describe("combineBtcPsbts — error on bad input", () => {
     const result = combineBtcPsbts([validPsbt, "garbage"]);
     expect(result.kind).toBe("error");
   });
+
+  it("returns { kind: 'error' } when called with 0 PSBTs (IN-01 self-guard)", () => {
+    const result = combineBtcPsbts([]);
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect(result.message).toMatch(/at least 2/i);
+  });
+
+  it("returns { kind: 'error' } when called with exactly 1 PSBT (IN-01 self-guard)", () => {
+    const validPsbt = buildBaseMultisigPsbt().toBase64();
+    const result = combineBtcPsbts([validPsbt]);
+    expect(result.kind).toBe("error");
+    if (result.kind !== "error") return;
+    expect(result.message).toMatch(/at least 2/i);
+  });
 });
 
 describe("combineBtcPsbts — conflict detection (load-bearing security test)", () => {

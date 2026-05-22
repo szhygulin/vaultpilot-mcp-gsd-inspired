@@ -500,6 +500,10 @@ export function decodeBtcPsbt(psbtBase64: string): BtcPsbtDecoded {
  * Threshold enforcement belongs to finalizeBtcPsbt (Plan 25-03).
  */
 export function combineBtcPsbts(psbtBase64s: readonly string[]): BtcCombineResult {
+  if (psbtBase64s.length < 2) {
+    return { kind: "error", message: "combineBtcPsbts requires at least 2 PSBTs" };
+  }
+
   // ── Step 1: Parse all PSBTs ───────────────────────────────────────────────
   const psbts: Psbt[] = [];
   for (const b64 of psbtBase64s) {
