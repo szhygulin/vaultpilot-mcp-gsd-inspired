@@ -2104,14 +2104,16 @@ async function previewSendBtcBranch(
   const recomputed = _btcFingerprint.computeBtcPayloadFingerprint(perInputSighashes);
 
   if (recomputed !== record.payloadFingerprint) {
+    // WR-03: branch on handle kind so the error message names the correct prepare tool.
+    const rerunTool = btcTx.kind === "rbf" ? "prepare_btc_rbf_bump" : "prepare_btc_send";
     const message =
-      "error: payloadFingerprint drift detected between prepare and preview; abort and re-run prepare_btc_send";
+      `error: payloadFingerprint drift detected between prepare and preview; abort and re-run ${rerunTool}`;
     return {
       isError: true,
       content: [{ type: "text", text: message }],
       structuredContent: errEnvelope(
         "PAYLOAD_FINGERPRINT_DRIFT",
-        "payloadFingerprint drift (BTC preview) — re-run prepare_btc_send",
+        `payloadFingerprint drift (BTC preview) — re-run ${rerunTool}`,
       ),
     };
   }
