@@ -127,7 +127,30 @@ export type ErrorCode =
   | "RATE_LIMIT_EXCEEDED"
   | "SIMULATION_REFUSED"
   | "LEDGER_NOT_CONNECTED"
-  | "SOLANA_APP_NOT_OPEN";
+  | "SOLANA_APP_NOT_OPEN"
+  //
+  // Phase 23 Plan 23-03 — BTC-specific error codes (additive; do NOT
+  // renumber or remove any existing code above).
+  //
+  //   BTC_DUST_OUTPUT           — Recipient output is below the BIP-141 dust
+  //                               threshold (~330 sats segwit, ~546 sats legacy).
+  //                               Refused at prepare time (D-07). Note: below-dust
+  //                               CHANGE is folded into the fee (not refused) —
+  //                               this code is RECIPIENT-only.
+  //   BTC_FEE_RATE_OUT_OF_BOUNDS — feeRate < 1 sat/vB or > 10× current high-priority
+  //                               estimate. Decimal-place-mistake defense (D-03).
+  //   BTC_NO_UTXOS_AVAILABLE    — The paired BTC account has no spendable UTXOs,
+  //                               or the UTXO set is insufficient for the requested
+  //                               amount + fee. Recovery: check on-chain balance.
+  //   BTC_MIXED_INPUT_SIGN_FAILURE — The two-pass signPsbtBuffer + Psbt.combine
+  //                               flow (DF-3 workaround — Pattern 3) failed to
+  //                               combine the partial signatures. Surfaces in the
+  //                               Phase 23-04 send_transaction BTC branch. Not
+  //                               emitted by the Phase 23-03 prepare tool.
+  | "BTC_DUST_OUTPUT"
+  | "BTC_FEE_RATE_OUT_OF_BOUNDS"
+  | "BTC_NO_UTXOS_AVAILABLE"
+  | "BTC_MIXED_INPUT_SIGN_FAILURE";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

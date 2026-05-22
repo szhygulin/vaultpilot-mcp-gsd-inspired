@@ -472,4 +472,105 @@ describe("computeBtcPayloadFingerprint — BTC-PREP-01 + D-05", () => {
       computeBtcPayloadFingerprint,
     );
   });
+
+  // --------------------------------------------------------------------------
+  // Fixture P — BTC taproot single input.
+  //
+  // Input:  P2TR UTXO at txid=bb*32, vout=0; value=1_000_000 sats.
+  //         internalPubkey = x-coordinate of secp256k1 generator G
+  //         (BTC_FIXTURE_PUBKEY.slice(1) = 32 bytes of
+  //          "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798").
+  // Output: P2WPKH (BTC_FIXTURE_SEGWIT_SCRIPT); value=900_000 sats.
+  // Sighash: hashForWitnessV1(0, [p2trScript], [1_000_000n], SIGHASH_DEFAULT=0).
+  // Fingerprint: keccak256("VaultPilot-btctx-v1:" ‖ sighash₀).
+  //
+  // Hardcoded literal computed once at write-time (Plan 23-03 execute-time
+  // via `node --input-type=module` + compiled dist-tmp modules). Pinned
+  // forever — drift in the taproot sighash preimage assembly breaks THIS
+  // exact assertion at PR-review time.
+  //
+  // Cross-link: re-anchored in test/prepare-btc-send.test.ts (Plan 23-03
+  // Fixture P re-anchor — drift fails at BOTH files).
+  // --------------------------------------------------------------------------
+  it("Fixture P — BTC taproot single input → 0x01af3f... byte-for-byte", () => {
+    const valueSats = BigInt(1_000_000);
+    const taprootXOnly = BTC_FIXTURE_PUBKEY.slice(1); // 32 bytes, x-coord of G
+    const p2trScript = payments.p2tr({
+      internalPubkey: Buffer.from(taprootXOnly),
+      network: networks.bitcoin,
+    }).output as Uint8Array;
+
+    const tx = new Transaction();
+    tx.version = 2;
+    tx.addInput(Buffer.alloc(32, 0xbb), 0, 0xfffffffe);
+    tx.addOutput(BTC_FIXTURE_SEGWIT_SCRIPT, BigInt(900_000));
+
+    const sighashes = computeAllSighashes(tx, [
+      {
+        scriptType: "p2tr",
+        prevOutScript: p2trScript,
+        valueSats,
+      },
+    ]);
+    const fp = computeBtcPayloadFingerprint(sighashes);
+
+    // Hardcoded literal anchor (Plan 23-03 — execute-time computation pinned
+    // forever). Drift in the taproot sighash preimage breaks THIS assertion.
+    expect(fp).toBe(
+      "0x01af3f9105c829cd28773a11ac9e8a820aa124e538cd4230500ee95df96b2043",
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // Fixture Q — BTC mixed segwit+taproot, 2 inputs.
+  //
+  // Input 0: P2WPKH UTXO at txid=cc*32, vout=0; value=1_000_000 sats.
+  //           BTC_FIXTURE_SEGWIT_SCRIPT.
+  // Input 1: P2TR UTXO at txid=dd*32, vout=1; value=1_100_000 sats.
+  //           internalPubkey = BTC_FIXTURE_PUBKEY.slice(1).
+  // Output: P2WPKH (BTC_FIXTURE_SEGWIT_SCRIPT); value=1_900_000 sats.
+  // Sighash[0]: hashForWitnessV0(0, segwitScript, 1_000_000, SIGHASH_ALL=1).
+  // Sighash[1]: hashForWitnessV1(1, [segwitScript, p2trScript],
+  //              [1_000_000n, 1_100_000n], SIGHASH_DEFAULT=0).
+  // Fingerprint: keccak256("VaultPilot-btctx-v1:" ‖ sighash₀ ‖ sighash₁).
+  //
+  // Hardcoded literal computed once at write-time (Plan 23-03 execute-time).
+  // Cross-link: re-anchored in test/prepare-btc-send.test.ts (drift fails
+  // at BOTH files — load-bearing redundancy per CLAUDE.md fixture discipline).
+  // --------------------------------------------------------------------------
+  it("Fixture Q — BTC mixed segwit+taproot 2-input → 0xffa4a2... byte-for-byte", () => {
+    const valueSats0 = BigInt(1_000_000);
+    const valueSats1 = BigInt(1_100_000);
+    const taprootXOnly = BTC_FIXTURE_PUBKEY.slice(1); // 32 bytes, x-coord of G
+    const p2trScript = payments.p2tr({
+      internalPubkey: Buffer.from(taprootXOnly),
+      network: networks.bitcoin,
+    }).output as Uint8Array;
+
+    const tx = new Transaction();
+    tx.version = 2;
+    tx.addInput(Buffer.alloc(32, 0xcc), 0, 0xfffffffe);
+    tx.addInput(Buffer.alloc(32, 0xdd), 1, 0xfffffffe);
+    tx.addOutput(BTC_FIXTURE_SEGWIT_SCRIPT, BigInt(1_900_000));
+
+    const sighashes = computeAllSighashes(tx, [
+      {
+        scriptType: "p2wpkh",
+        prevOutScript: BTC_FIXTURE_SEGWIT_SCRIPT,
+        valueSats: valueSats0,
+      },
+      {
+        scriptType: "p2tr",
+        prevOutScript: p2trScript,
+        valueSats: valueSats1,
+      },
+    ]);
+    const fp = computeBtcPayloadFingerprint(sighashes);
+
+    // Hardcoded literal anchor (Plan 23-03 — execute-time computation pinned
+    // forever). Drift in the mixed-input sighash preimage breaks THIS assertion.
+    expect(fp).toBe(
+      "0xffa4a2f84cedaa3fc86432bb3b8b79422befb6e06699048e463a8d83f775d783",
+    );
+  });
 });
