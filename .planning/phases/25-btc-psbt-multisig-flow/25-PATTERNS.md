@@ -193,7 +193,9 @@ export type BtcFinalizeResult =
 ```typescript
 // Pre-scan BEFORE Psbt.combine — bip174 keyPusher silently drops duplicate keys.
 // Only call Psbt.combine after this returns no conflicts.
-export function combineBtcPsbts(psbtBase64s: readonly string[], threshold: number): BtcCombineResult {
+export function combineBtcPsbts(psbtBase64s: readonly string[]): BtcCombineResult {
+  // NOTE: combine merges co-signer signatures only — it has NO threshold concept.
+  // Threshold enforcement belongs to finalizeBtcPsbt.
   // 1. Parse all PSBTs (catch malformed input — return "error" kind)
   // 2. For each pair (i, j), for each input index, for each pubkey in BOTH:
   //    if sig bytes differ → push to conflicts[]
@@ -529,7 +531,7 @@ registerTool(
       // Validate each element is a non-empty string
       const psbtBase64s: string[] = ...;
       // Call _btcPsbt.combineBtcPsbts (spy-affordance — testable)
-      const result = _btcPsbt.combineBtcPsbts(psbtBase64s, /* threshold from args */);
+      const result = _btcPsbt.combineBtcPsbts(psbtBase64s);
       if (result.kind === "conflict") {
         return { isError: true, ..., structuredContent: errEnvelope("PSBT_COMBINE_CONFLICT", ...) };
       }

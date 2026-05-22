@@ -586,7 +586,9 @@ function extractXpubFromKeyExpr(keyExpr: string): {
 
 ---
 
-## Open Questions / Design Forks
+## Open Questions / Design Forks (RESOLVED)
+
+> All forks resolved at the planning gate — recommendations adopted into the Phase 25 plans.
 
 ### Fork 1: `register_btc_multisig_wallet` — Pure Descriptor String vs Wallet-Discovery File
 **Context:** CONTEXT.md §Claude's Discretion asks for a recommendation.
