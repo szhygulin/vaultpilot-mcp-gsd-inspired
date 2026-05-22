@@ -183,7 +183,41 @@ export type ErrorCode =
   | "BTC_NOT_RBF_SIGNALLED"
   | "BTC_RBF_INSUFFICIENT_FEE_RATE"
   | "BTC_RBF_NO_CHANGE_OUTPUT"
-  | "BTC_RBF_CANNOT_AFFORD";
+  | "BTC_RBF_CANNOT_AFFORD"
+  //
+  // Phase 25 Plan 25-01 — BTC multisig error codes (additive).
+  // APPEND-ONLY — do not reorder existing codes above.
+  //
+  //   PSBT_COMBINE_CONFLICT         — combine_btc_psbts detected same-key
+  //                                   same-input conflicting signatures in two
+  //                                   input PSBTs. Surfaces inputIndex +
+  //                                   pubkeyHex + both sig hexes. (Plan 25-02)
+  //   PSBT_THRESHOLD_NOT_MET        — finalize_btc_psbt refused: one or more
+  //                                   inputs have fewer than M partial
+  //                                   signatures. Lists under-threshold input
+  //                                   indices. (Plan 25-02)
+  //   MULTISIG_WALLET_NOT_FOUND     — get_btc_multisig_balance / _utxos /
+  //                                   sign_btc_multisig_psbt: walletName not
+  //                                   found in btc-multisig.json registry.
+  //   MULTISIG_WALLET_NOT_REGISTERED_ON_DEVICE — sign_btc_multisig_psbt:
+  //                                   walletHmac absent from registry record
+  //                                   (device was not connected at register
+  //                                   time). Recovery: re-run
+  //                                   register_btc_multisig_wallet with device
+  //                                   connected. (Plan 25-03)
+  //   LEDGER_BTC_APP_VERSION_TOO_OLD — registerWallet APDU rejected; BTC app
+  //                                   < v2.1. Recovery: update Ledger Live to
+  //                                   get BTC app 2.1+. (Plan 25-03)
+  //   MULTISIG_DESCRIPTOR_INVALID   — descriptor string did not match
+  //                                   wsh(sortedmulti(M, ...)) form, or M > N,
+  //                                   or M < 1, or key expression not using
+  //                                   /** suffix form.
+  | "PSBT_COMBINE_CONFLICT"
+  | "PSBT_THRESHOLD_NOT_MET"
+  | "MULTISIG_WALLET_NOT_FOUND"
+  | "MULTISIG_WALLET_NOT_REGISTERED_ON_DEVICE"
+  | "LEDGER_BTC_APP_VERSION_TOO_OLD"
+  | "MULTISIG_DESCRIPTOR_INVALID";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers
