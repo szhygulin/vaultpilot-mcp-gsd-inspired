@@ -1100,7 +1100,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 20. SunSwap + LiFi-routed TRON↔EVM bridging | v2.1 | 0/2 | Not started | - |
 | 21. TRON diagnostics + v2.1 milestone close-out (portfolio leg shipped in Phase 17) | v2.1 | 0/1 | Not started | - |
 | 22. BTC scaffolding — Esplora reads + USB-HID + persistent BTC account | v2.2 | 0/4 | Not started | - |
-| 23. BTC native + segwit + taproot trust pipeline (PSBT-based) | v2.2 | 4/4 | Complete   | 2026-05-22 |
+| 23. BTC native + segwit + taproot trust pipeline (PSBT-based) | v2.2 | 4/4 | Complete    | 2026-05-22 |
 | 24. BIP-125 RBF + BIP-137 message signing | v2.2 | 0/2 | Not started | - |
 | 25. PSBT multisig flow (combine / sign / finalize + multisig wallet registry) | v2.2 | 0/3 | Not started | - |
 | 26. LTC scaffolding + LiFi BTC→EVM/Solana bridging | v2.2 | 0/3 | Not started | - |
