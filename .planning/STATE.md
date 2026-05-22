@@ -1,7 +1,7 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: Solana
+milestone: v2.2
+milestone_name: Bitcoin + Litecoin
 status: ready_to_plan
 last_updated: 2026-05-22T15:24:47.623Z
 last_activity: 2026-05-22
