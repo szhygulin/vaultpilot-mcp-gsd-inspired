@@ -103,6 +103,7 @@ import {
   LEDGER_BLIND_SIGN_HASH_BTC_TEMPLATE,
   INPUT_SIGHASH_ROW_BTC_TEMPLATE,
   PREPARE_RECEIPT_BTC_NATIVE_TEMPLATE,
+  PREPARE_RECEIPT_BTC_RBF_TEMPLATE,
   INPUT_ROW_BTC_TEMPLATE,
   OUTPUT_ROW_BTC_TEMPLATE,
 } from "../signing/blocks-btc.js";
@@ -2138,7 +2139,7 @@ async function previewSendBtcBranch(
     };
   }
 
-  // ---- Render PREPARE RECEIPT (BTC) ---------------------------------------
+  // ---- Render PREPARE RECEIPT (BTC — native or RBF) -----------------------
   const inputRows = btcTx.inputs
     .map((inp) =>
       INPUT_ROW_BTC_TEMPLATE
@@ -2158,13 +2159,29 @@ async function previewSendBtcBranch(
     )
     .join("\n");
 
-  const prepareReceiptBlock = PREPARE_RECEIPT_BTC_NATIVE_TEMPLATE
-    .replace("{TO}", record.args.to)
-    .replace("{SATS}", record.args.sats ?? btcTx.outputs[0]?.valueSats.toString() ?? "0")
-    .replace("{FEE_SATS}", btcTx.feeSats.toString())
-    .replace("{FEE_RATE}", String(btcTx.feeRate))
-    .replace("{INPUT_ROWS}", inputRows)
-    .replace("{OUTPUT_ROWS}", outputRows);
+  let prepareReceiptBlock: string;
+  if (btcTx.kind === "rbf") {
+    // Phase 24 Plan 24-01: RBF fee bump — use RBF template with fee-diff slots.
+    const feeDeltaSats = btcTx.feeSats - (btcTx.originalFeeSats ?? 0n);
+    prepareReceiptBlock = PREPARE_RECEIPT_BTC_RBF_TEMPLATE
+      .replace("{ORIGINAL_TXID}", btcTx.originalTxid ?? "")
+      .replace("{NEW_FEE_RATE}", String(btcTx.feeRate))
+      .replace("{ORIGINAL_FEE_SATS}", String(btcTx.originalFeeSats ?? 0n))
+      .replace("{ORIGINAL_FEE_RATE}", (btcTx.originalFeeRate ?? 0).toFixed(2))
+      .replace("{NEW_FEE_SATS}", btcTx.feeSats.toString())
+      .replace("{FEE_DELTA_SATS}", String(feeDeltaSats))
+      .replace("{INPUT_ROWS}", inputRows)
+      .replace("{OUTPUT_ROWS}", outputRows);
+  } else {
+    // Phase 23 (default): native send receipt.
+    prepareReceiptBlock = PREPARE_RECEIPT_BTC_NATIVE_TEMPLATE
+      .replace("{TO}", record.args.to)
+      .replace("{SATS}", record.args.sats ?? btcTx.outputs[0]?.valueSats.toString() ?? "0")
+      .replace("{FEE_SATS}", btcTx.feeSats.toString())
+      .replace("{FEE_RATE}", String(btcTx.feeRate))
+      .replace("{INPUT_ROWS}", inputRows)
+      .replace("{OUTPUT_ROWS}", outputRows);
+  }
 
   // ---- Render LEDGER BLIND-SIGN HASH (BTC) — N rows, one per input --------
   const sighashRows = perInputSighashes

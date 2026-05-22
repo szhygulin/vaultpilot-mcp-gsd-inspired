@@ -182,6 +182,10 @@ function stubFetchWith404() {
   );
 }
 
+// ─── Demo mode key ────────────────────────────────────────────────────────────
+// Must match the env var name used by isDemoMode() / resolveDemoMode().
+const DEMO_KEY = "VAULTPILOT_DEMO";
+
 // ─── BTC accounts fixture ─────────────────────────────────────────────────────
 
 const BTC_ACCOUNT = {
@@ -193,15 +197,36 @@ const BTC_ACCOUNT = {
 
 // ─── Setup ────────────────────────────────────────────────────────────────────
 
-beforeEach(() => {
+let savedDemo: string | undefined;
+
+beforeEach(async () => {
+  savedDemo = process.env[DEMO_KEY];
+  process.env[DEMO_KEY] = "false";
   _resetHandleStoreForTesting();
   _resetActivePersonaForTesting();
   _resetDemoModeForTesting();
+  // Re-apply createHandleSpy implementation after vi.restoreAllMocks() clears it in afterEach.
+  // Pattern from prepare-btc-send.test.ts — restoreAllMocks() strips spy implementations; re-apply here.
+  const realHandleStore = await vi.importActual<
+    typeof import("../src/signing/handle-store.js")
+  >("../src/signing/handle-store.js");
+  createHandleSpy.mockImplementation(realHandleStore.createHandle);
 
   // Default spy for _btcPsbt.buildBtcPsbt.
+  // unsignedTxHex is a valid minimal raw BTC tx (1 input, 2 outputs, no witness) so
+  // that Transaction.fromHex() succeeds before computeAllSighashes (also mocked).
+  const VALID_UNSIGNED_TX_HEX =
+    "0100000001" +
+    "bbbb".repeat(16) + "00000000" + // txid (LE) + vout=0
+    "00" +                            // scriptSig length = 0
+    "fdffffff" +                      // sequence = 0xfffffffd
+    "02" +                            // 2 outputs
+    "806d0d0000000000" + "16" + "0014" + "11".repeat(20) + // 880_000 sats P2WPKH
+    "a086010000000000" + "16" + "0014" + "22".repeat(20) + // 100_000 sats P2WPKH
+    "00000000";                       // locktime
   vi.spyOn(_btcPsbt, "buildBtcPsbt").mockReturnValue({
     psbtBase64: "dGVzdC1wc2J0",
-    unsignedTxHex: "01000000" + "00".repeat(40),
+    unsignedTxHex: VALID_UNSIGNED_TX_HEX,
     perInputPrevouts: [
       {
         script: new Uint8Array(22),
@@ -248,6 +273,10 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  // Restore demo mode env var.
+  if (savedDemo === undefined) delete process.env[DEMO_KEY];
+  else process.env[DEMO_KEY] = savedDemo;
+  _resetDemoModeForTesting();
 });
 
 // ─── Test helpers ─────────────────────────────────────────────────────────────
@@ -270,7 +299,8 @@ describe("prepare_btc_rbf_bump — BTC-W-02 (Phase 24 Plan 24-01)", () => {
   // --------------------------------------------------------------------------
   describe("demo mode", () => {
     beforeEach(() => {
-      _resetDemoModeForTesting(true); // enable demo mode
+      process.env[DEMO_KEY] = "true";
+      _resetDemoModeForTesting(); // clear cache so isDemoMode() re-reads env
     });
 
     it("WRONG_MODE when demo mode active but no BTC persona set", async () => {
@@ -283,7 +313,10 @@ describe("prepare_btc_rbf_bump — BTC-W-02 (Phase 24 Plan 24-01)", () => {
 
     it("succeeds in demo mode with BTC persona set", async () => {
       setActiveBtcPersonaBySlug("btc-whale");
-      stubFetchWithTx(makeEsploraTxResponse());
+      // btc-whale btcSegwitAddress — use as change address so the tool identifies it as owned.
+      stubFetchWithTx(makeEsploraTxResponse({
+        vout1Address: "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h",
+      }));
       const result = await callTool({ txid: "aa".repeat(32), newFeeRate: 300 });
       expect(result.isError).toBeFalsy();
       expect((result.structuredContent as { txType?: string })?.txType).toBe("btc");
@@ -416,9 +449,14 @@ describe("prepare_btc_rbf_bump — BTC-W-02 (Phase 24 Plan 24-01)", () => {
   describe("BTC_RBF_CANNOT_AFFORD refusal", () => {
     beforeEach(() => {
       listAccountsSpy.mockReturnValue([BTC_ACCOUNT]);
-      // Small change output (100 sats) vs very high newFeeRate → feeDelta > changeValue
+      // Setup: vinValue=1_000_000, vout0Value=970_000 (recipient), vout1Value=100 (change),
+      // weight=440 → vsize=110, fee=29_900 sats, originalFeeRate≈271.8 sat/vB.
+      // newFeeRate=500 > 272.8 ✓ (passes BIP-125 Rule 4),
+      // newFee = 500 * 110 = 55_000, feeDelta = 55_000 - 29_900 = 25_100 > 100 → CANNOT_AFFORD.
       stubFetchWithTx(
         makeEsploraTxResponse({
+          vinValue: 1_000_000,
+          vout0Value: 970_000,
           vout1Value: 100,
           vout1Address: BTC_ACCOUNT.address,
         }),
@@ -556,7 +594,8 @@ describe("prepare_btc_rbf_bump — BTC-W-02 (Phase 24 Plan 24-01)", () => {
     });
 
     it("calls buildBtcPsbt with an inputs array matching the original vin[] set (BIP-125 Rule 2)", async () => {
-      await callTool({ txid: "aa".repeat(32), newFeeRate: 30 });
+      // fee=20_000, weight=800 → vsize=200, feeRate=100 sat/vB; need newFeeRate > 101.
+      await callTool({ txid: "aa".repeat(32), newFeeRate: 150 });
       const buildCallArgs = (
         _btcPsbt.buildBtcPsbt as ReturnType<typeof vi.spyOn>
       ).mock.calls[0]?.[0] as { inputs?: Array<{ txid: string; vout: number }> };

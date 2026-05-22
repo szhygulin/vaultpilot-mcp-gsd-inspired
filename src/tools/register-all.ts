@@ -37,6 +37,7 @@ import "./prepare_token_send.js";
 import "./prepare_solana_native_send.js"; // Phase 12 Plan 12-02 (SOL-W-01) — Solana native send
 import "./prepare_solana_spl_send.js"; // Phase 12 Plan 12-03 (SOL-W-02) — Solana SPL TransferChecked send
 import "./prepare_btc_send.js"; // Phase 23 Plan 23-03 (BTC-PSBT-01) — BTC native segwit+taproot PSBT send
+import "./prepare_btc_rbf_bump.js"; // Phase 24 Plan 24-01 (BTC-W-02) — BIP-125 RBF fee bump
 import "./prepare_tron_native_send.js"; // Phase 18 Plan 18-02 (TRON-W-01) — TRON native transfer
 import "./prepare_tron_trc20_send.js";  // Phase 18 Plan 18-03 (TRON-W-02) — TRC-20 transfer
 import "./prepare_tron_token_approve.js";   // Phase 19 Plan 19-01 (TRON-PREP-05) — TRC-20 approve
