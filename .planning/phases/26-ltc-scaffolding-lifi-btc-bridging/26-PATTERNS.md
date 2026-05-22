@@ -491,7 +491,7 @@ import { _ltcLedgerTransport, LedgerLtcAppNotOpenError, LedgerDeviceNotConnected
 4. **Export Fixture Z anchor:**
 ```typescript
 // Exported for test cross-linking (Fixture Z anchor):
-export const LTC_MAGIC_BYTES_HEX = "1a4c697465636f696e205369676e6564204d6573736167653a0a"; // 0x19 + "Litecoin Signed Message:\n"
+export const LTC_MAGIC_BYTES_HEX = "194c697465636f696e205369676e6564204d6573736167653a0a"; // 0x19 (25-byte varint) + "Litecoin Signed Message:\n"
 ```
 
 5. **`listAccounts({ chainFilter: "litecoin" })`** in pairing check (analog line 302).

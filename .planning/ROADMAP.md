@@ -734,8 +734,16 @@ Plans:
 
 Plans:
 
+**Wave 1**
+
 - [ ] 26-01-PLAN.md — LTC scaffolding: `src/chains/litecoin/` shelf (types + registry + esplora-client; litecoinspace.org `/api/v1/fees/recommended` divergence) + `pair_litecoin_ledger` (dual-address, Litecoin-app gate) + `get_litecoin_balance` / `get_litecoin_tx_history` / `get_litecoin_fee_estimates` (LTC-PAIR-01, LTC-READ-01, LTC-READ-02)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 26-02-PLAN.md — LTC signing trust pipeline: `src/signing/ltc-fingerprint.ts` (`VaultPilot-ltctx-v1:` domain tag) + `prepare_litecoin_native_send` (PSBT-based) + `sign_message_ltc` (BIP-137 LTC magic bytes) + `preview_send`/`send_transaction` litecoin branches + Fixtures Y + Z (LTC-W-01, LTC-W-02)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 26-03-PLAN.md — BTC LiFi bridging: `src/clients/lifi.ts` (from-scratch NEVER-throws client) + `lifi-btc` PSBT decoder + `prepare_btc_lifi_swap` with the Inv #6b `decodedFinalRecipient` assertion + `preview_send`/`send_transaction` btc-lifi branches + Fixture AA (BTC-LIFI-01)
 
 #### Phase 27: Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics
