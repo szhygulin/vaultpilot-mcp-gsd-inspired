@@ -909,14 +909,16 @@ describe("source-level regression anchors", () => {
     expect(source).toMatch(/5-level/);
   });
 
-  it("verify: true appears exactly twice in non-comment code (one per getWalletPublicKey call — segwit + taproot)", () => {
+  it("verify: true appears exactly 4 times in non-comment code (2 BTC segwit+taproot + 2 LTC legacy+segwit getWalletPublicKey calls)", () => {
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = dirname(__filename);
     const sourcePath = resolve(__dirname, "..", "src", "wallet", "ledger-btc-transport.ts");
     const source = readFileSync(sourcePath, "utf8");
     // Strip single-line comments so a doc-string mention of `verify: true`
-    // doesn't inflate the count. The two non-comment matches are the
-    // explicit { format, verify } argument objects on getWalletPublicKey.
+    // doesn't inflate the count. The four non-comment matches are the
+    // explicit { format, verify } argument objects on getWalletPublicKey:
+    // 2 for BTC (fetchBtcAddresses: segwit + taproot) +
+    // 2 for LTC (fetchLtcAddresses: legacy + segwit) — Phase 26.
     const stripped = source
       .split("\n")
       .filter((line) => {
@@ -925,6 +927,6 @@ describe("source-level regression anchors", () => {
       })
       .join("\n");
     const matches = stripped.match(/verify:\s*true/g) ?? [];
-    expect(matches.length).toBe(2);
+    expect(matches.length).toBe(4);
   });
 });
