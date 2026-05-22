@@ -687,7 +687,7 @@ Plans:
 
 **Goal**: User can participate in M-of-N multisig PSBT workflows — combine partially-signed PSBTs from co-signers, sign their input contribution, finalize the fully-signed PSBT for broadcast. Multisig wallet registry tracks known M-of-N descriptors.
 **Depends on**: Phase 24
-**Requirements**: BTC-PSBT-03, BTC-PSBT-04, BTC-PSBT-05, BTC-PSBT-06, BTC-W-04
+**Requirements**: BTC-PSBT-03, BTC-PSBT-04, BTC-PSBT-05, BTC-PSBT-06, BTC-PSBT-07, BTC-W-04
 **Success Criteria** (what must be TRUE):
 
   1. `register_btc_multisig_wallet({ name, descriptor, threshold })` records a known multisig descriptor (sortedmulti or musig-aware); descriptors validated against bitcoin script rules
@@ -702,9 +702,17 @@ Plans:
 
 Plans:
 
-- [ ] 25-01: `register_btc_multisig_wallet` + `src/wallet/btc-multisig-registry.ts` (descriptor parsing + storage at `~/.vaultpilot-mcp/btc-multisig.json`, 0o600 file); `get_btc_multisig_balance` + `get_btc_multisig_utxos` read tools
-- [ ] 25-02: `combine_btc_psbts` + PSBT-merging logic + conflict detection (input-by-input + key-by-key); validation against descriptor
-- [ ] 25-03: `sign_btc_multisig_psbt` + `finalize_btc_psbt` + threshold-check + Ledger multisig PSBT signing flow (BTC app v2.1+ supports multisig); preview-time signer-key surfacing in CHECKS PERFORMED
+**Wave 1**
+
+- [ ] 25-01-PLAN.md — multisig wallet registry: descriptor parse/validation + BIP-67 P2WSH address derivation + atomic-write persistence (0o600); register_btc_multisig_wallet + get_btc_multisig_balance + get_btc_multisig_utxos
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 25-02-PLAN.md — combine_btc_psbts: PSBT merge with an explicit pre-combine same-key/same-input conflict scan raising PSBT_COMBINE_CONFLICT
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 25-03-PLAN.md — sign_btc_multisig_psbt (prepare→preview→send via multisig-psbt handle) + finalize_btc_psbt (threshold-enforced) + Ledger multisig signing via @ledgerhq/ledger-bitcoin AppClient + Fixture X
 
 #### Phase 26: LTC scaffolding + LiFi BTC→EVM/Solana bridging
 
