@@ -1493,9 +1493,8 @@ async function sendTransactionBtcBranch(
         isError: true,
         content: [{ type: "text", text: `error: ${err.message}` }],
         structuredContent: errEnvelope(
-          "LEDGER_REJECTED",
-          "Ledger BTC app not open. Open the Bitcoin app on the device and retry.",
-          err.message,
+          "BTC_APP_NOT_OPEN",
+          "Bitcoin app is not the active app on the Ledger. Open the Bitcoin app on the device and retry.",
         ),
       };
     }

@@ -147,10 +147,15 @@ export type ErrorCode =
   //                               combine the partial signatures. Surfaces in the
   //                               Phase 23-04 send_transaction BTC branch. Not
   //                               emitted by the Phase 23-03 prepare tool.
+  //   BTC_APP_NOT_OPEN             — USB-HID transport opens but the active app on
+  //                               the Ledger is not Bitcoin (mirrors
+  //                               SOLANA_APP_NOT_OPEN). Recovery: open the Bitcoin
+  //                               app on the device and retry. WR-04 fix.
   | "BTC_DUST_OUTPUT"
   | "BTC_FEE_RATE_OUT_OF_BOUNDS"
   | "BTC_NO_UTXOS_AVAILABLE"
-  | "BTC_MIXED_INPUT_SIGN_FAILURE";
+  | "BTC_MIXED_INPUT_SIGN_FAILURE"
+  | "BTC_APP_NOT_OPEN";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

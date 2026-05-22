@@ -11,7 +11,8 @@
 //   4. **Broadcast success** — Esplora POST /tx returns a txid; structuredContent
 //      carries `txHash`, `txType: "btc"`, `kind: "native"`.
 //   5. **Broadcast failure** — Esplora `{ kind: "rejected" }` → BROADCAST_FAILED.
-//   6. **LEDGER_REJECTED** — Ledger device user-rejection → LEDGER_REJECTED.
+//   6. **BTC_APP_NOT_OPEN** — Bitcoin app not the active Ledger app → BTC_APP_NOT_OPEN (WR-04).
+//      **LEDGER_REJECTED** — Ledger device user-rejection → LEDGER_REJECTED.
 //   7. **FROZEN three-gate region zero-diff assertion** — `git diff origin/main --`
 //      for src/tools/send_transaction.ts shows ONLY additive BTC changes.
 //
@@ -360,7 +361,7 @@ describe("send_transaction BTC branch — Ledger error mapping", () => {
     expect((result.structuredContent as Record<string, unknown>)?.errorCode).toBe("LEDGER_NOT_CONNECTED");
   });
 
-  it("T-13: LedgerBtcAppNotOpenError → LEDGER_REJECTED", async () => {
+  it("T-13: LedgerBtcAppNotOpenError → BTC_APP_NOT_OPEN (WR-04)", async () => {
     vi.spyOn(_btcLedgerTransport, "signBtcPsbt").mockRejectedValue(
       new LedgerBtcAppNotOpenError(),
     );
@@ -369,7 +370,7 @@ describe("send_transaction BTC branch — Ledger error mapping", () => {
     const result = await callSendTx({ handle, previewToken: "test-preview-token", userDecision: "send" });
 
     expect(result.isError).toBe(true);
-    expect((result.structuredContent as Record<string, unknown>)?.errorCode).toBe("LEDGER_REJECTED");
+    expect((result.structuredContent as Record<string, unknown>)?.errorCode).toBe("BTC_APP_NOT_OPEN");
   });
 
   it("T-14: user reject error → LEDGER_REJECTED", async () => {
