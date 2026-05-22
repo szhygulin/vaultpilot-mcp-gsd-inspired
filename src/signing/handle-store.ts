@@ -82,6 +82,8 @@ export interface PrepareArgs {
   outputToken?: string;
   /** Phase 20 — SunSwap V2 slippage tolerance in basis points as decimal string (e.g. "50"). */
   slippageBps?: string;
+  /** Phase 23 — BTC native amount as raw satoshis decimal string (e.g. "100000"). Populated by `prepare_btc_send` (Plan 23-03). */
+  sats?: string;
 }
 
 /**
@@ -490,7 +492,178 @@ export interface PreparedTxTron {
   instructionSummary?: TronInstructionSummary[];
 }
 
-export type PreparedTx = PreparedTxEvm | PreparedTxSolana | PreparedTxTron;
+// ---------------------------------------------------------------------------
+// Phase 23 Plan 23-03 widening: PreparedTxBtc + BtcInstructionSummary.
+// The PreparedTx union is widened ADDITIVELY — state machine + TTL logic
+// BYTE-IDENTICAL (same pattern as Phase 12 Solana / Phase 18 TRON).
+// ---------------------------------------------------------------------------
+
+/**
+ * Phase 23 — decoded BTC instruction summary for the DECODED ARGS block
+ * in preview_send BTC branch (Plan 23-04). Mirrors `TronInstructionSummary`
+ * at line 127 — discriminated union narrowed by `kind`. The `"native"`
+ * kind covers all Phase 23 sends (segwit / taproot / mixed-input).
+ */
+export type BtcInstructionSummary = {
+  kind: "native";
+  /** Sender segwit address (bc1q…). */
+  fromSegwit: string;
+  /** Sender taproot address (bc1p…), if also used as an input. */
+  fromTaproot?: string;
+  /** Recipient address (bc1q… or bc1p… or legacy). */
+  to: string;
+  /** Amount being sent to the recipient in sats. */
+  sats: bigint;
+  /** Miner fee in sats. */
+  feeSats: bigint;
+};
+
+/**
+ * BTC prepared-tx shape. Phase 23 — Plan 23-03. Mirrors `PreparedTxTron`
+ * (Phase 18 / Plan 18-01) sentinel-fields pattern — EVM-shape sentinel
+ * fields allow existing EVM-side consumers to remain BYTE-IDENTICAL without
+ * narrowing at every call site.
+ *
+ * The discriminator (`txType: "btc"`) + BTC-specific fields carry the
+ * cryptographic-binding inputs for the PSBT-based signing trust pipeline
+ * (BTC-PREP-01 / BTC-PSBT-01). Sentinel EVM fields are set to zero/empty
+ * values so accidental EVM dispatch hits the Layer 0.5 dispatch-target
+ * refusal before reaching any meaningful EVM processing.
+ *
+ * FROZEN guard: this interface is ADDITIVE TYPE SURFACE only. The handle-store
+ * state machine + TTL + createHandle + transitionTo* logic is BYTE-IDENTICAL
+ * (Phase 18 precedent at PreparedTxTron line 407).
+ */
+export interface PreparedTxBtc {
+  /** Required discriminator — BTC UTXO-model shape. */
+  txType: "btc";
+
+  // -----------------------------------------------------------------------
+  // EVM-shape sentinel fields (set to zero / empty values for BTC handles).
+  // Present to keep the discriminated union accessible by existing EVM-side
+  // consumers without forcing narrowing at every site. EVM call paths that
+  // reach a BTC handle will hit the Layer 0.5 dispatch-target refusal
+  // before reading these — the sentinels are defensive, not load-bearing.
+  // -----------------------------------------------------------------------
+  /** Sentinel — BTC has no EVM chainId. Always 0. */
+  chainId: number;
+  /** Sentinel — BTC addresses are bech32/bech32m, not 0x-prefixed. Always the zero address. */
+  to: Address;
+  /** Sentinel — BTC uses sats, not valueWei. Always 0n. */
+  valueWei: bigint;
+  /** Sentinel — BTC has no EVM calldata. Always `"0x"`. */
+  data: Hex;
+  /** Sentinel — BTC has no EVM nonce. Always undefined. */
+  nonce?: number;
+  gas?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+
+  // -----------------------------------------------------------------------
+  // BTC-specific discriminator.
+  // -----------------------------------------------------------------------
+  /**
+   * BTC send kind. `"native"` covers all Phase 23 sends (segwit / taproot /
+   * mixed-input). RBF (Phase 24) and multisig (Phase 25) will widen this.
+   */
+  kind: "native";
+
+  // -----------------------------------------------------------------------
+  // BTC-specific cryptographic-binding fields.
+  // Populated by Plan 23-03 prepare_btc_send; consumed by Plan 23-04
+  // preview_send BTC branch (Layer 1 fingerprint recompute) and
+  // send_transaction BTC dispatch arm (Layer 3 drift gate).
+  // -----------------------------------------------------------------------
+
+  /**
+   * PSBT-v0 in base64. The payload relayed to the Ledger transport for
+   * signing (Phase 23-04). Stored for reference; the CANONICAL ARTIFACT
+   * for fingerprint recompute is `unsignedTxHex` + `perInputPrevouts`
+   * (NOT a re-parsed PSBT — Pitfall 5 mitigation: PSBT round-trips can
+   * normalize fields, producing spurious fingerprint drift).
+   */
+  psbtBase64: string;
+
+  /**
+   * Unsigned transaction hex — the canonical artifact for fingerprint
+   * recompute (Pitfall 5). `preview_send` and `send_transaction` BTC
+   * branches extract the `Transaction` from this hex via
+   * `Transaction.fromHex()` and pass it to `computeAllSighashes`, NOT
+   * from a re-parsed PSBT. TRON analog: `rawDataHex` (handle-store.ts:441).
+   */
+  unsignedTxHex: string;
+
+  /**
+   * Ordered per-input prevout descriptors — paired with `unsignedTxHex`
+   * to form the canonical fingerprint-recompute artifact. One entry per
+   * selected UTXO input, in the same order as the PSBT input vector.
+   * Each entry carries: `{ script: Uint8Array, valueSats: bigint, scriptType }`.
+   *
+   * Stored as `readonly { script: Uint8Array; valueSats: bigint; scriptType: "p2wpkh" | "p2tr" }[]`
+   * to avoid importing `BtcPrevout` from btc-psbt.ts (keep handle-store
+   * free of protocol-layer imports — same discipline as `rawDataObject: unknown`
+   * for TRON).
+   */
+  perInputPrevouts: readonly {
+    script: Uint8Array;
+    valueSats: bigint;
+    scriptType: "p2wpkh" | "p2tr";
+  }[];
+
+  /** Per-input script types in PSBT order (parallel to `perInputPrevouts`). */
+  inputScriptTypes: readonly ("p2wpkh" | "p2tr")[];
+
+  /** Decoded input summary for the PREPARE RECEIPT + DECODED block. */
+  inputs: readonly {
+    txid: string;
+    vout: number;
+    valueSats: bigint;
+    scriptType: "p2wpkh" | "p2tr";
+  }[];
+
+  /** Decoded output summary for the PREPARE RECEIPT + DECODED block. */
+  outputs: readonly {
+    address: string;
+    valueSats: bigint;
+    role: "recipient" | "change";
+  }[];
+
+  /** Total miner fee in sats. Surfaced verbatim in the PREPARE RECEIPT. */
+  feeSats: bigint;
+
+  /** Change amount in sats (0n if no change output — dust folded into fee). */
+  changeSats: bigint;
+
+  /**
+   * WR-02: fee rate used for coin selection (sat/vByte, integer). Populated by
+   * `prepare_btc_send` at prepare time and surfaced in `preview_send`'s
+   * PREPARE RECEIPT block (replacing the former literal `"auto"`).
+   */
+  feeRate: number;
+
+  /**
+   * CR-01 / CR-03: derivation path of the change output address (BIP-44
+   * 5-level — e.g. `"m/84'/0'/0'/1/0"` for segwit change at index 0).
+   * `null` when there is no change output (dust folded into fee, changeSats===0n).
+   *
+   * `send_transaction` populates `knownAddressDerivations` from this field so
+   * the Ledger BTC app displays the change output as "yours" rather than a
+   * second send recipient (Pitfall 6).
+   */
+  changePath: string | null;
+
+  /**
+   * CR-01 / CR-03: change output address (bech32 / bech32m). Paired with
+   * `changePath` — always non-null when `changePath` is non-null.
+   * `null` when changeSats===0n.
+   */
+  changeAddress: string | null;
+
+  /** Optional decoded instruction summary for the DECODED ARGS block in preview_send. */
+  instructionSummary?: BtcInstructionSummary[];
+}
+
+export type PreparedTx = PreparedTxEvm | PreparedTxSolana | PreparedTxTron | PreparedTxBtc;
 
 /**
  * Preview-pinned fields, persisted onto the record at `transitionToPreviewed`

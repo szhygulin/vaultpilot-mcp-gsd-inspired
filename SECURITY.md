@@ -374,3 +374,66 @@ Canonical adopters:
 | T-RPC-FAILURE-MASKED-AS-EMPTY (T-21-02) | Information Disclosure | LOW | `rpcDegraded.reason` set explicitly on TronGrid failure; frozen amounts default to "0" only when account is verifiably empty (frozenV2 is empty) OR explicitly degraded (rpcDegraded set). `resourceAccountPresent: false` distinguishes "account never touched" from "RPC down." Tests arms 6 + 7. |
 | T-LEDGER-APP-VERSION-LIES (T-21-03) | Spoofing | LOW | `ledgerTrxAppVersion` is INFORMATIONAL only — no version-gating in v2.1. Spoofed version cannot weaponize the diagnostic by construction. Future `request_capability` integration may gate on minimum version; out of scope here. |
 | T-FROZEN (T-21-FROZEN) | Tampering | CRITICAL | `git diff origin/main` empty assertion on the FROZEN file list at plan close (cryptographic-binding primitives + protocols + prepare tools + fingerprint test files + 21-code error union + handle-store + preview_send + send_transaction + canonical-dispatch-tron + contracts.ts). Phase 21 is READ-ONLY by construction. |
+
+---
+
+## Phase 23 — Bitcoin (BTC) Native SegWit + Taproot Trust Pipeline
+
+Phase 23 (Plans 23-01 through 23-04) ships the BTC UTXO-model signing pipeline: per-input BIP-143 (segwit) / BIP-341 (taproot key-spend) sighash computation, keccak256-over-sighashes `payloadFingerprint`, PSBT-v0 construction and mixed-input two-pass signing, Esplora broadcast, and the full `prepare_btc_send → preview_send → send_transaction` trust pipeline.
+
+### Trust shape divergence from EVM / Solana / TRON
+
+| Layer | EVM | Solana | TRON | BTC |
+|-------|-----|--------|------|-----|
+| `payloadFingerprint` | keccak256(tag ‖ chainId ‖ to ‖ valueWei ‖ data) | keccak256(tag ‖ messageBytes) | keccak256(tag ‖ raw_data_bytes) | keccak256(tag ‖ sighash₀ ‖ … ‖ sighashₙ₋₁) |
+| Domain tag | `VaultPilot-evmtx-v1:` (22 B) | `VaultPilot-soltx-v1:` (20 B) | `VaultPilot-trontx-v1:` (21 B) | `VaultPilot-btctx-v1:` (21 B) |
+| Broadcast | WalletConnect (Ledger Live) | `sendRawTransaction` (Solana RPC) | `tronweb.trx.sendRawTransaction` | Esplora `POST /tx` |
+| LEDGER display | one hash | one hash | one hash | N per-input sighashes (one per UTXO) |
+
+BTC introduces the UTXO-model asymmetry: the `payloadFingerprint` is computed over the concatenation of per-input BIP-143/341 sighashes, not over a single serialized blob. This means:
+
+- **Different UTXOs → different fingerprint** (by construction: each sighash commits to its UTXO's script + value).
+- **Same UTXOs + same {to,sats} → byte-identical fingerprint** (regression anchor in `test/btc-trust-pipeline.integration.test.ts` Directions A + B).
+- **Multi-input sighash recompute is the Layer 1 defense** (`previewSendBtcBranch` recomputes all N sighashes from the stored canonical artifact — NOT a re-parsed PSBT — and refuses on drift).
+
+### PSBT serialization and two-pass mixed-input signing
+
+`signBtcPsbt` (Plan 23-04, `src/wallet/ledger-btc-transport.ts`) implements the two-pass mixed-input split:
+
+1. Partition inputs by script type (segwit vs taproot).
+2. For each non-empty group, call `app.signPsbtBuffer(groupPsbt, { finalizePsbt: false, accountPath, addressFormat, knownAddressDerivations })`.
+3. `Psbt.combine` the partial PSBTs → per-input finalization (skipping already-finalized inputs) → `extractTransaction().toHex()`.
+
+`@ledgerhq/hw-app-btc@10` rejects a PSBT whose inputs span more than one script type in a single `signPsbtBuffer` call. The two-pass split is the canonical mitigation (RESEARCH Pattern 3 / BTC-PSBT-02).
+
+`knownAddressDerivations` MUST include the change address on every `signPsbtBuffer` call (Pitfall 6): without it, the device renders the change output as a recipient send. The `BTC_MIXED_INPUT_SIGN_FAILURE` error code surfaces combine/finalize failures structurally.
+
+### Canonical artifact and Pitfall 5 mitigation
+
+The fingerprint recompute at `preview_send` (Layer 1) and `send_transaction` (Layer 3) reads the **stored canonical artifact** — `PreparedTxBtc.unsignedTxHex` + `PreparedTxBtc.perInputPrevouts` — NOT a re-parsed PSBT. Re-parsing a PSBT normalizes internal fields and can produce spurious drift-gate failures (Pitfall 5). The `test/send-transaction.btc.test.ts` T-16 zero-diff assertion verifies the FROZEN three-gate region of `send_transaction.ts` is byte-identical to `origin/main`.
+
+### Accepted residual risks
+
+- **Esplora endpoint trust (T-23-07 — accepted)** — the raw signed transaction is broadcast to a public Esplora instance. The operator controls which Esplora endpoint is configured. A hostile or BGP-hijacked endpoint can see the transaction bytes before broadcast but CANNOT alter the signature (signed by the device). The device's on-screen input/output/fee review is the backstop for address substitution. Documented residual: use a self-hosted or trusted Esplora instance in high-value scenarios.
+
+- **OQ-3 change-index race (accepted)** — two rapid `prepare_btc_send` calls with the same UTXOs may select the same change output index. The PSBT builder uses a deterministic change address derived from the account's segwit or taproot path; a double-prepare does not corrupt the sighash (each call produces an independent PSBT). The race is visible because both handles carry the same `payloadFingerprint` (same UTXOs + same {to,sats}) — the user reviewing on-device sees the same tx on both handles.
+
+- **v2.2 verify-phase pending real-Ledger USB-HID smoke (accepted)** — the BTC signing path (`signBtcPsbt`, two-pass mixed-input PSBT signing, live Esplora broadcast) has not been exercised against a physical Ledger device with the BTC app running. The verify-phase smoke is deferred to v2.2 milestone close:
+  1. Segwit-only PSBT: small-amount mainnet P2WPKH transfer.
+  2. Taproot-only PSBT: small-amount mainnet P2TR key-spend transfer.
+  3. Mixed-input PSBT (segwit + taproot inputs): two-pass split + combine.
+  4. Live Esplora broadcast: verify txid appears on mempool.space.
+  5. On-device LEDGER BLIND-SIGN HASH comparison: per-input sighash bytes match the `LEDGER BLIND-SIGN HASH (BTC)` block from `preview_send`.
+
+### Phase 23 threat register summary
+
+| Threat ID | STRIDE | Severity | Mitigation |
+|-----------|--------|----------|------------|
+| T-23-13 | Tampering | CRITICAL | `previewSendBtcBranch` (Layer 1) and `sendTransactionBtcBranch` (Layer 3) recompute the fingerprint from the stored canonical artifact (unsigned tx hex + perInputPrevouts), not a re-parsed PSBT (Pitfall 5); any byte change in selected inputs/outputs → `PAYLOAD_FINGERPRINT_DRIFT` refusal. |
+| T-23-14 | Tampering | CRITICAL | Per-input BIP-143/341 sighash drift: `previewSendBtcBranch` recomputes all N sighashes; the multi-hash `LEDGER BLIND-SIGN HASH (BTC)` block surfaces each sighash for user on-device verification. A drifted single input fails the fingerprint gate. |
+| T-23-15 | Tampering | HIGH | Mixed-input two-pass signing seam: `signBtcPsbt` combines via `Psbt.combine` + per-input finalization + `extractTransaction`; the device independently re-derives each input's sighash; a tampered pass produces a device-visible mismatch. `BTC_MIXED_INPUT_SIGN_FAILURE` surfaces combine/finalize failures. |
+| T-23-16 | Tampering | CRITICAL | FROZEN three-gate region of `send_transaction.ts` is byte-identical to `origin/main`; the BTC arm is additive. Zero-diff assertion in `test/send-transaction.btc.test.ts` T-16. |
+| T-23-17 | Spoofing | HIGH | Change-output redirection: `knownAddressDerivations` includes the change address on every `signPsbtBuffer` call so the device marks it "change" — a redirected output renders as a "send" (device-visible). |
+| T-23-18 | Information Disclosure | MEDIUM | Esplora broadcast failure masked as success: `broadcastTx` returns `{ kind: "rejected" \| "error" }` mapped to `BROADCAST_FAILED` with upstream message verbatim; never a silent success. |
+| T-23-07 | Spoofing | MEDIUM | Esplora endpoint trust: accepted residual — operator-configurable; on-device review is the backstop. |
+| T-23-SC | Tampering | LOW | npm supply-chain: no new packages in Phase 23 (RESEARCH §Package Legitimacy Audit). |

@@ -55,6 +55,18 @@ export interface NonEvmAccountRecord {
   derivationPath: string;
   pairedAt: string;
   displayName?: string;
+  /**
+   * CR-02 / CR-03 — account-level extended public key (xpub), stored at pair
+   * time. Populated by `pair_btc_ledger` (Phase 23 CR-02 fix); absent on
+   * records paired before this phase. Used by `prepare_btc_send` to derive
+   * chain-1 change addresses without touching the Ledger again (D-02). Always
+   * `xpub…`-encoded (mainnet version bytes 0x0488B21E).
+   *
+   * Deliberately optional so existing persisted records (paired pre-CR-02)
+   * remain valid — `prepare_btc_send` checks for presence and refuses with
+   * a "re-pair required" error if absent.
+   */
+  xpub?: string;
 }
 
 /**
@@ -131,6 +143,16 @@ function validateRecord(raw: unknown): NonEvmAccountRecord | null {
   };
   if (typeof r.displayName === "string") {
     out.displayName = r.displayName;
+  }
+  // CR-02: xpub is optional (absent on records paired before Phase 23 fix).
+  // Validate it is a non-empty string when present; drop silently if
+  // malformed (the user will re-pair).
+  if (r.xpub !== undefined) {
+    if (typeof r.xpub === "string" && r.xpub.length > 0) {
+      out.xpub = r.xpub;
+    } else {
+      log("warn", `non-evm-account-store: dropping malformed xpub on record for ${r.address}`);
+    }
   }
   return out;
 }

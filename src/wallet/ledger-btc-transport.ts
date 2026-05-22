@@ -45,9 +45,19 @@
 // right runtime constructor without leaking `any` through the rest of
 // the file. Same shape as `ledger-tron-transport.ts` and
 // `ledger-solana-transport.ts`.
+//
+// **Phase 23 — signBtcPsbt (RESEARCH Pattern 3 — two-pass mixed-input signing):**
+// `signPsbtBuffer` (the v10 descriptor-wallet PSBT workflow) rejects a PSBT
+// whose internal inputs span more than one script type ("Mixed input types
+// detected"). For mixed segwit + taproot PSBTs, `signBtcPsbt` partitions by
+// script type, calls `signPsbtBuffer` once per group, then `Psbt.combine()`
+// the partials → `finalizeAllInputs()` → `extractTransaction().toHex()`.
+// `knownAddressDerivations` is REQUIRED on every call (Pitfall 6 — without the
+// change address in it, the device displays change as a send).
 
 import TransportNodeHidModule from "@ledgerhq/hw-transport-node-hid";
 import BtcAppModule from "@ledgerhq/hw-app-btc";
+import { Psbt } from "bitcoinjs-lib";
 
 import { log } from "../diagnostics/logger.js";
 
@@ -191,12 +201,26 @@ export async function openTransport(): Promise<TransportLike> {
  * confirmation (RESEARCH § Plan 22-02 risks — pair-time on-device
  * confirm is the whole point of pairing).
  */
+/**
+ * xpub mainnet version bytes (0x0488B21E = 76067358). Passed to
+ * `getWalletXpub({ path, xpubVersion })` so the Ledger BTC app returns an
+ * `xpub…`-encoded extended public key (not zpub / ypub). This is the form
+ * bip32@^5.0.1 accepts directly without normalization.
+ *
+ * CR-02 / CR-03: the account-level xpub (m/84'/0'/0' segwit, m/86'/0'/0'
+ * taproot) is fetched in the SAME device session as the address exchange and
+ * persisted to the non-EVM account store at pair time. `prepare_btc_send`
+ * then derives fresh chain-1 change addresses from the stored xpub without
+ * opening a second transport session.
+ */
+export const XPUB_VERSION_MAINNET = 0x0488b21e;
+
 export async function fetchBtcAddresses(
   segwitPath: string = DEFAULT_BTC_SEGWIT_PATH,
   taprootPath: string = DEFAULT_BTC_TAPROOT_PATH,
 ): Promise<{
-  segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string };
-  taproot: { address: string; publicKey: string; chainCode: string; derivationPath: string };
+  segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string; xpub: string };
+  taproot: { address: string; publicKey: string; chainCode: string; derivationPath: string; xpub: string };
   appVersion: string;
 }> {
   const transport = await openTransport();
@@ -208,23 +232,42 @@ export async function fetchBtcAddresses(
     } catch {
       throw new LedgerBtcAppNotOpenError();
     }
-    // TWO sequential APDU exchanges within ONE transport open.
+    // Address exchanges (2 APDU calls).
     // Format / path mapping is HARDCODED — never agent-input (Pitfall 7).
     // BIP-84 → bech32 (`bc1q…`); BIP-86 → bech32m (`bc1p…`).
     const segwit = await app.getWalletPublicKey(segwitPath, { format: "bech32", verify: true });
     const taproot = await app.getWalletPublicKey(taprootPath, { format: "bech32m", verify: true });
+
+    // CR-02 / CR-03: fetch account-level xpubs for change-chain derivation.
+    // `getWalletXpub` takes the ACCOUNT path (3 levels) — strip the two trailing
+    // `/change/index` segments from the 5-level address paths. For the defaults
+    // that is `84'/0'/0'` and `86'/0'/0'`.
+    // `xpubVersion: 0x0488B21E` → mainnet xpub encoding (bip32@^5.0.1 compatible).
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
+    const segwitXpub: string = await app.getWalletXpub({
+      path: "84'/0'/0'",
+      xpubVersion: XPUB_VERSION_MAINNET,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call
+    const taprootXpub: string = await app.getWalletXpub({
+      path: "86'/0'/0'",
+      xpubVersion: XPUB_VERSION_MAINNET,
+    });
+
     return {
       segwit: {
         address: segwit.bitcoinAddress,
         publicKey: segwit.publicKey,
         chainCode: segwit.chainCode,
         derivationPath: segwitPath,
+        xpub: segwitXpub,
       },
       taproot: {
         address: taproot.bitcoinAddress,
         publicKey: taproot.publicKey,
         chainCode: taproot.chainCode,
         derivationPath: taprootPath,
+        xpub: taprootXpub,
       },
       appVersion: cfg.version ?? "unknown",
     };
@@ -234,6 +277,188 @@ export async function fetchBtcAddresses(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log("warn", `transport.close() failed during cleanup: ${message}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 23 Plan 23-04 — signBtcPsbt (RESEARCH Pattern 3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-input descriptor for the `signBtcPsbt` call. Each entry pairs the
+ * input's script type with its BIP-32 derivation metadata, used to build
+ * per-group PSBTs for the two-pass split.
+ */
+export interface BtcPsbtSignInput {
+  /** 0-based index of this input in the PSBT's input vector. */
+  readonly index: number;
+  readonly scriptType: "p2wpkh" | "p2tr";
+  /** BIP-32 derivation path, e.g. "m/84'/0'/0'/0/0". */
+  readonly bip32Path: string;
+  /** 33-byte compressed public key (for segwit) or 32-byte x-only key (for taproot). */
+  readonly pubkey: Uint8Array;
+  /** 4-byte master fingerprint. */
+  readonly masterFingerprint: Uint8Array;
+}
+
+/**
+ * Known address derivation for `knownAddressDerivations` REQUIRED by
+ * `signPsbtBuffer`. Maps a scriptPubKey hash hex to a pubkey + path pair.
+ * The change address MUST be included (Pitfall 6 — without it the device
+ * renders change as a send).
+ */
+export interface KnownAddressDerivation {
+  readonly scriptPubKeyHashHex: string;
+  readonly pubkey: Uint8Array;
+  readonly path: string;
+}
+
+/**
+ * Sign a BTC PSBT via the Ledger BTC app over USB-HID.
+ *
+ * Implements the two-pass mixed-input split (RESEARCH Pattern 3):
+ *   1. Partition inputs by script type (segwit vs taproot).
+ *   2. For each non-empty group, build a group-PSBT with BIP-32 derivation
+ *      populated ONLY on that group's inputs (so the device skips the others).
+ *   3. Call `signPsbtBuffer` once per group with the matching `accountPath`
+ *      + `addressFormat`.
+ *   4. `Psbt.combine()` the partial results → `finalizeAllInputs()` →
+ *      `extractTransaction().toHex()`.
+ *
+ * For a single-script-type PSBT the split degenerates to one call.
+ *
+ * `knownAddressDerivations` MUST include the change address (load-bearing for
+ * D-02: the BTC app marks the change output "change" only if it appears in
+ * this map).
+ *
+ * Throws `LedgerDeviceNotConnectedError` if no device found.
+ * Throws `LedgerBtcAppNotOpenError` if the BTC app is not active.
+ * Other errors (user rejection, combine failure) propagate to the caller.
+ *
+ * @param psbtBase64           — the unsigned PSBT-v0 in base64.
+ * @param inputs               — per-input descriptors in PSBT input order.
+ * @param knownAddressDerivations — change + receive address map (REQUIRED).
+ */
+export async function signBtcPsbt(
+  psbtBase64: string,
+  inputs: readonly BtcPsbtSignInput[],
+  knownAddressDerivations: readonly KnownAddressDerivation[],
+): Promise<{ rawTxHex: string }> {
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildBtcApp(transport);
+
+    // Guard: BTC app must be open (mirrors fetchBtcAddresses).
+    try {
+      await app.getAppConfiguration();
+    } catch {
+      throw new LedgerBtcAppNotOpenError();
+    }
+
+    // Partition inputs by script type.
+    const segwitInputs = inputs.filter((i) => i.scriptType === "p2wpkh");
+    const taprootInputs = inputs.filter((i) => i.scriptType === "p2tr");
+
+    const signedParts: Psbt[] = [];
+
+    // Helper: build a group PSBT from the full base64 PSBT but with BIP-32
+    // derivation populated ONLY on the group's inputs. All other inputs have
+    // their bip32Derivation / tapBip32Derivation cleared so the device skips
+    // them (belongsToSigner === false → not counted in script-type consistency).
+    function buildGroupPsbt(
+      groupInputs: readonly BtcPsbtSignInput[],
+    ): Uint8Array {
+      const psbt = Psbt.fromBase64(psbtBase64);
+      const inputCount = psbt.data.inputs.length;
+
+      // Build a set of this group's indices for O(1) lookup.
+      const groupIndexSet = new Set(groupInputs.map((i) => i.index));
+
+      for (let idx = 0; idx < inputCount; idx++) {
+        const pInput = psbt.data.inputs[idx];
+        if (!pInput) continue;
+
+        if (groupIndexSet.has(idx)) {
+          // Keep derivation for this group's inputs — the device will sign them.
+          // No mutation needed; they already have derivation from buildBtcPsbt.
+        } else {
+          // Clear derivation so the device does NOT try to sign these inputs
+          // (belongsToSigner = false → validateScriptTypeConsistency skips them).
+          // Use empty arrays (not undefined) — bip174's keyValsFromMap encodes
+          // an empty array as zero key-value pairs (safe; undefined causes a
+          // "Cannot read property pubkey" error when the serializer iterates).
+          pInput.bip32Derivation = [];
+          pInput.tapBip32Derivation = [];
+        }
+      }
+      return psbt.toBuffer();
+    }
+
+    // Build the knownAddressDerivations Map for signPsbtBuffer.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const knownMap = new Map<string, { pubkey: Uint8Array; path: string }>();
+    for (const kd of knownAddressDerivations) {
+      knownMap.set(kd.scriptPubKeyHashHex, {
+        pubkey: kd.pubkey,
+        path: kd.path,
+      });
+    }
+
+    // Pass 1: segwit inputs (m/84'/0'/0', bech32).
+    if (segwitInputs.length > 0) {
+      const groupBuffer = buildGroupPsbt(segwitInputs);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+      const { psbt: signedBuffer } = await app.signPsbtBuffer(groupBuffer, {
+        finalizePsbt: false,
+        accountPath: "m/84'/0'/0'",
+        addressFormat: "bech32",
+        knownAddressDerivations: knownMap,
+      });
+      signedParts.push(Psbt.fromBuffer(Buffer.from(signedBuffer)));
+    }
+
+    // Pass 2: taproot inputs (m/86'/0'/0', bech32m).
+    if (taprootInputs.length > 0) {
+      const groupBuffer = buildGroupPsbt(taprootInputs);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-call
+      const { psbt: signedBuffer } = await app.signPsbtBuffer(groupBuffer, {
+        finalizePsbt: false,
+        accountPath: "m/86'/0'/0'",
+        addressFormat: "bech32m",
+        knownAddressDerivations: knownMap,
+      });
+      signedParts.push(Psbt.fromBuffer(Buffer.from(signedBuffer)));
+    }
+
+    if (signedParts.length === 0) {
+      throw new Error("signBtcPsbt: no inputs to sign (empty input set)");
+    }
+
+    // Combine partial signatures.
+    const combined = signedParts[0]!;
+    for (let i = 1; i < signedParts.length; i++) {
+      combined.combine(signedParts[i]!);
+    }
+
+    // Finalize and extract.
+    // For each input: if the device already set finalScriptWitness (finalizePsbt:
+    // true path or pre-finalized mock in tests), skip re-finalization. Otherwise
+    // call finalizeInput() to convert partialSig → witness (finalizePsbt: false path).
+    for (let idx = 0; idx < combined.data.inputs.length; idx++) {
+      const inp = combined.data.inputs[idx];
+      if (!inp?.finalScriptWitness && !inp?.finalScriptSig) {
+        combined.finalizeInput(idx);
+      }
+    }
+    const rawTxHex = combined.extractTransaction().toHex();
+    return { rawTxHex };
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log("warn", `transport.close() failed during signBtcPsbt cleanup: ${message}`);
     }
   }
 }
@@ -252,10 +477,16 @@ export const _btcLedgerTransport = {
     segwitPath?: string,
     taprootPath?: string,
   ): Promise<{
-    segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string };
-    taproot: { address: string; publicKey: string; chainCode: string; derivationPath: string };
+    segwit: { address: string; publicKey: string; chainCode: string; derivationPath: string; xpub: string };
+    taproot: { address: string; publicKey: string; chainCode: string; derivationPath: string; xpub: string };
     appVersion: string;
   }> => fetchBtcAddresses(segwitPath, taprootPath),
+  signBtcPsbt: (
+    psbtBase64: string,
+    inputs: readonly BtcPsbtSignInput[],
+    knownAddressDerivations: readonly KnownAddressDerivation[],
+  ): Promise<{ rawTxHex: string }> =>
+    signBtcPsbt(psbtBase64, inputs, knownAddressDerivations),
 };
 
 /**

@@ -31,8 +31,10 @@
 // publishes no documented rate limit but anecdotally tolerates ~10
 // req/s. A scan of 20 addresses thus completes in 4 batches.
 //
-// Per-xpub TTL cache (5 min). Keyed by `(xpub, scriptType)` so segwit
-// and taproot scopes from the same account xpub cache independently.
+// Per-xpub TTL cache (5 min). Keyed by `(xpub, scriptType, chain)` so
+// segwit and taproot scopes from the same account xpub cache independently,
+// AND chain-0 (receive) and chain-1 (change) scans do NOT collide.
+// Phase 23 extended the cache key to include `chain` (D-02 change-index).
 // Test seam: `_resetXpubScanCacheForTesting()` clears the cache.
 //
 // BIP-84 zpub support: the account-level extended key for BIP-84
@@ -118,26 +120,33 @@ function normalizeToXpub(extended: string): string {
 }
 
 /**
- * Derive the `i`-th external-chain (change=0) child address from the
- * account-level extended public key, formatted as the requested script
- * type.
+ * Derive the `i`-th child address from the given chain of the account-level
+ * extended public key, formatted as the requested script type.
  *
+ * - `chain = 0`: receive chain (BIP-44 external chain, the pre-Phase-23 default)
+ * - `chain = 1`: change chain (BIP-44 internal chain — added Phase 23 D-02)
  * - `p2wpkh` (BIP-84 segwit): `bc1q…` — full compressed pubkey input.
  * - `p2tr` (BIP-86 taproot): `bc1p…` — x-only internal pubkey (drop
  *   the first byte of the 33-byte compressed pubkey per BIP-340).
+ *
+ * Exported for CR-03: `change-index.ts` (and callers that need to derive a
+ * specific change address from the account xpub + a given index, without
+ * running a full gap-limit scan).  The function normalizes `zpub…` to
+ * `xpub…` internally so callers can pass either form.
  */
-function deriveAddress(
+export function deriveAddress(
   xpub: string,
   index: number,
   scriptType: "p2wpkh" | "p2tr",
+  chain: 0 | 1 = 0,
 ): string {
-  const node = bip32.fromBase58(xpub);
-  const child = node.derive(0).derive(index);
+  const node = bip32.fromBase58(normalizeToXpub(xpub));
+  const child = node.derive(chain).derive(index);
   const pubkey = child.publicKey;
   if (scriptType === "p2wpkh") {
     const { address } = payments.p2wpkh({ pubkey, network: networks.bitcoin });
     if (!address) {
-      throw new Error(`xpub-scan: p2wpkh derived no address at m/0/${index}`);
+      throw new Error(`xpub-scan: p2wpkh derived no address at m/${chain}/${index}`);
     }
     return address;
   }
@@ -149,7 +158,7 @@ function deriveAddress(
     network: networks.bitcoin,
   });
   if (!address) {
-    throw new Error(`xpub-scan: p2tr derived no address at m/0/${index}`);
+    throw new Error(`xpub-scan: p2tr derived no address at m/${chain}/${index}`);
   }
   return address;
 }
@@ -160,9 +169,13 @@ function deriveAddress(
  * unused (BIP-44 gap-limit). Returns aggregate confirmed balance +
  * per-address breakdown for active addresses.
  *
- * Caches the result per `(xpub, scriptType)` for 5 minutes; the second
- * scan within the TTL window returns the cached result without
- * touching Esplora.
+ * Caches the result per `(xpub, scriptType, chain)` for 5 minutes; the
+ * second scan within the TTL window returns the cached result without
+ * touching Esplora. The cache key incorporates `chain` so receive-chain
+ * (chain 0) and change-chain (chain 1) scans do NOT collide.
+ *
+ * `chain` defaults to `0` (receive chain) for full back-compatibility with
+ * all Phase 22 callers. Pass `chain: 1` to scan the change chain (D-02).
  *
  * NEVER throws on Esplora rate-limit / error responses — the caller
  * sees an aggregate that reflects only the addresses that returned
@@ -176,8 +189,9 @@ function deriveAddress(
 export async function scanXpub(
   xpub: string,
   scriptType: "p2wpkh" | "p2tr",
+  chain: 0 | 1 = 0,
 ): Promise<ScanXpubResult> {
-  const cacheKey = `${xpub}::${scriptType}`;
+  const cacheKey = `${xpub}::${scriptType}::${chain}`;
   const now = Date.now();
 
   const cached = cache.get(cacheKey);
@@ -212,7 +226,7 @@ export async function scanXpub(
     for (let k = 0; k < batchSize; k++) {
       const idx = nextIndex + k;
       batchIndices.push(idx);
-      batchAddresses.push(deriveAddress(normalizedXpub, idx, scriptType));
+      batchAddresses.push(deriveAddress(normalizedXpub, idx, scriptType, chain));
     }
     nextIndex += batchSize;
 

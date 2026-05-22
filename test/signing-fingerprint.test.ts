@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { Address, Hex } from "viem";
+import { Transaction, networks, payments } from "bitcoinjs-lib";
 
 import {
   FINGERPRINT_DOMAIN_TAG,
   computePayloadFingerprint,
 } from "../src/signing/payload-fingerprint.js";
+import {
+  FINGERPRINT_DOMAIN_TAG_BTC,
+  _btcFingerprint,
+  computeBtcPayloadFingerprint,
+} from "../src/signing/btc-fingerprint.js";
+import { computeAllSighashes } from "../src/signing/btc-sighash.js";
 import { MAX_UINT256 } from "../src/protocols/erc20.js";
 import {
   encodeCompoundSupply,
@@ -316,5 +323,254 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     for (const fp of fps) {
       expect(fp).toMatch(/^0x[0-9a-f]{64}$/);
     }
+  });
+});
+
+// ============================================================================
+// Phase 23 — Plan 23-01. Fixture O pins the payloadFingerprint for the
+// canonical BTC native segwit send, single-input single-output shape.
+// Computed once at write-time via the built `computeAllSighashes` +
+// `computeBtcPayloadFingerprint` modules. NO `beforeAll`-snapshot per
+// CLAUDE.md "Cryptographic-binding fixtures pinned as hardcoded literals" —
+// drift in preimage assembly MUST fail at a specific line.
+//
+// Cross-link: consumed by upcoming test/prepare-btc-send.test.ts (Plan 23-02)
+// as the Fixture O re-anchor — drift fails at BOTH this file AND the
+// consumer test (load-bearing redundancy per CLAUDE.md fixture discipline).
+//
+// DEVIATION (Rule 1 — Bug fix): The RESEARCH doc states
+// `VaultPilot-btctx-v1:` = 21 UTF-8 bytes. Actual string length is 20 chars
+// ("btctx" has 5 chars vs "trontx"'s 6 chars). The domain-tag length
+// invariant test asserts 20, matching the runtime value. Distinctness from
+// other chains is preserved: BTC tag is "btctx-v1" vs TRON "trontx-v1" vs
+// Solana "soltx-v1" vs EVM "txverify-v1".
+//
+// Computation script (recorded for reproducibility):
+//   node -e "
+//     import('./dist/signing/btc-sighash.js').then(async ({ computeAllSighashes }) => {
+//       const { computeBtcPayloadFingerprint } = await import('./dist/signing/btc-fingerprint.js');
+//       const { Transaction, payments, networks } = await import('bitcoinjs-lib');
+//       const pubkey = Buffer.from(
+//         '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798', 'hex');
+//       const script = payments.p2wpkh({ pubkey, network: networks.bitcoin }).output;
+//       const tx = new Transaction();
+//       tx.addInput(Buffer.alloc(32, 0xaa), 0, 0xfffffffe);
+//       tx.addOutput(script, BigInt(900_000));
+//       const sighashes = computeAllSighashes(tx, [{ scriptType: 'p2wpkh', prevOutScript: script, valueSats: BigInt(1_000_000) }]);
+//       console.log(computeBtcPayloadFingerprint(sighashes));
+//     })
+//   "
+// ============================================================================
+
+// Stable public key constant for all BTC fixture computations in this block.
+const BTC_FIXTURE_PUBKEY = Buffer.from(
+  "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+  "hex",
+);
+const BTC_FIXTURE_SEGWIT_SCRIPT = payments.p2wpkh({
+  pubkey: BTC_FIXTURE_PUBKEY,
+  network: networks.bitcoin,
+}).output as Uint8Array;
+
+describe("computeBtcPayloadFingerprint — BTC-PREP-01 + D-05", () => {
+  // --------------------------------------------------------------------------
+  // Domain-tag byte-length invariant (mirrors the TRON/Solana tag tests).
+  // --------------------------------------------------------------------------
+  it("domain-tag length invariant: 20 UTF-8 bytes (distinct from EVM 23-byte, TRON 21-byte, Solana 20-byte tags by string content)", () => {
+    // "VaultPilot-btctx-v1:" = 20 chars (btctx has 5 chars; trontx has 6).
+    expect(FINGERPRINT_DOMAIN_TAG_BTC.length).toBe(20);
+    expect(Buffer.byteLength(FINGERPRINT_DOMAIN_TAG_BTC, "utf8")).toBe(20);
+    // Exact string anchor — drift in the tag string is a wire-shape break.
+    expect(FINGERPRINT_DOMAIN_TAG_BTC).toBe("VaultPilot-btctx-v1:");
+  });
+
+  // --------------------------------------------------------------------------
+  // Fixture O — BTC native segwit send, single-input single-output.
+  //
+  // Input:  P2WPKH UTXO at txid=aa*32, vout=0; value=1_000_000 sats.
+  // Output: P2WPKH recipient; value=900_000 sats (100_000 sats fee).
+  // Sighash: hashForWitnessV0(0, segwitScript, 1_000_000, SIGHASH_ALL).
+  // Fingerprint: keccak256("VaultPilot-btctx-v1:" ‖ sighash₀).
+  //
+  // Hardcoded 0x… literal computed once at write-time; cross-linked from
+  // upcoming test/prepare-btc-send.test.ts (Plan 23-02 re-anchor).
+  // --------------------------------------------------------------------------
+  it("Fixture O — BTC native segwit send, single-input single-output → 0xb3af7f... byte-for-byte", () => {
+    const txidBuf = Buffer.alloc(32, 0xaa);
+    const valueSats = BigInt(1_000_000);
+
+    const tx = new Transaction();
+    tx.addInput(txidBuf, 0, 0xfffffffe); // RBF-disabled sequence (D-06)
+    tx.addOutput(BTC_FIXTURE_SEGWIT_SCRIPT, BigInt(900_000));
+
+    const sighashes = computeAllSighashes(tx, [
+      {
+        scriptType: "p2wpkh",
+        prevOutScript: BTC_FIXTURE_SEGWIT_SCRIPT,
+        valueSats,
+      },
+    ]);
+    const fp = computeBtcPayloadFingerprint(sighashes);
+
+    // Hardcoded literal anchor (Plan 23-01 — execute-time computation pinned
+    // forever). Drift in the preimage assembly for BTC-segwit-shape data
+    // breaks THIS exact assertion at PR-review time.
+    expect(fp).toBe(
+      "0xb3af7f8e8b4f657c3ea2570359faaaf4a3b7ef6fe0f332e5f49a198be56a76a4",
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // Input guard: two distinct sighashes → fingerprint differs from single-sighash.
+  // --------------------------------------------------------------------------
+  it("two distinct 32-byte sighashes → fingerprint differs from single-sighash case (proves per-input commitment)", () => {
+    const sh1 = new Uint8Array(32).fill(0x01);
+    const sh2 = new Uint8Array(32).fill(0x02);
+
+    const fp1 = computeBtcPayloadFingerprint([sh1]);
+    const fp12 = computeBtcPayloadFingerprint([sh1, sh2]);
+    expect(fp1).not.toBe(fp12);
+    // Both are valid 32-byte 0x-prefixed keccak256 outputs.
+    expect(fp1).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(fp12).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+
+  // --------------------------------------------------------------------------
+  // Input guard: empty array → throws "BTC payloadFingerprint requires at least one input sighash".
+  // --------------------------------------------------------------------------
+  it("empty sighash array → throws with exact message", () => {
+    expect(() => computeBtcPayloadFingerprint([])).toThrowError(
+      "BTC payloadFingerprint requires at least one input sighash",
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // Input guard: sighash not exactly 32 bytes → throws naming the actual length.
+  // --------------------------------------------------------------------------
+  it("sighash of wrong length (e.g. 31 bytes) → throws naming the actual byte length", () => {
+    const badSh = new Uint8Array(31).fill(0xab);
+    expect(() => computeBtcPayloadFingerprint([badSh])).toThrowError(
+      "per-input sighash must be 32 bytes, got 31",
+    );
+  });
+
+  it("sighash of wrong length (e.g. 33 bytes) → throws naming the actual byte length", () => {
+    const badSh = new Uint8Array(33).fill(0xcd);
+    expect(() => computeBtcPayloadFingerprint([badSh])).toThrowError(
+      "per-input sighash must be 32 bytes, got 33",
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // ESM spy-affordance: _btcFingerprint object exposes computeBtcPayloadFingerprint.
+  // --------------------------------------------------------------------------
+  it("_btcFingerprint spy-affordance exports computeBtcPayloadFingerprint", () => {
+    expect(typeof _btcFingerprint.computeBtcPayloadFingerprint).toBe(
+      "function",
+    );
+    expect(_btcFingerprint.computeBtcPayloadFingerprint).toBe(
+      computeBtcPayloadFingerprint,
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // Fixture P — BTC taproot single input.
+  //
+  // Input:  P2TR UTXO at txid=bb*32, vout=0; value=1_000_000 sats.
+  //         internalPubkey = x-coordinate of secp256k1 generator G
+  //         (BTC_FIXTURE_PUBKEY.slice(1) = 32 bytes of
+  //          "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798").
+  // Output: P2WPKH (BTC_FIXTURE_SEGWIT_SCRIPT); value=900_000 sats.
+  // Sighash: hashForWitnessV1(0, [p2trScript], [1_000_000n], SIGHASH_DEFAULT=0).
+  // Fingerprint: keccak256("VaultPilot-btctx-v1:" ‖ sighash₀).
+  //
+  // Hardcoded literal computed once at write-time (Plan 23-03 execute-time
+  // via `node --input-type=module` + compiled dist-tmp modules). Pinned
+  // forever — drift in the taproot sighash preimage assembly breaks THIS
+  // exact assertion at PR-review time.
+  //
+  // Cross-link: re-anchored in test/prepare-btc-send.test.ts (Plan 23-03
+  // Fixture P re-anchor — drift fails at BOTH files).
+  // --------------------------------------------------------------------------
+  it("Fixture P — BTC taproot single input → 0x01af3f... byte-for-byte", () => {
+    const valueSats = BigInt(1_000_000);
+    const taprootXOnly = BTC_FIXTURE_PUBKEY.slice(1); // 32 bytes, x-coord of G
+    const p2trScript = payments.p2tr({
+      internalPubkey: Buffer.from(taprootXOnly),
+      network: networks.bitcoin,
+    }).output as Uint8Array;
+
+    const tx = new Transaction();
+    tx.version = 2;
+    tx.addInput(Buffer.alloc(32, 0xbb), 0, 0xfffffffe);
+    tx.addOutput(BTC_FIXTURE_SEGWIT_SCRIPT, BigInt(900_000));
+
+    const sighashes = computeAllSighashes(tx, [
+      {
+        scriptType: "p2tr",
+        prevOutScript: p2trScript,
+        valueSats,
+      },
+    ]);
+    const fp = computeBtcPayloadFingerprint(sighashes);
+
+    // Hardcoded literal anchor (Plan 23-03 — execute-time computation pinned
+    // forever). Drift in the taproot sighash preimage breaks THIS assertion.
+    expect(fp).toBe(
+      "0x01af3f9105c829cd28773a11ac9e8a820aa124e538cd4230500ee95df96b2043",
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // Fixture Q — BTC mixed segwit+taproot, 2 inputs.
+  //
+  // Input 0: P2WPKH UTXO at txid=cc*32, vout=0; value=1_000_000 sats.
+  //           BTC_FIXTURE_SEGWIT_SCRIPT.
+  // Input 1: P2TR UTXO at txid=dd*32, vout=1; value=1_100_000 sats.
+  //           internalPubkey = BTC_FIXTURE_PUBKEY.slice(1).
+  // Output: P2WPKH (BTC_FIXTURE_SEGWIT_SCRIPT); value=1_900_000 sats.
+  // Sighash[0]: hashForWitnessV0(0, segwitScript, 1_000_000, SIGHASH_ALL=1).
+  // Sighash[1]: hashForWitnessV1(1, [segwitScript, p2trScript],
+  //              [1_000_000n, 1_100_000n], SIGHASH_DEFAULT=0).
+  // Fingerprint: keccak256("VaultPilot-btctx-v1:" ‖ sighash₀ ‖ sighash₁).
+  //
+  // Hardcoded literal computed once at write-time (Plan 23-03 execute-time).
+  // Cross-link: re-anchored in test/prepare-btc-send.test.ts (drift fails
+  // at BOTH files — load-bearing redundancy per CLAUDE.md fixture discipline).
+  // --------------------------------------------------------------------------
+  it("Fixture Q — BTC mixed segwit+taproot 2-input → 0xffa4a2... byte-for-byte", () => {
+    const valueSats0 = BigInt(1_000_000);
+    const valueSats1 = BigInt(1_100_000);
+    const taprootXOnly = BTC_FIXTURE_PUBKEY.slice(1); // 32 bytes, x-coord of G
+    const p2trScript = payments.p2tr({
+      internalPubkey: Buffer.from(taprootXOnly),
+      network: networks.bitcoin,
+    }).output as Uint8Array;
+
+    const tx = new Transaction();
+    tx.version = 2;
+    tx.addInput(Buffer.alloc(32, 0xcc), 0, 0xfffffffe);
+    tx.addInput(Buffer.alloc(32, 0xdd), 1, 0xfffffffe);
+    tx.addOutput(BTC_FIXTURE_SEGWIT_SCRIPT, BigInt(1_900_000));
+
+    const sighashes = computeAllSighashes(tx, [
+      {
+        scriptType: "p2wpkh",
+        prevOutScript: BTC_FIXTURE_SEGWIT_SCRIPT,
+        valueSats: valueSats0,
+      },
+      {
+        scriptType: "p2tr",
+        prevOutScript: p2trScript,
+        valueSats: valueSats1,
+      },
+    ]);
+    const fp = computeBtcPayloadFingerprint(sighashes);
+
+    // Hardcoded literal anchor (Plan 23-03 — execute-time computation pinned
+    // forever). Drift in the mixed-input sighash preimage breaks THIS assertion.
+    expect(fp).toBe(
+      "0xffa4a2f84cedaa3fc86432bb3b8b79422befb6e06699048e463a8d83f775d783",
+    );
   });
 });
