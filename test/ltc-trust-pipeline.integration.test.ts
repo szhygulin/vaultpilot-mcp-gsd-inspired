@@ -108,16 +108,22 @@ const LTC_ALT_SEGWIT = "ltc1qq6hag67dl53wl99vzg42z8eyzfz2xlkvz9zn23";
 // ---------------------------------------------------------------------------
 // Fake UTXOs for integration test (known txid + value for deterministic FP)
 // ---------------------------------------------------------------------------
+// WR-04: UTXO values sized so that change stays under the 10_000-litoshi
+// refusal threshold when using SMALL_LITOSHI=50_000 (UTXO ≈ send + ~fee + headroom).
+// Both UTXOs fit SMALL_LITOSHI (50_000 sats) with feeRate=5 at ~545 sats fee:
+//   A: 55_000 - 50_000 - 545 ≈ 4_455 litoshi change (< 10_000) ✓
+//   B: 56_000 - 50_000 - 545 ≈ 5_455 litoshi change (< 10_000) ✓
+// B differs from A by txid and value → produces distinct sighash → distinct fingerprint (T-07).
 const SEGWIT_UTXO_A = {
   txid: "aa".repeat(32),
   vout: 0,
-  valueSats: "100000",
+  valueSats: "55000",
   scriptType: "p2wpkh" as const,
 };
 const SEGWIT_UTXO_B = {
   txid: "bb".repeat(32),
   vout: 0,
-  valueSats: "200000",
+  valueSats: "56000",
   scriptType: "p2wpkh" as const,
 };
 
