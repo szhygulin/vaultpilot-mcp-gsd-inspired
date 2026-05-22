@@ -3,13 +3,12 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Solana
 status: executing
-stopped_at: "Phase 18 `18-CONTEXT.md` + `18-DISCUSSION-LOG.md` + `18-PATTERNS.md` + `18-RESEARCH.md` + `18-01-PLAN.md` through `18-04-PLAN.md` + `18-PLAN-CHECK.md` shipped via PR `docs(18): discuss + plan TRON trust pipeline`. Plan-checker verdict: PASS WITH 3 FLAGS + 2 NITs (no BLOCKers). FLAG-1 (LEDGER_NOTICE predicate cleanup) + FLAG-1.5 (`sendTransactionTron` envelope `txID` field source corrected from `record.payloadFingerprint.slice(2)` → `record.pinned!.presignHash.slice(2)` per RESEARCH §Topic 4 — TRON consensus tx-id IS the SHA-256 presign hash, NOT the keccak256 binding fingerprint) inline-fixed in 18-04 before commit. FLAG-2 + FLAG-3 are upstream-ROADMAP-doc hygiene (Phase 18 SC #6 fixture names K+L → M+N + Plan 18-02 expiration framing) scheduled for execute-phase sign-off. One research-driven CONTEXT correction: D-06b ambiguously framed "TRON's 1-hour ref-block window > 15-min TTL" conflating TAPOS replay (~15-30 min) with broadcast expiration. RESEARCH §Topic 5 confirmed tronweb's default `expiration` is 60 seconds; Plans 18-02 + 18-03 call `tronweb.transactionBuilder.extendExpiration(tx, 900)` after `transactionBuilder.*` returns so expiration matches the 15-min handle TTL."
-last_updated: "2026-05-21T10:00:00.000Z"
-last_activity: 2026-05-21 -- Phase 22 code-complete (BTC scaffolding)
+last_updated: "2026-05-22T11:52:26.242Z"
+last_activity: "2026-05-21 -- Phase 22 code-complete (BTC scaffolding) — PRs #120 / #121 / #122 / #123 merged; 2677 tests green; v2.2 verify-phase deferred"
 progress:
   total_phases: 6
   completed_phases: 0
-  total_plans: 11
+  total_plans: 13
   completed_plans: 0
   percent: 0
 ---
@@ -293,6 +292,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-20 (Phase 18 context + plan-phase artifacts shipped — v2.1 TRON trust pipeline planning complete)
-Stopped at: Phase 18 `18-CONTEXT.md` + `18-DISCUSSION-LOG.md` + `18-PATTERNS.md` + `18-RESEARCH.md` + `18-01-PLAN.md` through `18-04-PLAN.md` + `18-PLAN-CHECK.md` shipped via PR `docs(18): discuss + plan TRON trust pipeline`. Plan-checker verdict: PASS WITH 3 FLAGS + 2 NITs (no BLOCKers). FLAG-1 (LEDGER_NOTICE predicate cleanup) + FLAG-1.5 (`sendTransactionTron` envelope `txID` field source corrected from `record.payloadFingerprint.slice(2)` → `record.pinned!.presignHash.slice(2)` per RESEARCH §Topic 4 — TRON consensus tx-id IS the SHA-256 presign hash, NOT the keccak256 binding fingerprint) inline-fixed in 18-04 before commit. FLAG-2 + FLAG-3 are upstream-ROADMAP-doc hygiene (Phase 18 SC #6 fixture names K+L → M+N + Plan 18-02 expiration framing) scheduled for execute-phase sign-off. One research-driven CONTEXT correction: D-06b ambiguously framed "TRON's 1-hour ref-block window > 15-min TTL" conflating TAPOS replay (~15-30 min) with broadcast expiration. RESEARCH §Topic 5 confirmed tronweb's default `expiration` is 60 seconds; Plans 18-02 + 18-03 call `tronweb.transactionBuilder.extendExpiration(tx, 900)` after `transactionBuilder.*` returns so expiration matches the 15-min handle TTL.
-Resume file: `.planning/phases/18-tron-native-trc20-trust-pipeline/18-01-PLAN.md` — next action is `/gsd-execute-phase 18` to dispatch the 4-plan strict-sequential execute chain (18-01 primitives shelf → 18-02 native send → 18-03 TRC-20 send → 18-04 preview + send + SECURITY.md + integration). Plans deliver TRON-PREP-01..04 + TRON-W-01/W-02 + load-bearing trust pipeline mirroring Phase 12 (Solana) architectural shape with TRON-specific Protobuf raw_data fingerprint + SHA-256 blind-sign hash + asymmetric Layer 0.7 (TRC-20 mandatory `triggerconstantcontract`, native TRX no-sim advisory).
+Last session: 2026-05-22T11:52:26.231Z
+Stopped at: Phase 23 context gathered
+Resume file: .planning/phases/23-btc-native-segwit-taproot-trust-pipeline/23-CONTEXT.md
