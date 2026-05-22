@@ -478,9 +478,15 @@ registerTool(
       // Step 11: Build recipient outputs and change output.
       // Recipient outputs are preserved byte-identically (T-24-03 mitigation).
       // Only the change output is reduced.
+      //
+      // CR-01 guard: multi-recipient originals are not supported in Phase 24.
+      // buildBtcPsbt accepts a single recipientOutput; silently dropping extra
+      // outputs would violate BIP-125 Rule 2 (T-24-03) and mislead the Ledger
+      // screen. Refuse with a structured error — multi-output RBF is deferred.
       // -----------------------------------------------------------------------
-      const recipientVout = txData.vout.find((_, idx) => idx !== changeVoutIndex);
-      if (recipientVout === undefined) {
+      const recipientVouts = txData.vout.filter((_, idx) => idx !== changeVoutIndex);
+
+      if (recipientVouts.length === 0) {
         // Degenerate case: all outputs are change? Surface as internal error.
         return {
           isError: true,
@@ -496,6 +502,28 @@ registerTool(
           ),
         };
       }
+
+      if (recipientVouts.length > 1) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                `error: txid ${rawTxid} has ${recipientVouts.length} non-change outputs. ` +
+                "prepare_btc_rbf_bump only supports single-recipient transactions in Phase 24. " +
+                "Multi-output RBF fee bumping is deferred to a future phase.",
+            },
+          ],
+          structuredContent: errEnvelope(
+            "INVALID_INPUT",
+            `txid ${rawTxid} has ${recipientVouts.length} non-change outputs; multi-output RBF deferred to Phase 25`,
+          ),
+        };
+      }
+
+      // recipientVouts.length === 1 is guaranteed at this point by the guards above.
+      const recipientVout = recipientVouts[0]!;
 
       const recipientScriptType: "p2wpkh" | "p2tr" =
         recipientVout.scriptpubkey_type === "v1_p2tr" ? "p2tr" : "p2wpkh";
