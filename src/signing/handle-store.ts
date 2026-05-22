@@ -565,9 +565,9 @@ export interface PreparedTxBtc {
   /**
    * BTC send kind. `"native"` covers all Phase 23 sends (segwit / taproot /
    * mixed-input). `"rbf"` covers Phase 24 RBF replacement transactions.
-   * Multisig (Phase 25) will widen this further.
+   * `"multisig-psbt"` covers Phase 25 M-of-N multisig PSBT signing.
    */
-  kind: "native" | "rbf";
+  kind: "native" | "rbf" | "multisig-psbt";
 
   // -----------------------------------------------------------------------
   // RBF-only optional fields (Phase 24 — Plan 24-01).
@@ -592,6 +592,29 @@ export interface PreparedTxBtc {
    * Non-null when `kind === "rbf"`. Used in PREPARE RECEIPT diff block.
    */
   originalFeeRate?: number;
+
+  // -----------------------------------------------------------------------
+  // Multisig-PSBT-only optional fields (Phase 25 — Plan 25-03).
+  // Present only when `kind === "multisig-psbt"`.
+  // -----------------------------------------------------------------------
+
+  /**
+   * Name of the registered multisig wallet from btc-multisig.json.
+   * Non-null when `kind === "multisig-psbt"`.
+   */
+  multisigWalletName?: string;
+
+  /**
+   * Threshold M for this multisig wallet.
+   * Non-null when `kind === "multisig-psbt"`.
+   */
+  multisigThreshold?: number;
+
+  /**
+   * Total signers N for this multisig wallet.
+   * Non-null when `kind === "multisig-psbt"`.
+   */
+  multisigTotalSigners?: number;
 
   // -----------------------------------------------------------------------
   // BTC-specific cryptographic-binding fields.

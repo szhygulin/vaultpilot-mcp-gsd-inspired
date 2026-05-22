@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Address, Hex } from "viem";
 import { Transaction, networks, payments } from "bitcoinjs-lib";
+import { BIP32Factory } from "bip32";
+import * as tinySecp256k1 from "tiny-secp256k1";
 
 import {
   FINGERPRINT_DOMAIN_TAG,
@@ -629,6 +631,109 @@ describe("computeBtcPayloadFingerprint — BTC-PREP-01 + D-05", () => {
     // distinct fingerprint. Drift in RBF preimage assembly breaks THIS assertion.
     expect(fp).toBe(
       "0x946eeae4f39317444201821a47bdd0819bffc155925e5b855d22d04a2e1cfefc",
+    );
+  });
+
+  // --------------------------------------------------------------------------
+  // Fixture X — BTC multisig PSBT payloadFingerprint.
+  //
+  // Phase 25 / Plan 25-03 — 2-of-3 multisig P2WSH single-input.
+  //
+  // Wallet: wsh(sortedmulti(2, TEST_XPUB_0/**, TEST_XPUB_1/**, TEST_XPUB_2/**))
+  //   where TEST_XPUB_0..2 are the BIP-32 test vector xpubs from
+  //   test/btc-multisig-address-derivation.test.ts (same fixtures).
+  // Derivation: change=0, index=0 child pubkeys, BIP-67 sorted.
+  // prevOutScript: witnessScript (p2ms output = redeem script) — per the
+  //   canonical approach: sign_btc_multisig_psbt stores witnessScript in
+  //   perInputPrevouts with scriptType "p2wpkh" (both P2WPKH and P2WSH use
+  //   BIP-143 hashForWitnessV0; the scriptCode for P2WSH IS the witnessScript).
+  //
+  // Input: witnessScript as prevOutScript, value=1_000_000 sats,
+  //   txid=bb*32, vout=0, sequence=0xfffffffe.
+  // Output: P2WPKH (BTC_FIXTURE_SEGWIT_SCRIPT); value=900_000 sats.
+  //
+  // Hardcoded 0x… literal computed once at execute time (2026-05-22) via:
+  //   node -e "
+  //     import('./dist/signing/btc-sighash.js').then(async ({ computeAllSighashes }) => {
+  //       const { computeBtcPayloadFingerprint } = await import('./dist/signing/btc-fingerprint.js');
+  //       const { Transaction, payments, networks } = await import('bitcoinjs-lib');
+  //       const { BIP32Factory } = await import('bip32');
+  //       const tinySecp = await import('tiny-secp256k1');
+  //       const bip32 = BIP32Factory(tinySecp.default || tinySecp);
+  //       const xpubs = [TEST_XPUB_0, TEST_XPUB_1, TEST_XPUB_2];
+  //       const pubkeys = xpubs.map(xpub => {
+  //         const node = bip32.fromBase58(xpub, networks.bitcoin);
+  //         return Buffer.from(node.derive(0).derive(0).publicKey);
+  //       });
+  //       const sorted = [...pubkeys].sort(Buffer.compare);
+  //       const witnessScript = payments.p2ms({ m: 2, pubkeys: sorted, network: networks.bitcoin }).output;
+  //       const tx = new Transaction();
+  //       tx.addInput(Buffer.alloc(32, 0xbb), 0, 0xfffffffe);
+  //       tx.addOutput(/* BTC_FIXTURE_SEGWIT_SCRIPT */, BigInt(900_000));
+  //       const sighashes = computeAllSighashes(tx, [{ scriptType: 'p2wpkh', prevOutScript: witnessScript, valueSats: BigInt(1_000_000) }]);
+  //       console.log(computeBtcPayloadFingerprint(sighashes));  // => 0xced8fc41b79311a8f7130aac2a45e382d4a0a6591731f706a96726d7b3cf5414
+  //     })
+  //   "
+  //
+  // NO `beforeAll`-snapshot per CLAUDE.md — drift in the P2WSH preimage assembly
+  // breaks THIS exact assertion at PR-review time.
+  //
+  // Cross-link: consumed by test/tools-sign-btc-multisig-psbt.test.ts (Plan 25-03
+  // Fixture X re-anchor — drift fails at BOTH this file AND the consumer test).
+  // --------------------------------------------------------------------------
+  it("Fixture X — BTC 2-of-3 multisig P2WSH single-input → 0xced8fc41... byte-for-byte", () => {
+    // BIP-32 test vector xpubs (account-level) — same fixtures as
+    // test/btc-multisig-address-derivation.test.ts
+    const TEST_XPUB_0 =
+      "xpub6C1HVMz946r433QEjZGpYYWYcspxXXBPys5PBGkmQboRXE6RLfFiStEkKbWKCZaPgDrzZh9nUEunxuiuy6MNdw23du2Ek7GoKYMJVH8eK5E";
+    const TEST_XPUB_1 =
+      "xpub6C1HVMz946r45SLqXksZWuaVdbpznU1s5peogGPTXqkHcXChkh7TN9vC2mgcSFkdA5YpX94xfAPWZTPoDJhGbUdVwF13RfkY9ioGHSLEuUE";
+    const TEST_XPUB_2 =
+      "xpub6C1HVMz946r488Vd17BsrsybenwSabqNkg5b42wvkZKnru8Wzgp56AaLERXpDastZzbDMWFpcEh9TJy64YHEnfRg2Se6Zj4W88srAcemued";
+
+    // Derive child pubkeys at change=0, index=0; BIP-67 sort (Buffer.compare)
+    const bip32 = BIP32Factory(tinySecp256k1);
+    const xpubs = [TEST_XPUB_0, TEST_XPUB_1, TEST_XPUB_2];
+    const pubkeys = xpubs.map((xpub) => {
+      const node = bip32.fromBase58(xpub, networks.bitcoin);
+      return Buffer.from(node.derive(0).derive(0).publicKey);
+    });
+    const sorted = [...pubkeys].sort(Buffer.compare);
+
+    // Build witnessScript (redeem script = p2ms output).
+    // For P2WSH spending, BIP-143 scriptCode IS the witnessScript.
+    // sign_btc_multisig_psbt stores this as perInputPrevouts[i].script with
+    // scriptType "p2wpkh" so the FROZEN computeAllSighashes dispatches
+    // hashForWitnessV0(i, witnessScript, valueSats, SIGHASH_ALL).
+    const witnessScript = payments.p2ms({
+      m: 2,
+      pubkeys: sorted,
+      network: networks.bitcoin,
+    }).output as Uint8Array;
+
+    const txidBuf = Buffer.alloc(32, 0xbb);
+    const valueSats = BigInt(1_000_000);
+
+    const tx = new Transaction();
+    tx.addInput(txidBuf, 0, 0xfffffffe); // RBF-disabled sequence (D-06 analog for multisig)
+    tx.addOutput(BTC_FIXTURE_SEGWIT_SCRIPT, BigInt(900_000)); // 100_000 sats fee
+
+    const sighashes = computeAllSighashes(tx, [
+      {
+        scriptType: "p2wpkh", // P2WSH uses hashForWitnessV0 with witnessScript
+        prevOutScript: witnessScript,
+        valueSats,
+      },
+    ]);
+    const fp = computeBtcPayloadFingerprint(sighashes);
+
+    // Hardcoded literal anchor (Phase 25 / Plan 25-03 — 2-of-3 multisig P2WSH).
+    // Distinct from all prior fixtures: the prevOutScript is the witnessScript
+    // (p2ms output), not a p2wpkh script — produces a different sighash preimage.
+    // Drift in P2WSH sighash assembly (wrong script / wrong value / wrong xpubs)
+    // breaks THIS assertion.
+    expect(fp).toBe(
+      "0xced8fc41b79311a8f7130aac2a45e382d4a0a6591731f706a96726d7b3cf5414",
     );
   });
 });

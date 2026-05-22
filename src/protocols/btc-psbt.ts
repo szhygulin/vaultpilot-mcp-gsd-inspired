@@ -581,5 +581,67 @@ export function combineBtcPsbts(psbtBase64s: readonly string[]): BtcCombineResul
 
 // ─── ESM spy-affordance (CLAUDE.md) ──────────────────────────────────────────
 
+// ─── Phase 25 Plan 25-03: PSBT finalizer with threshold enforcement ───────────
+
+/**
+ * Result of `finalizeBtcPsbt` — discriminated union, NEVER throws.
+ *
+ * `"ok"`: All inputs had ≥ M partial signatures; `finalizeAllInputs()` succeeded;
+ *   `finalPsbtBase64` + `txHex` are ready for broadcast.
+ * `"threshold-not-met"`: One or more inputs had fewer than M partial signatures;
+ *   `underThresholdInputs` lists the 0-based input indices.
+ * `"error"`: Unexpected error (malformed PSBT or finalizer threw).
+ */
+export type BtcFinalizeResult =
+  | { readonly kind: "ok"; readonly finalPsbtBase64: string; readonly txHex: string }
+  | { readonly kind: "threshold-not-met"; readonly underThresholdInputs: readonly number[] }
+  | { readonly kind: "error"; readonly message: string };
+
+/**
+ * Threshold-enforced PSBT finalizer (Plan 25-03 / BTC-PSBT-07).
+ *
+ * Security invariant (T-25-11 mitigation):
+ *   `bitcoinjs-lib finalizeAllInputs()` throws an opaque error if any input
+ *   has fewer than M partial signatures (the p2ms getSortedSigs path). This
+ *   function checks `partialSig.length >= threshold` per input BEFORE calling
+ *   `finalizeAllInputs()` and returns `{ kind: "threshold-not-met" }` with the
+ *   under-threshold input indices instead of letting the opaque throw propagate.
+ *
+ * DOES NOT produce a handle or payloadFingerprint — this is a direct PSBT
+ * transform (same shape as `combineBtcPsbts`).
+ *
+ * `threshold`: the M value for this wallet (caller extracts from the registry
+ * record or passes directly). `finalize_btc_psbt.ts` validates threshold ≥ 1.
+ */
+export function finalizeBtcPsbt(psbtBase64: string, threshold: number): BtcFinalizeResult {
+  try {
+    const psbt = Psbt.fromBase64(psbtBase64);
+
+    // ── Step 1: Per-input threshold check (T-25-11 mitigation) ──────────────
+    const underThreshold: number[] = [];
+    for (let i = 0; i < psbt.data.inputs.length; i++) {
+      const sigs = psbt.data.inputs[i]?.partialSig ?? [];
+      if (sigs.length < threshold) underThreshold.push(i);
+    }
+
+    if (underThreshold.length > 0) {
+      return { kind: "threshold-not-met", underThresholdInputs: underThreshold };
+    }
+
+    // ── Step 2: Finalize + extract raw tx ────────────────────────────────────
+    psbt.finalizeAllInputs();
+    return {
+      kind: "ok",
+      finalPsbtBase64: psbt.toBase64(),
+      txHex: psbt.extractTransaction().toHex(),
+    };
+  } catch (err) {
+    return {
+      kind: "error",
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 /** Indirection object for vi.spyOn across ESM module boundaries. */
-export const _btcPsbt = { buildBtcPsbt, decodeBtcPsbt, combineBtcPsbts };
+export const _btcPsbt = { buildBtcPsbt, decodeBtcPsbt, combineBtcPsbts, finalizeBtcPsbt };
