@@ -372,3 +372,88 @@ export const LEDGER_BLIND_SIGN_HASH_LTC_NATIVE_TEMPLATE: string = [
   "  summary (inputs, outputs, fee). Compare character-for-character.",
   "  If they match → approve on the device. If they differ → REJECT (tamper signal).",
 ].join("\n");
+
+// ─── Phase 26 Plan 26-03 — BTC LiFi bridge templates ─────────────────────────
+//
+// APPEND-ONLY. Zero modifications to existing BTC / Phase 25 / Phase 26 Plan 26-02
+// templates above.
+//
+// BTC LiFi structural note:
+//   - `PREPARE_RECEIPT_BTC_LIFI_TEMPLATE` is distinct from PREPARE_RECEIPT_BTC_NATIVE_TEMPLATE:
+//     the PSBT is LiFi-constructed, not VaultPilot-constructed. The receipt surfaces the
+//     verbatim LiFi PSBT hex (truncated to 80 chars) + the decoded final recipient.
+//   - `LEDGER_BLIND_SIGN_HASH_BTC_LIFI_TEMPLATE` emits the PSBT-level fingerprint
+//     (whole-PSBT keccak256) rather than per-input sighashes, because the Ledger
+//     device PSBT-signs the full LiFi PSBT.
+//
+// Domain tag "VaultPilot-btclifi-v1:" is distinct from "VaultPilot-btctx-v1:" and
+// "VaultPilot-ltctx-v1:" — cross-chain fingerprint reuse prevention (T-26-12).
+
+/**
+ * PREPARE RECEIPT — BTC LiFi bridge swap (LiFi-supplied PSBT, verbatim agent args,
+ * NO normalization). Substituted by `prepare_btc_lifi_swap.ts` (Plan 26-03 BTC-LIFI-01).
+ * Slots:
+ *   - `{FROM_TOKEN}`        — "BTC" (raw agent string).
+ *   - `{TO_CHAIN}`          — target chain (raw agent string, e.g. "ETH").
+ *   - `{TO_TOKEN}`          — target token (raw agent string).
+ *   - `{AMOUNT}`            — satoshi amount (raw agent string).
+ *   - `{TO_ADDRESS}`        — user-supplied destination address (raw agent string).
+ *   - `{VAULT_ADDRESS}`     — LiFi bridge vault BTC deposit address (server-decoded).
+ *   - `{AMOUNT_SATS}`       — deposit output value in sats (server-decoded).
+ *   - `{OUTPUT_COUNT}`      — total PSBT output count (server-decoded).
+ *   - `{HAS_OP_RETURN}`     — "true"/"false" — OP_RETURN tracking memo presence.
+ *   - `{DECODED_RECIPIENT}` — quote.action.toAddress (server-asserted via Inv#6b).
+ *   - `{PSBT_HEX_PREVIEW}`  — first 80 chars of PSBT hex + "...[full PSBT]".
+ *
+ * PREP-02 invariant: the receipt surfaces what the agent claimed (verbatim raw strings)
+ * plus the server-decoded display values. The cryptographic anchor
+ * (payloadFingerprint = keccak256("VaultPilot-btclifi-v1:" ‖ psbtBytes)) catches drift.
+ *
+ * Inv#6b: DECODED_RECIPIENT == TO_ADDRESS is ASSERTED at prepare time (T-26-10).
+ * A mismatched decodedRecipient in this block is impossible — the handle was refused.
+ */
+export const PREPARE_RECEIPT_BTC_LIFI_TEMPLATE: string = [
+  "PREPARE RECEIPT (BTC — LiFi bridge swap)",
+  "  chain:             Bitcoin mainnet → {TO_CHAIN}",
+  "  fromToken:         {FROM_TOKEN}",
+  "  toToken:           {TO_TOKEN}",
+  "  amount:            {AMOUNT} sats",
+  "  toAddress:         {TO_ADDRESS}",
+  "  vaultAddress:      {VAULT_ADDRESS}  (LiFi bridge deposit address)",
+  "  depositSats:       {AMOUNT_SATS}",
+  "  outputCount:       {OUTPUT_COUNT}",
+  "  hasOpReturn:       {HAS_OP_RETURN}  (LiFi tracking memo)",
+  "  decodedRecipient:  {DECODED_RECIPIENT}  (Inv#6b: equals toAddress ✓)",
+  "  psbt (preview):    {PSBT_HEX_PREVIEW}",
+].join("\n");
+
+/**
+ * LEDGER BLIND-SIGN HASH (BTC — LiFi bridge) — device-display hash surface
+ * emitted by `preview_send` for BTC LiFi handles (Plan 26-03).
+ * Slots:
+ *   - `{PSBT_FINGERPRINT}` — payloadFingerprint (0x-prefixed 64-char keccak256 hex).
+ *   - `{PSBT_HEX_PREVIEW}` — first 80 chars of PSBT hex + "...[full PSBT]".
+ *   - `{OUTPUT_COUNT}`     — total PSBT output count.
+ *
+ * BTC LiFi divergence from LEDGER_BLIND_SIGN_HASH_BTC_TEMPLATE:
+ *   - BTC native uses N per-input BIP-143/341 sighashes.
+ *   - BTC LiFi surfaces the WHOLE-PSBT keccak256 fingerprint, because the PSBT
+ *     is LiFi-constructed and the Ledger device PSBT-signs the full structure.
+ *   - The PSBT byte sequence is the binding artifact — output reorder or OP_RETURN
+ *     drop would change the fingerprint.
+ */
+export const LEDGER_BLIND_SIGN_HASH_BTC_LIFI_TEMPLATE: string = [
+  "LEDGER BLIND-SIGN HASH (BTC — LiFi bridge)",
+  "  PSBT fingerprint:  {PSBT_FINGERPRINT}",
+  "  (keccak256(\"VaultPilot-btclifi-v1:\" ‖ psbtBytes) — whole-PSBT bytes)",
+  "  PSBT (preview):    {PSBT_HEX_PREVIEW}",
+  "  Output count:      {OUTPUT_COUNT}",
+  "",
+  "  The LiFi PSBT encodes a Bitcoin mainnet bridge deposit transaction.",
+  "  Your Ledger BTC app will display the inputs, outputs, and fee on-device.",
+  "  Compare character-for-character against the PREPARE RECEIPT above.",
+  "",
+  "  After you say \"send\", your Ledger device will display the PSBT contents.",
+  "  If they match → approve on the device. If they differ → REJECT (tamper signal).",
+  "  CRITICAL: verify that the vault address matches the PREPARE RECEIPT.",
+].join("\n");

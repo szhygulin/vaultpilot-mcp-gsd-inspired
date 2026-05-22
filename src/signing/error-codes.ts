@@ -217,7 +217,20 @@ export type ErrorCode =
   | "MULTISIG_WALLET_NOT_FOUND"
   | "MULTISIG_WALLET_NOT_REGISTERED_ON_DEVICE"
   | "LEDGER_BTC_APP_VERSION_TOO_OLD"
-  | "MULTISIG_DESCRIPTOR_INVALID";
+  | "MULTISIG_DESCRIPTOR_INVALID"
+  //
+  // Phase 26 Plan 26-03 — BTC LiFi bridge error codes (additive).
+  // APPEND-ONLY — do not reorder existing codes above.
+  //
+  //   LIFI_NO_ROUTE       — prepare_btc_lifi_swap: LiFi returned HTTP 404 (no route
+  //                         for the requested BTC→toChain swap). Recovery: try a
+  //                         different toChain / toToken, or check LiFi availability.
+  //   RECIPIENT_MISMATCH  — prepare_btc_lifi_swap: Inv#6b assertion failed —
+  //                         quote.action.toAddress.toLowerCase() !== params.toAddress.toLowerCase().
+  //                         A tampered or malicious LiFi route redirected funds to a
+  //                         different recipient. Handle NOT created. (T-26-10 mitigation)
+  | "LIFI_NO_ROUTE"
+  | "RECIPIENT_MISMATCH";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

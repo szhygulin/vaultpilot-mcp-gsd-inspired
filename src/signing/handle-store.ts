@@ -847,7 +847,81 @@ export interface PreparedTxLtc {
   instructionSummary?: LtcInstructionSummary[];
 }
 
-export type PreparedTx = PreparedTxEvm | PreparedTxSolana | PreparedTxTron | PreparedTxBtc | PreparedTxLtc;
+// ---------------------------------------------------------------------------
+// Phase 26 Plan 26-03 widening: PreparedTxBtcLifi.
+// ADDITIVE TYPE SURFACE — state machine + TTL logic BYTE-IDENTICAL
+// (same pattern as Phase 23 PreparedTxBtc and Phase 26-02 PreparedTxLtc).
+// ---------------------------------------------------------------------------
+
+/**
+ * BTC LiFi bridge prepared-tx shape. Phase 26 — Plan 26-03. Mirrors the
+ * PreparedTxBtc sentinel-fields pattern with `txType: "btc-lifi"` as the
+ * discriminator. The PSBT is LiFi-constructed (not VaultPilot-constructed):
+ * VaultPilot's role is to sign inputs and broadcast verbatim.
+ *
+ * The payloadFingerprint preimage is keccak256("VaultPilot-btclifi-v1:" ‖ psbtBytes)
+ * — the WHOLE PSBT bytes, not per-input sighashes (T-26-11 / T-26-14 mitigation).
+ *
+ * FROZEN guard: this interface is ADDITIVE TYPE SURFACE only. The handle-store
+ * state machine + TTL + createHandle + transitionTo* logic is BYTE-IDENTICAL
+ * (Phase 23 PreparedTxBtc precedent at line 537).
+ */
+export interface PreparedTxBtcLifi {
+  /** Required discriminator — BTC LiFi bridge shape. */
+  txType: "btc-lifi";
+
+  // -----------------------------------------------------------------------
+  // EVM-shape sentinel fields (set to zero / empty values for btc-lifi handles).
+  // -----------------------------------------------------------------------
+  /** Sentinel — BTC LiFi has no EVM chainId. Always 0. */
+  chainId: number;
+  /** Sentinel — BTC addresses are bech32, not 0x-prefixed. Always the zero address. */
+  to: Address;
+  /** Sentinel — BTC uses satoshi, not valueWei. Always 0n. */
+  valueWei: bigint;
+  /** Sentinel — BTC LiFi has no EVM calldata. Always "0x". */
+  data: Hex;
+  /** Sentinel — no EVM nonce. Always undefined. */
+  nonce?: number;
+  gas?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+
+  // -----------------------------------------------------------------------
+  // BTC LiFi-specific cryptographic-binding fields.
+  // -----------------------------------------------------------------------
+
+  /**
+   * The LiFi-supplied PSBT hex (verbatim from transactionRequest.data).
+   * Output order is LOAD-BEARING — never reconstruct or reorder (Pitfall 6).
+   * This is the canonical recompute artifact for payloadFingerprint drift detection.
+   */
+  psbtHex: string;
+
+  /** Bridge vault BTC deposit address (first PSBT output). Display-only. */
+  vaultAddress: string;
+
+  /** Amount in satoshi (from the deposit output). Display-only. */
+  amountSats: bigint;
+
+  /** Final destination address on the target chain. Asserted by Inv#6b at prepare time. */
+  toAddress: string;
+
+  /** Target chain (e.g. "ETH", "ARB", "SOL"). Display-only. */
+  toChain: string;
+
+  /** Target token address or symbol (e.g. "WETH" or "0xC02aa..."). Display-only. */
+  toToken: string;
+
+  /**
+   * payloadFingerprint = keccak256("VaultPilot-btclifi-v1:" ‖ psbtBytes).
+   * Stored here AND in the HandleRecord.payloadFingerprint field.
+   * The send-time recompute compares against the HandleRecord value.
+   */
+  payloadFingerprint: Hex;
+}
+
+export type PreparedTx = PreparedTxEvm | PreparedTxSolana | PreparedTxTron | PreparedTxBtc | PreparedTxLtc | PreparedTxBtcLifi;
 
 /**
  * Preview-pinned fields, persisted onto the record at `transitionToPreviewed`
