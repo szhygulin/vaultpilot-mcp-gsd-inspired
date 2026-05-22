@@ -6,6 +6,7 @@
 // Consumed by:
 //   - src/tools/prepare_btc_send.ts   (buildBtcPsbt via _btcPsbt)
 //   - src/tools/preview_send.ts BTC branch (decodeBtcPsbt — Plan 23-04)
+//   - src/tools/combine_btc_psbts.ts  (combineBtcPsbts via _btcPsbt — Plan 25-02)
 //
 // Format-fanout-sentinel rule (CLAUDE.md): PSBT assembly is done ONLY here
 // via _btcPsbt.buildBtcPsbt. Tools NEVER call bitcoinjs-lib.Psbt directly —
@@ -134,6 +135,32 @@ export interface BtcPsbtResult {
   /** Change amount in sats (0n if no change output). */
   readonly changeSats: bigint;
 }
+
+// ─── Phase 25 Plan 25-02: Combine result types ────────────────────────────────
+
+/** A single same-key/same-input signature conflict found during pre-combine scan. */
+export interface BtcPsbtConflict {
+  readonly inputIndex: number;
+  /** Hex-encoded compressed pubkey (33 bytes). */
+  readonly pubkeyHex: string;
+  /** Hex-encoded signature from the first PSBT in the array. */
+  readonly sigHex0: string;
+  /** Hex-encoded conflicting signature from another PSBT. */
+  readonly sigHex1: string;
+}
+
+/**
+ * Result from combineBtcPsbts — discriminated union, NEVER throws.
+ *
+ * - "ok"       — conflict-free merge succeeded; merged PSBT as base64.
+ * - "conflict" — pre-combine scan found same-key/same-input signature mismatches;
+ *                Psbt.combine was NOT called.
+ * - "error"    — one or more input strings could not be parsed as a PSBT.
+ */
+export type BtcCombineResult =
+  | { readonly kind: "ok"; readonly psbtBase64: string }
+  | { readonly kind: "conflict"; readonly conflicts: readonly BtcPsbtConflict[] }
+  | { readonly kind: "error"; readonly message: string };
 
 /** Discriminated union from decodeBtcPsbt — NEVER throws. */
 export type BtcPsbtDecoded =
@@ -446,7 +473,113 @@ export function decodeBtcPsbt(psbtBase64: string): BtcPsbtDecoded {
   }
 }
 
+// ─── Phase 25 Plan 25-02: PSBT combiner with pre-combine conflict scan ────────
+
+/**
+ * Combine an array of partially-signed PSBTs from co-signers into one merged PSBT.
+ *
+ * Security invariant (T-25-06 / T-25-08):
+ *   bip174's keyPusher silently discards duplicate keys (self wins). This means
+ *   calling Psbt.combine() directly would silently overwrite a co-signer's
+ *   signature if two PSBTs carry different signatures for the same pubkey on
+ *   the same input. We MUST run the pre-scan and refuse before combine is called.
+ *
+ * Algorithm (RESEARCH Pattern 3):
+ *   1. Parse every PSBT via Psbt.fromBase64 inside try/catch. Any failure →
+ *      { kind: "error", message }.
+ *   2. For each pair (i, j) with j > i, for each input index, build a
+ *      pubkey→signatureHex map from each input's partialSig array and compare.
+ *      Same pubkey + differing signature bytes → push a BtcPsbtConflict.
+ *      Identical signature bytes are idempotent (re-submission) — NOT a conflict.
+ *   3. If conflicts.length > 0 → { kind: "conflict", conflicts }.
+ *      Psbt.combine is NEVER called.
+ *   4. Otherwise: psbts[0].combine(...psbts.slice(1)), return
+ *      { kind: "ok", psbtBase64: combined.toBase64() }.
+ *
+ * NOTE: combine merges co-signer signatures only — it has NO threshold concept.
+ * Threshold enforcement belongs to finalizeBtcPsbt (Plan 25-03).
+ */
+export function combineBtcPsbts(psbtBase64s: readonly string[]): BtcCombineResult {
+  // ── Step 1: Parse all PSBTs ───────────────────────────────────────────────
+  const psbts: Psbt[] = [];
+  for (const b64 of psbtBase64s) {
+    try {
+      psbts.push(Psbt.fromBase64(b64));
+    } catch (err) {
+      return {
+        kind: "error",
+        message: `Failed to parse PSBT: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  // ── Step 2: Pre-combine conflict scan across all pairs ────────────────────
+  const conflicts: BtcPsbtConflict[] = [];
+
+  for (let i = 0; i < psbts.length; i++) {
+    for (let j = i + 1; j < psbts.length; j++) {
+      const psbtI = psbts[i]!;
+      const psbtJ = psbts[j]!;
+
+      // Both PSBTs must have the same number of inputs (guaranteed by bip174
+      // combine's own TX-equality check, but we iterate per-input here).
+      const inputCount = Math.min(psbtI.data.inputs.length, psbtJ.data.inputs.length);
+
+      for (let inputIndex = 0; inputIndex < inputCount; inputIndex++) {
+        const inputI = psbtI.data.inputs[inputIndex];
+        const inputJ = psbtJ.data.inputs[inputIndex];
+        if (!inputI || !inputJ) continue;
+
+        const sigsI = inputI.partialSig ?? [];
+        const sigsJ = inputJ.partialSig ?? [];
+
+        // Build pubkey → sigHex map for psbt[i]
+        const mapI = new Map<string, string>();
+        for (const ps of sigsI) {
+          mapI.set(
+            Buffer.from(ps.pubkey).toString("hex"),
+            Buffer.from(ps.signature).toString("hex"),
+          );
+        }
+
+        // Compare against psbt[j]
+        for (const ps of sigsJ) {
+          const pubkeyHex = Buffer.from(ps.pubkey).toString("hex");
+          const sigHexJ = Buffer.from(ps.signature).toString("hex");
+          const sigHexI = mapI.get(pubkeyHex);
+          if (sigHexI !== undefined && sigHexI !== sigHexJ) {
+            // Same pubkey, same input, different signature bytes → conflict.
+            conflicts.push({
+              inputIndex,
+              pubkeyHex,
+              sigHex0: sigHexI,
+              sigHex1: sigHexJ,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // ── Step 3: Return conflict result (Psbt.combine NEVER called) ────────────
+  if (conflicts.length > 0) {
+    return { kind: "conflict", conflicts };
+  }
+
+  // ── Step 4: No conflicts — safe to combine ────────────────────────────────
+  try {
+    const combined = psbts[0]!;
+    combined.combine(...psbts.slice(1));
+    return { kind: "ok", psbtBase64: combined.toBase64() };
+  } catch (err) {
+    return {
+      kind: "error",
+      message: `Psbt.combine failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
 // ─── ESM spy-affordance (CLAUDE.md) ──────────────────────────────────────────
 
 /** Indirection object for vi.spyOn across ESM module boundaries. */
-export const _btcPsbt = { buildBtcPsbt, decodeBtcPsbt };
+export const _btcPsbt = { buildBtcPsbt, decodeBtcPsbt, combineBtcPsbts };

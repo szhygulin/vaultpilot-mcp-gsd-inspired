@@ -210,7 +210,7 @@ describe("combineBtcPsbts — successful merge", () => {
     const partialSigs = combined.data.inputs[0]!.partialSig ?? [];
     expect(partialSigs.length).toBe(2);
 
-    const pubkeyHexes = partialSigs.map((ps) => ps.pubkey.toString("hex"));
+    const pubkeyHexes = partialSigs.map((ps) => Buffer.from(ps.pubkey).toString("hex"));
     expect(pubkeyHexes).toContain(pubkey0.toString("hex"));
     expect(pubkeyHexes).toContain(pubkey1.toString("hex"));
   });
