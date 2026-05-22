@@ -163,3 +163,37 @@ export const PREPARE_RECEIPT_BTC_RBF_TEMPLATE: string = [
   "  outputs:",
   "{OUTPUT_ROWS}",
 ].join("\n");
+
+// ─── Phase 24 Plan 24-02 — BIP-137 message signing template ──────────────────
+
+/**
+ * LEDGER BLIND-SIGN HASH (BTC — message signing) — device-display hash surface
+ * emitted by `sign_message_btc` (Plan 24-02). Two slots:
+ *   - `{MESSAGE_TEXT}` — the raw message the agent passed in (verbatim).
+ *   - `{MESSAGE_HASH}` — the server-computed BIP-137 double-SHA256 message hash
+ *                       (0x-prefixed hex of double-SHA256(varint(24) ‖ magic ‖
+ *                       varint(len) ‖ message)). This is what the device signs.
+ *
+ * BIP-137 divergence from the PSBT template:
+ *   - `LEDGER_BLIND_SIGN_HASH_BTC_TEMPLATE` covers tx signing (N per-input
+ *     BIP-143/341 sighashes, displayed as inputs/outputs/fee on-device).
+ *   - THIS template covers message signing (single double-SHA256 hash; the
+ *     device displays the message text on-screen for literal approval).
+ *
+ * Security: the device applies the `"Bitcoin Signed Message:\n"` magic prefix
+ * internally — the message text shown on-device is the literal message, not a
+ * binary hash. Compare character-for-character before approving.
+ * T-24-07 mitigation: magic prefix makes BIP-137 signatures non-spendable
+ * (cannot collide with a Bitcoin tx sighash); T-24-09 mitigation: this block
+ * surfaces the server-computed hash so the user can verify independently.
+ */
+export const LEDGER_BLIND_SIGN_HASH_MSG_BTC_TEMPLATE: string = [
+  "LEDGER BLIND-SIGN HASH (BTC — message signing)",
+  "  Message:      {MESSAGE_TEXT}",
+  "  BIP-137 hash: {MESSAGE_HASH}",
+  "  (double-SHA256 of magic_prefix ‖ varint_len ‖ message)",
+  "",
+  "  Your Ledger BTC app displays the message text above on-device.",
+  "  Compare the displayed message character-for-character against the agent's claim.",
+  "  If they match → approve. If they differ → REJECT.",
+].join("\n");
