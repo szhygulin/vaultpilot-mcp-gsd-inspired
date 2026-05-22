@@ -271,7 +271,7 @@ UTXO model means structurally distinct primitives from account-model chains. PSB
 - [x] **BTC-W-04**: PSBT multisig flow (see BTC-PSBT-03..07) — combine / sign / finalize lifecycle for M-of-N multisig participation
 - [x] **LTC-W-01**: `prepare_litecoin_native_send({ to, litoshi })` mirrors `prepare_btc_send` PSBT-based shape; same `payloadFingerprint` shape with LTC domain tag `"VaultPilot-ltctx-v1:"`
 - [x] **LTC-W-02**: `sign_message_ltc({ wallet, message })` mirrors `sign_message_btc` with LTC magic bytes
-- [ ] **BTC-LIFI-01**: `prepare_btc_lifi_swap({ fromToken: "BTC", toChain, toToken, amount, toAddress })` produces an unsigned LiFi-routed bridge transaction; BTC → EVM and BTC → Solana both supported; server-side `decodedFinalRecipient == userSuppliedToAddress` assertion at preview time (Inv #6b extension — mirrors v2.0 SOL-W-21 + v2.1 TRON-W-11 + v2.6 BRIDGE-T1)
+- [x] **BTC-LIFI-01**: `prepare_btc_lifi_swap({ fromToken: "BTC", toChain, toToken, amount, toAddress })` produces an unsigned LiFi-routed bridge transaction; BTC → EVM and BTC → Solana both supported; server-side `decodedFinalRecipient == userSuppliedToAddress` assertion at preview time (Inv #6b extension — mirrors v2.0 SOL-W-21 + v2.1 TRON-W-11 + v2.6 BRIDGE-T1)
 
 #### Forensic chain reads (BTC-FORENSIC-* + LTC-FORENSIC-*)
 
