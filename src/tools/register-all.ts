@@ -34,6 +34,8 @@ import "./get_btc_block_stats.js"; // Phase 27 Plan 27-01 (BTC-FORENSIC-03) — 
 import "./get_btc_blocks_recent.js"; // Phase 27 Plan 27-01 (BTC-FORENSIC-04) — last N blocks via Core getblockstats batch + Esplora fallback
 import "./get_btc_chain_tips.js"; // Phase 27 Plan 27-01 (BTC-FORENSIC-04 / reorg detection) — getchaintips + reorgSignals derivation
 import "./get_btc_mempool_summary.js"; // Phase 27 Plan 27-02 (BTC-FORENSIC-05) — Core-only mempool census via getmempoolinfo
+import "./get_litecoin_block_tip.js"; // Phase 27 Plan 27-02 (LTC-FORENSIC-01 / tip) — chain tip via Core 2-call sequence + litecoinspace.org Esplora fallback
+import "./get_litecoin_mempool_summary.js"; // Phase 27 Plan 27-02 (LTC-FORENSIC-01 / mempool) — Core-only mempool census via getmempoolinfo
 import "./get_btc_status.js"; // Phase 22 Plan 22-04 (BTC-PAIR-02) — dual-address (segwit + taproot) pairing status
 import "./get_tron_status.js"; // Phase 17 Plan 17-03 (TRON-PAIR-02)
 import "./get_tron_balance.js"; // Phase 17 Plan 17-03 (TRON-READ-01)
