@@ -15,7 +15,7 @@
 // are BYTE-UNTOUCHED by Phase 23. `btc-fingerprint.ts` is a NEW sibling.
 //
 // Preimage:
-//   "VaultPilot-btctx-v1:" (21 UTF-8 bytes) ‖ sighash₀ ‖ sighash₁ ‖ … ‖ sighashₙ₋₁
+//   "VaultPilot-btctx-v1:" (20 UTF-8 bytes) ‖ sighash₀ ‖ sighash₁ ‖ … ‖ sighashₙ₋₁
 //
 // Each sighash is exactly 32 bytes — from `btc-sighash.computeAllSighashes`.
 // The domain tag length (21 bytes) is the same as the TRON tag; the tag
@@ -34,10 +34,8 @@ import type { Hex } from "viem";
 
 /**
  * Version-stamped BTC domain tag. EXPORTED so the test suite can assert
- * the 21-byte UTF-8 length invariant (same byte-count as the TRON tag, but
- * a different string — cross-chain fingerprint reuse impossible at the keccak
- * preimage level). The tag is NOT configurable — changing it is a wire-shape
- * break requiring a v2 format bump.
+ * the 20-byte UTF-8 length invariant. The tag is NOT configurable — changing
+ * it is a wire-shape break requiring a v2 format bump.
  */
 export const FINGERPRINT_DOMAIN_TAG_BTC = "VaultPilot-btctx-v1:";
 
@@ -45,7 +43,7 @@ export const FINGERPRINT_DOMAIN_TAG_BTC = "VaultPilot-btctx-v1:";
  * Compute the prepare-time-stable BTC payloadFingerprint per BTC-PREP-01 /
  * D-05.
  *
- * Preimage = DOMAIN_TAG (utf-8, 21 bytes) ‖ sighash₀ ‖ … ‖ sighashₙ₋₁
+ * Preimage = DOMAIN_TAG (utf-8, 20 bytes) ‖ sighash₀ ‖ … ‖ sighashₙ₋₁
  *
  * `perInputSighashes` MUST be the output of
  * `btc-sighash.computeAllSighashes(unsignedTx, inputs)` — one 32-byte
