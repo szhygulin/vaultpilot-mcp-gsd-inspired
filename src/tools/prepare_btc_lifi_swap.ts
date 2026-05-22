@@ -264,17 +264,16 @@ registerTool("prepare_btc_lifi_swap", DESCRIPTION, INPUT_SCHEMA, async (args) =>
 
   // ── 6. Decode PSBT for display only (DO NOT reconstruct) ─────────────────
   const psbtHex = quote.transactionRequest.data;
-  let psbtSummary;
-  try {
-    psbtSummary = decodeLifiPsbt(psbtHex);
-  } catch (decodeErr) {
-    const message = `Failed to decode LiFi PSBT: ${decodeErr instanceof Error ? decodeErr.message : String(decodeErr)}`;
+  const decodeResult = decodeLifiPsbt(psbtHex);
+  if (decodeResult.kind === "error") {
+    const message = `Failed to decode LiFi PSBT: ${decodeResult.message}`;
     return {
       isError: true,
       content: [{ type: "text", text: `error: ${message}` }],
       structuredContent: errEnvelope("INTERNAL_ERROR", message),
     };
   }
+  const psbtSummary = decodeResult.summary;
 
   // ── 7. Compute payloadFingerprint over whole-PSBT bytes ──────────────────
   // preimage = keccak256("VaultPilot-btclifi-v1:" ‖ psbtBytes)

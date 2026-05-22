@@ -9,6 +9,9 @@
 //
 // Critical property: psbtHex in the returned summary EQUALS the input verbatim.
 // Output order is load-bearing — the decoder NEVER reconstructs.
+//
+// WR-02: decodeLifiPsbt returns a discriminated union { kind: "ok" | "error" }
+// instead of throwing. Tests updated to branch on kind.
 
 import { describe, expect, it } from "vitest";
 import { decodeLifiPsbt } from "../src/protocols/bridge-decoders/lifi-btc.js";
@@ -42,53 +45,66 @@ const EXPECTED_HAS_OP_RETURN = true;
 
 describe("decodeLifiPsbt — PSBT output extraction for display + verbatim passthrough", () => {
   it("returns correct vaultAddress (first output P2WPKH address)", () => {
-    const summary = decodeLifiPsbt(LIFI_PSBT_HEX);
-    expect(summary.vaultAddress).toBe(EXPECTED_VAULT_ADDRESS);
+    const result = decodeLifiPsbt(LIFI_PSBT_HEX);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.summary.vaultAddress).toBe(EXPECTED_VAULT_ADDRESS);
   });
 
   it("returns correct amountSats (first output value as bigint)", () => {
-    const summary = decodeLifiPsbt(LIFI_PSBT_HEX);
-    expect(summary.amountSats).toBe(EXPECTED_AMOUNT_SATS);
+    const result = decodeLifiPsbt(LIFI_PSBT_HEX);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.summary.amountSats).toBe(EXPECTED_AMOUNT_SATS);
   });
 
   it("returns hasOpReturn=true when OP_RETURN output is present", () => {
-    const summary = decodeLifiPsbt(LIFI_PSBT_HEX);
-    expect(summary.hasOpReturn).toBe(EXPECTED_HAS_OP_RETURN);
+    const result = decodeLifiPsbt(LIFI_PSBT_HEX);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.summary.hasOpReturn).toBe(EXPECTED_HAS_OP_RETURN);
   });
 
   it("returns correct outputCount (3: deposit + OP_RETURN + change)", () => {
-    const summary = decodeLifiPsbt(LIFI_PSBT_HEX);
-    expect(summary.outputCount).toBe(EXPECTED_OUTPUT_COUNT);
+    const result = decodeLifiPsbt(LIFI_PSBT_HEX);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.summary.outputCount).toBe(EXPECTED_OUTPUT_COUNT);
   });
 
   it("psbtHex in the summary equals the input verbatim — NEVER reconstructed (Pitfall 6)", () => {
-    const summary = decodeLifiPsbt(LIFI_PSBT_HEX);
+    const result = decodeLifiPsbt(LIFI_PSBT_HEX);
     // Load-bearing: output order is verbatim. The decoder MUST pass through the hex unchanged.
-    expect(summary.psbtHex).toBe(LIFI_PSBT_HEX);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.summary.psbtHex).toBe(LIFI_PSBT_HEX);
   });
 
   it("psbtHex starts with the PSBT magic bytes 70736274ff", () => {
-    const summary = decodeLifiPsbt(LIFI_PSBT_HEX);
-    expect(summary.psbtHex.startsWith("70736274ff")).toBe(true);
+    const result = decodeLifiPsbt(LIFI_PSBT_HEX);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.summary.psbtHex.startsWith("70736274ff")).toBe(true);
   });
 
   it("returns all five fields in the LifiPsbtSummary shape", () => {
-    const summary = decodeLifiPsbt(LIFI_PSBT_HEX);
-    expect(typeof summary.vaultAddress).toBe("string");
-    expect(typeof summary.amountSats).toBe("bigint");
-    expect(typeof summary.hasOpReturn).toBe("boolean");
-    expect(typeof summary.outputCount).toBe("number");
-    expect(typeof summary.psbtHex).toBe("string");
+    const result = decodeLifiPsbt(LIFI_PSBT_HEX);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      const { summary } = result;
+      expect(typeof summary.vaultAddress).toBe("string");
+      expect(typeof summary.amountSats).toBe("bigint");
+      expect(typeof summary.hasOpReturn).toBe("boolean");
+      expect(typeof summary.outputCount).toBe("number");
+      expect(typeof summary.psbtHex).toBe("string");
+    }
   });
 
-  it("throws on an invalid PSBT hex string", () => {
-    expect(() => decodeLifiPsbt("notahexstring")).toThrow();
+  it("returns { kind: 'error' } on an invalid PSBT hex string (WR-02: NEVER-throws)", () => {
+    const result = decodeLifiPsbt("notahexstring");
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") expect(typeof result.message).toBe("string");
   });
 
-  it("throws on a PSBT hex with wrong magic bytes", () => {
+  it("returns { kind: 'error' } on a PSBT hex with wrong magic bytes (WR-02: NEVER-throws)", () => {
     // Replace "70736274ff" (psbt magic) with "deadbeef00"
     const wrongMagic = "deadbeef00" + LIFI_PSBT_HEX.slice(10);
-    expect(() => decodeLifiPsbt(wrongMagic)).toThrow();
+    const result = decodeLifiPsbt(wrongMagic);
+    expect(result.kind).toBe("error");
   });
 });
 
@@ -104,15 +120,14 @@ describe("decodeLifiPsbt — hasOpReturn false for a PSBT without OP_RETURN", ()
     const TWO_OUTPUT_PSBT_HEX =
       "70736274ff01007d0200000001cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc0000000000feffffff0220f40e0000000000160014751e76e8199196d454941c45d1b3a323f1433bd6102700000000000016001406afd46bcdfd22ef94ac122aa11f241244a37ecc000000000001011f40420f0000000000160014751e76e8199196d454941c45d1b3a323f1433bd600000000";
 
-    let summary;
-    try {
-      summary = decodeLifiPsbt(TWO_OUTPUT_PSBT_HEX);
-    } catch {
-      // If this specific PSBT hex is not valid (depends on build toolchain),
-      // skip this test — the positive OP_RETURN test above is load-bearing.
-      return;
+    const result = decodeLifiPsbt(TWO_OUTPUT_PSBT_HEX);
+    // If this specific PSBT hex is not valid (depends on build toolchain),
+    // a { kind: "error" } is acceptable — the positive OP_RETURN test above is load-bearing.
+    if (result.kind === "ok") {
+      expect(result.summary.hasOpReturn).toBe(false);
+      expect(result.summary.outputCount).toBe(2);
     }
-    expect(summary.hasOpReturn).toBe(false);
-    expect(summary.outputCount).toBe(2);
+    // If kind === "error", we accept it — the PSBT may be incomplete/invalid
+    // for this toolchain version.
   });
 });

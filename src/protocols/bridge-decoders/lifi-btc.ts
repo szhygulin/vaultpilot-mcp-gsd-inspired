@@ -56,6 +56,14 @@ export interface LifiPsbtSummary {
 // ─── decodeLifiPsbt ──────────────────────────────────────────────────────────
 
 /**
+ * Result type for decodeLifiPsbt — NEVER-throws discriminated union
+ * (mirrors all other parsers in this codebase; WR-02 compliance).
+ */
+export type DecodeLifiPsbtResult =
+  | { kind: "ok"; summary: LifiPsbtSummary }
+  | { kind: "error"; message: string };
+
+/**
  * Decode a LiFi BTC bridge PSBT for human-readable display.
  * DISPLAY ONLY — does NOT reconstruct or reorder. The returned `psbtHex`
  * equals the input verbatim (output order is load-bearing for Chainflip).
@@ -65,11 +73,17 @@ export interface LifiPsbtSummary {
  *   - Output 1: OP_RETURN (binary LiFi tracking memo — NOT a human-readable address)
  *   - Output 2: Change output (optional)
  *
- * Throws if the hex is not a valid PSBT.
+ * Returns `{ kind: "error"; message }` instead of throwing — NEVER-throws convention (WR-02).
  */
-export function decodeLifiPsbt(psbtHex: string): LifiPsbtSummary {
-  // Decode with BTC network — this is a Bitcoin mainnet transaction.
-  const psbt = Psbt.fromHex(psbtHex, { network: networks.bitcoin });
+export function decodeLifiPsbt(psbtHex: string): DecodeLifiPsbtResult {
+  let psbt: ReturnType<typeof Psbt.fromHex>;
+  try {
+    // Decode with BTC network — this is a Bitcoin mainnet transaction.
+    psbt = Psbt.fromHex(psbtHex, { network: networks.bitcoin });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { kind: "error", message: `invalid PSBT hex: ${msg}` };
+  }
 
   const outputs = psbt.txOutputs;
   const outputCount = outputs.length;
@@ -107,11 +121,14 @@ export function decodeLifiPsbt(psbtHex: string): LifiPsbtSummary {
   );
 
   return {
-    vaultAddress,
-    amountSats,
-    hasOpReturn,
-    outputCount,
-    psbtHex, // VERBATIM — byte-for-byte unchanged (RESEARCH Pitfall 6)
+    kind: "ok",
+    summary: {
+      vaultAddress,
+      amountSats,
+      hasOpReturn,
+      outputCount,
+      psbtHex, // VERBATIM — byte-for-byte unchanged (RESEARCH Pitfall 6)
+    },
   };
 }
 
