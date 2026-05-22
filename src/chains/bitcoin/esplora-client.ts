@@ -102,6 +102,66 @@ export type EsploraFeeEstimatesResult =
   | { kind: "rate-limited"; message: string }
   | { kind: "error"; message: string };
 
+// ─── Phase 24 Plan 24-01 — GET /tx/{txid} types ───────────────────────────
+
+/**
+ * A single input in a full Esplora transaction response.
+ * The `prevout` field is an Esplora enhancement — not in raw tx format.
+ */
+export interface EsploraTxVin {
+  readonly txid: string;
+  readonly vout: number;
+  readonly sequence: number;
+  readonly prevout: {
+    readonly scriptpubkey: string;
+    readonly scriptpubkey_address: string;
+    readonly scriptpubkey_type: string; // "v0_p2wpkh" | "v1_p2tr" | ...
+    readonly value: number;             // sats as JS number (safe up to ~90,000 BTC)
+  };
+}
+
+/**
+ * A single output in a full Esplora transaction response.
+ */
+export interface EsploraTxVout {
+  readonly scriptpubkey: string;
+  readonly scriptpubkey_address: string;
+  readonly scriptpubkey_type: string;
+  readonly value: number; // sats
+}
+
+/**
+ * Full Esplora transaction body from GET /tx/{txid}.
+ * Includes `status.confirmed` for mempool check and `weight` for vsize calculation.
+ */
+export interface EsploraTxFullBody {
+  readonly txid: string;
+  readonly version: number;
+  readonly locktime: number;
+  readonly size: number;
+  readonly weight: number; // Used for vsize = Math.ceil(weight / 4)
+  readonly fee: number;
+  readonly vin: EsploraTxVin[];
+  readonly vout: EsploraTxVout[];
+  readonly status: {
+    readonly confirmed: boolean;
+    readonly block_height?: number;
+    readonly block_hash?: string;
+    readonly block_time?: number;
+  };
+}
+
+/**
+ * Discriminated union result from fetchBtcTx — NEVER throws.
+ * `not-applicable` is reserved for when the module is unconfigured (mirrors other results).
+ */
+export type EsploraTxResult =
+  | { kind: "not-applicable" }
+  | { kind: "ok"; tx: EsploraTxFullBody }
+  | { kind: "not-found" }
+  | { kind: "rate-limited"; message: string }
+  | { kind: "error"; message: string };
+
 // ───────────────────────── Module-scope LRU caches ─────────────────────
 
 const addressInfoCache = new Map<string, EsploraAddressResult>();
@@ -577,6 +637,80 @@ export async function fetchFeeEstimates(): Promise<EsploraFeeEstimatesResult> {
   cacheInsert(feeEstimatesCache, FEE_ESTIMATES_CACHE_KEY, result);
   feeEstimatesCacheTs.set(FEE_ESTIMATES_CACHE_KEY, Date.now()); // WR-05: record cache timestamp
   return result;
+}
+
+// ───────────────────────── fetchBtcTx ───────────────────────────────
+//
+// Phase 24 Plan 24-01 — GET /tx/{txid} to fetch a full transaction
+// including vin[].prevout values for RBF fee computation.
+//
+// Critical: NO CACHING. Mempool status changes between calls (a tx can
+// confirm while the user is typing). Always fetch fresh. Contrast with
+// fetchAddressUtxos (30s TTL) and fetchFeeEstimates (60s TTL).
+//
+// One fetch covers both the mempool check (tx.status.confirmed) and the
+// full tx data — no separate fetchBtcTxStatus call needed.
+
+/**
+ * GET /tx/{txid}. Returns the full transaction with `vin[].prevout.value`
+ * (an Esplora enhancement over raw Bitcoin protocol) and `status.confirmed`.
+ *
+ * Used by `prepare_btc_rbf_bump` to:
+ *   1. Check that the tx is mempool-pending (`status.confirmed === false`).
+ *   2. Validate the RBF signal (`vin[].sequence < 0xfffffffe`).
+ *   3. Compute the original fee (`sum(vin.prevout.value) - sum(vout.value)`).
+ *   4. Reconstruct the exact input set (BIP-125 Rule 2 — strict-same-inputs).
+ *
+ * NEVER throws — returns a 5-arm discriminated union.
+ * NO caching — mempool state can change between calls.
+ */
+export async function fetchBtcTx(txid: string): Promise<EsploraTxResult> {
+  const url = `${_bitcoinRegistry.getEsploraBaseUrl()}/tx/${txid}`;
+  const outcome = await doFetch<EsploraTxFullBody>(url);
+
+  if (outcome.timeout) {
+    const message = `Esplora unreachable (timeout ${ESPLORA_TIMEOUT_MS}ms)`;
+    log("warn", `Esplora /tx/${txid} failed: ${message}`);
+    return { kind: "error", message };
+  }
+
+  if (outcome.networkError !== undefined) {
+    const message = `Esplora unreachable: ${outcome.networkError}`;
+    log("warn", `Esplora /tx/${txid} failed: ${message}`);
+    return { kind: "error", message };
+  }
+
+  if (!outcome.ok) {
+    if (outcome.status === 404) {
+      return { kind: "not-found" };
+    }
+    if (outcome.status === 429) {
+      return { kind: "rate-limited", message: `Esplora 429 from ${url}` };
+    }
+    if (outcome.parseError !== undefined) {
+      const message = `Esplora invalid JSON: ${outcome.parseError}`;
+      log("warn", `Esplora /tx/${txid} parse failed: ${message}`);
+      return { kind: "error", message };
+    }
+    const message = `Esplora returned HTTP ${outcome.status}`;
+    log("warn", `Esplora /tx/${txid} failed: ${message}`);
+    return { kind: "error", message };
+  }
+
+  if (outcome.parseError !== undefined) {
+    const message = `Esplora invalid JSON: ${outcome.parseError}`;
+    log("warn", `Esplora /tx/${txid} parse failed: ${message}`);
+    return { kind: "error", message };
+  }
+
+  const body = outcome.body;
+  if (!body || typeof body !== "object" || !Array.isArray(body.vin) || !Array.isArray(body.vout)) {
+    const message = "Esplora /tx response missing vin or vout arrays";
+    log("warn", `Esplora /tx/${txid} response shape unexpected`);
+    return { kind: "error", message };
+  }
+
+  return { kind: "ok", tx: body };
 }
 
 // ───────────────────────── broadcastTx ──────────────────────────────

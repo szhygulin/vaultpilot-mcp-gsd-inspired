@@ -564,9 +564,34 @@ export interface PreparedTxBtc {
   // -----------------------------------------------------------------------
   /**
    * BTC send kind. `"native"` covers all Phase 23 sends (segwit / taproot /
-   * mixed-input). RBF (Phase 24) and multisig (Phase 25) will widen this.
+   * mixed-input). `"rbf"` covers Phase 24 RBF replacement transactions.
+   * Multisig (Phase 25) will widen this further.
    */
-  kind: "native";
+  kind: "native" | "rbf";
+
+  // -----------------------------------------------------------------------
+  // RBF-only optional fields (Phase 24 — Plan 24-01).
+  // Present only when `kind === "rbf"`. Carry original tx metrics through
+  // the handle for the CHECKS PERFORMED diff block in preview_send.
+  // -----------------------------------------------------------------------
+
+  /**
+   * The txid of the original mempool-pending transaction being replaced.
+   * Non-null when `kind === "rbf"`. Used in PREPARE RECEIPT diff block.
+   */
+  originalTxid?: string;
+
+  /**
+   * The total miner fee of the original transaction in sats.
+   * Non-null when `kind === "rbf"`. Used in PREPARE RECEIPT diff block.
+   */
+  originalFeeSats?: bigint;
+
+  /**
+   * The fee rate of the original transaction in sat/vB.
+   * Non-null when `kind === "rbf"`. Used in PREPARE RECEIPT diff block.
+   */
+  originalFeeRate?: number;
 
   // -----------------------------------------------------------------------
   // BTC-specific cryptographic-binding fields.

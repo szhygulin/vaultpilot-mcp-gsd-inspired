@@ -131,3 +131,35 @@ export const LEDGER_BLIND_SIGN_HASH_BTC_TEMPLATE: string = [
  */
 export const INPUT_SIGHASH_ROW_BTC_TEMPLATE: string =
   "    input[{INPUT_INDEX}]  ({SCRIPT_TYPE})  {SIGHASH_HEX}";
+
+// ─── Phase 24 Plan 24-01 — RBF fee-bump templates ────────────────────────────
+
+/**
+ * PREPARE RECEIPT — BTC RBF fee bump (PSBT-based, verbatim agent args,
+ * NO normalization). Substituted by `prepare_btc_rbf_bump.ts` (Plan 24-01).
+ * Slots:
+ *   - `{ORIGINAL_TXID}` — txid of the original mempool-pending transaction.
+ *   - `{NEW_FEE_RATE}`  — new fee rate in sat/vB (decimal string).
+ *   - `{ORIGINAL_FEE_SATS}` — original fee in sats (decimal string).
+ *   - `{ORIGINAL_FEE_RATE}` — original fee rate in sat/vB (decimal string).
+ *   - `{NEW_FEE_SATS}`  — new fee in sats (decimal string).
+ *   - `{FEE_DELTA_SATS}` — absolute fee increase in sats (decimal string).
+ *   - `{INPUT_ROWS}`   — expanded inline: one line per input (reuses INPUT_ROW_BTC_TEMPLATE).
+ *   - `{OUTPUT_ROWS}`  — expanded inline: one line per output (reuses OUTPUT_ROW_BTC_TEMPLATE).
+ *
+ * PREP-02 invariant: the receipt surfaces the original txid plus the server-
+ * derived fee diff summary. The cryptographic anchor (payloadFingerprint = keccak256
+ * over per-input sighashes with RBF-enabled sequence) catches drift.
+ */
+export const PREPARE_RECEIPT_BTC_RBF_TEMPLATE: string = [
+  "PREPARE RECEIPT (BTC — RBF fee bump)",
+  "  chain:         Bitcoin mainnet",
+  "  originalTxid:  {ORIGINAL_TXID}",
+  "  newFeeRate:    {NEW_FEE_RATE} sat/vB",
+  "  originalFee:   {ORIGINAL_FEE_SATS} sats  ({ORIGINAL_FEE_RATE} sat/vB)",
+  "  newFee:        {NEW_FEE_SATS} sats  (delta: +{FEE_DELTA_SATS} sats)",
+  "  inputs:",
+  "{INPUT_ROWS}",
+  "  outputs:",
+  "{OUTPUT_ROWS}",
+].join("\n");

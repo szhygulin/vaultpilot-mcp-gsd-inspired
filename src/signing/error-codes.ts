@@ -155,7 +155,35 @@ export type ErrorCode =
   | "BTC_FEE_RATE_OUT_OF_BOUNDS"
   | "BTC_NO_UTXOS_AVAILABLE"
   | "BTC_MIXED_INPUT_SIGN_FAILURE"
-  | "BTC_APP_NOT_OPEN";
+  | "BTC_APP_NOT_OPEN"
+  //
+  // Phase 24 Plan 24-01 — RBF error codes (additive).
+  //
+  //   BTC_TX_ALREADY_CONFIRMED  — prepare_btc_rbf_bump refused: txid is
+  //                               confirmed (RBF is mempool-only). Hint: use
+  //                               CPFP (deferred to future plan) for confirmed-
+  //                               parent fee bumps. (T-24-01 mitigation)
+  //   BTC_NOT_RBF_SIGNALLED     — prepare_btc_rbf_bump refused: original tx
+  //                               does not signal RBF (all inputs have
+  //                               sequence >= 0xfffffffe). Hint: use
+  //                               signalRbf: true on future prepare_btc_send.
+  //                               (T-24-02 mitigation)
+  //   BTC_RBF_INSUFFICIENT_FEE_RATE — new fee rate is not strictly higher than
+  //                               original by at least 1 sat/vB (BIP-125 Rule 4).
+  //                               Server computes original rate independently
+  //                               from Esplora data. (T-24-04 mitigation)
+  //   BTC_RBF_NO_CHANGE_OUTPUT  — original tx has no change output whose
+  //                               scriptpubkey_address matches a paired BTC
+  //                               account address; cannot absorb the fee delta.
+  //   BTC_RBF_CANNOT_AFFORD     — fee delta exceeds the change output value
+  //                               (new change would go negative); cannot bump
+  //                               without adding inputs (which BIP-125 Rule 2
+  //                               forbids in a pure fee bump). (T-24-03 mitigation)
+  | "BTC_TX_ALREADY_CONFIRMED"
+  | "BTC_NOT_RBF_SIGNALLED"
+  | "BTC_RBF_INSUFFICIENT_FEE_RATE"
+  | "BTC_RBF_NO_CHANGE_OUTPUT"
+  | "BTC_RBF_CANNOT_AFFORD";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

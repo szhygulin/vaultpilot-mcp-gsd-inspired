@@ -86,6 +86,13 @@ export interface BtcPsbtArgs {
   readonly changeOutput: BtcPsbtOutput | null;
   /** Dust threshold in sats (D-07). */
   readonly dustThresholdSats: bigint;
+  /**
+   * Optional sequence override for all inputs. When omitted, uses
+   * `RBF_DISABLED_SEQUENCE (0xfffffffe)` — byte-identical to Phase 23.
+   * Pass `0xfffffffd` from `prepare_btc_rbf_bump` to signal RBF (Phase 24).
+   * Pass `0xfffffffd` from `prepare_btc_send` when `signalRbf: true` (Design Fork 1).
+   */
+  readonly sequenceOverride?: number;
 }
 
 /** Per-input prevout descriptor for fingerprint recompute (Pitfall 5 canonical artifact). */
@@ -189,7 +196,11 @@ function inputWitnessScript(input: BtcPsbtInput): Uint8Array {
  * Build an unsigned PSBT-v0 (BIP-174) for a BTC transaction.
  *
  * Assembles both segwit and taproot inputs in a single PSBT (BTC-PSBT-02).
- * Sets RBF_DISABLED_SEQUENCE on every input (D-06).
+ * Sets `args.sequenceOverride ?? RBF_DISABLED_SEQUENCE` on every input.
+ * When `sequenceOverride` is omitted, behavior is byte-identical to Phase 23
+ * (D-06: `RBF_DISABLED_SEQUENCE = 0xfffffffe`). Pass `0xfffffffd` from
+ * `prepare_btc_rbf_bump` (Phase 24) or `prepare_btc_send({ signalRbf: true })`
+ * to signal RBF per BIP-125.
  * Enforces dust threshold on all outputs (D-07):
  *   - recipient below dust → throws BtcDustError
  *   - change output presence asserts changeSats > dustThresholdSats
@@ -203,6 +214,7 @@ function inputWitnessScript(input: BtcPsbtInput): Uint8Array {
  */
 export function buildBtcPsbt(args: BtcPsbtArgs): BtcPsbtResult {
   const { inputs, recipientOutput, changeOutput, dustThresholdSats } = args;
+  const effectiveSequence = args.sequenceOverride ?? RBF_DISABLED_SEQUENCE;
 
   if (inputs.length === 0) {
     throw new Error("btc-psbt: at least one input required");
@@ -243,7 +255,7 @@ export function buildBtcPsbt(args: BtcPsbtArgs): BtcPsbtResult {
       psbt.addInput({
         hash: inp.txid,
         index: inp.vout,
-        sequence: RBF_DISABLED_SEQUENCE,
+        sequence: effectiveSequence,
         witnessUtxo: {
           script: Buffer.from(witnessScript),
           value: inp.valueSats,
@@ -265,7 +277,7 @@ export function buildBtcPsbt(args: BtcPsbtArgs): BtcPsbtResult {
       psbt.addInput({
         hash: inp.txid,
         index: inp.vout,
-        sequence: RBF_DISABLED_SEQUENCE,
+        sequence: effectiveSequence,
         witnessUtxo: {
           script: Buffer.from(witnessScript),
           value: inp.valueSats,
