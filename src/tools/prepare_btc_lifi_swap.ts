@@ -27,8 +27,6 @@
 //   RECIPIENT_MISMATCH  — Inv#6b: quote.action.toAddress !== params.toAddress (T-26-10)
 //   INTERNAL_ERROR      — LiFi API error / rate-limited / unexpected failure
 
-import { toBytes } from "viem";
-
 import { fetchBtcLifiQuote } from "../clients/lifi.js";
 import { isDemoMode } from "../config/env.js";
 import {
@@ -281,7 +279,8 @@ registerTool("prepare_btc_lifi_swap", DESCRIPTION, INPUT_SCHEMA, async (args) =>
   // ── 7. Compute payloadFingerprint over whole-PSBT bytes ──────────────────
   // preimage = keccak256("VaultPilot-btclifi-v1:" ‖ psbtBytes)
   // Whole-PSBT bytes commits to the exact byte sequence the Ledger device signs.
-  const psbtBytes = toBytes(psbtHex);
+  // Buffer.from(psbtHex, "hex") hex-decodes correctly; toBytes() would UTF-8-encode (CR-01 fix).
+  const psbtBytes = Buffer.from(psbtHex, "hex");
   const payloadFingerprint = _btcLifiFingerprint.computeBtcLifiPayloadFingerprint(psbtBytes);
 
   // ── 8. Create handle ─────────────────────────────────────────────────────

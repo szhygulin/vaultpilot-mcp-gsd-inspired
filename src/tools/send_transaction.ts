@@ -50,7 +50,7 @@
 // + `preview_send` ALSO succeed in demo (against persona address); the demo
 // pipeline is rehearsable end-to-end through the actual tool surface.
 
-import { type Hex, toBytes, toHex } from "viem";
+import { type Hex, toHex } from "viem";
 import { call } from "viem/actions";
 import { Message, PublicKey, Transaction } from "@solana/web3.js";
 import { Transaction as BtcTransaction, address as btcAddressLib, networks as btcNetworks } from "bitcoinjs-lib";
@@ -383,7 +383,7 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
                 )
               : txType === "btc-lifi"
                 ? _btcLifiFingerprint.computeBtcLifiPayloadFingerprint(
-                    toBytes((record.tx as PreparedTxBtcLifi).psbtHex as `0x${string}`),
+                    Buffer.from((record.tx as PreparedTxBtcLifi).psbtHex, "hex"),
                   )
               : computePayloadFingerprint({
                 chainId: record.tx.chainId,
