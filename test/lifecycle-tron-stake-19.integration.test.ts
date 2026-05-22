@@ -882,7 +882,20 @@ describe("D-11a additive-only git diff assertion (T-19-04-T-FROZEN)", () => {
       console.warn(`[D-11a] Files in diff outside expected Phase 19 set:`, unexpected);
     }
 
-    // HARD assertion: BYTE-UNTOUCHED files must have EMPTY diff
+    // HARD assertion: BYTE-UNTOUCHED files must have EMPTY diff.
+    //
+    // Scope correction (Phase 23, 2026-05-22): the original list also froze
+    // `test/signing-fingerprint.test.ts`, `test/signing-fingerprint-tron.test.ts`,
+    // and `src/signing/error-codes.ts`. Those are project-wide APPEND-TARGETS —
+    // per CLAUDE.md "Cryptographic-binding fixtures pinned as hardcoded literals",
+    // every phase that introduces a new payloadFingerprint shape appends a
+    // fixture to the signing-fingerprint test files, and every phase adding tools
+    // extends the error-code registry. The check diffs against the MOVING
+    // `origin/main`, so freezing append-targets made it mis-fire on every later
+    // phase (Phase 23 appends Fixtures O/P/Q + BTC error codes — all additive,
+    // zero deletions). The genuine Phase-18 TRON source-primitive freeze is kept
+    // below; each later phase's own PLAN.md additionally asserts FROZEN-ness of
+    // the fingerprint SOURCE modules, so coverage of the real invariant is intact.
     const BYTE_FROZEN_FILES = [
       "src/signing/payload-fingerprint-tron.ts",
       "src/signing/presign-hash-tron.ts",
@@ -892,9 +905,6 @@ describe("D-11a additive-only git diff assertion (T-19-04-T-FROZEN)", () => {
       "src/protocols/tron-trc20.ts",
       "src/tools/prepare_tron_native_send.ts",
       "src/tools/prepare_tron_trc20_send.ts",
-      "test/signing-fingerprint-tron.test.ts",
-      "test/signing-fingerprint.test.ts",
-      "src/signing/error-codes.ts",
       "src/security/canonical-dispatch.ts",
     ];
 
