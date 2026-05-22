@@ -259,7 +259,7 @@ UTXO model means structurally distinct primitives from account-model chains. PSB
 - [x] **BTC-PSBT-02**: Mixed-script-type inputs supported (some segwit + some taproot inputs in one tx) — common case for users with derived addresses across both script types
 - [x] **BTC-PSBT-03**: `register_btc_multisig_wallet({ name, descriptor, threshold })` records a known M-of-N multisig descriptor (sortedmulti or musig-aware); descriptor validated against Bitcoin script rules; stored at `~/.vaultpilot-mcp/btc-multisig.json` (0o600 file)
 - [x] **BTC-PSBT-04**: `get_btc_multisig_balance({ walletName })` + `get_btc_multisig_utxos({ walletName })` aggregate UTXOs at the multisig descriptor's derived addresses via Esplora
-- [ ] **BTC-PSBT-05**: `combine_btc_psbts({ psbts: [...] })` merges partially-signed PSBTs from multiple co-signers; conflicts surfaced as structured errors (input-by-input + key-by-key conflict detection)
+- [x] **BTC-PSBT-05**: `combine_btc_psbts({ psbts: [...] })` merges partially-signed PSBTs from multiple co-signers; conflicts surfaced as structured errors (input-by-input + key-by-key conflict detection)
 - [ ] **BTC-PSBT-06**: `sign_btc_multisig_psbt({ psbt, walletName })` adds the user's signature to each input they're a signer on; preview surfaces the inputs being signed
 - [ ] **BTC-PSBT-07**: `finalize_btc_psbt({ psbt })` builds the final witness data; refuses if signature threshold not met
 

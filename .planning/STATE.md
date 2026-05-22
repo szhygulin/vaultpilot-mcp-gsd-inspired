@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Bitcoin + Litecoin
 status: executing
-last_updated: "2026-05-22T18:03:29.130Z"
+last_updated: "2026-05-22T18:14:52.350Z"
 last_activity: 2026-05-22
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 13
-  completed_plans: 11
+  completed_plans: 12
   percent: 50
 ---
 
@@ -25,7 +25,7 @@ See: .planning/PROJECT.md (updated 2026-05-12)
 ## Current Position
 
 Phase: 25 (btc-psbt-multisig-flow) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-05-22
 
@@ -47,7 +47,7 @@ Prior activity: 2026-05-13 — Quick task 260513-c8e (issue #25 WC session persi
 
 Prior activity: 2026-05-12 — Phase 5 planned + executed. Planning bundle (RESEARCH + VALIDATION + PATTERNS + 3 PLAN files) shipped as PR #18 (PASS after 2 inline plan-checker fixes + 1 accepted residual; Q-CONTRADICTION-PREP Option B + Q-NPM resolved via AskUserQuestion before planning). Then 05-01 (demo state + persona registry + ErrorCode 13→14 with WRONG_MODE + get/set_demo_wallet) shipped as PR #19 (+29 tests, 3 ESM-mechanics deviations). Then 05-02 (Q-CONTRADICTION-PREP Option B — REMOVES demo refusal from prepare_native_send + preview_send; persona address as `from`; integration test re-anchors Fixture A + C under demo `from`) shipped as PR #20 (+9 net tests, zero substantive deviations). Finally 05-03 (DIAG tools + update check + auto-demo NOTICE dispatcher-wrap + INSTRUCTIONS rewrite) shipped as PR #21 (+26 tests, 2 minor deviations; secret-safety audit via 3-sentinel substring scan; dispatcher-wrap at src/server.ts one-change architectural-scope-correct per Phase 4 precedent).
 
-Progress: [█████████░] 85%
+Progress: [█████████░] 92%
 
 ## Performance Metrics
 
@@ -74,6 +74,7 @@ Progress: [█████████░] 85%
 | Phase 24 P01 | 90 | 3 tasks | 12 files |
 | Phase 24 P02 | 35 | 3 tasks | 6 files |
 | Phase 25 P01 | 45 | 3 tasks | 10 files |
+| Phase 25-btc-psbt-multisig-flow P02 | 22 | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -300,6 +301,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-22T18:03:29.119Z
+Last session: 2026-05-22T18:14:52.339Z
 Stopped at: Completed 25-01-PLAN.md
 Resume file: None
