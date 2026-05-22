@@ -671,12 +671,17 @@ Plans:
   4. `sign_message_btc({ wallet, message })` produces a BIP-137 compact signature over `magic_bytes + varint_length + message`; works against the segwit address by default (taproot follows BIP-322 — separate tool, deferred)
   5. Ledger BTC app clear-signs message text under blind-sign mode; user sees the message bytes on-device
 
-**Plans**: 2 plans (estimate)
+**Plans**: 2 plans
 
 Plans:
 
-- [ ] 24-01: `prepare_btc_rbf_bump` + BIP-125 sequence-number validation + fee-rate sanity bounds; original-vs-new diff surfacing in CHECKS PERFORMED
-- [ ] 24-02: `sign_message_btc` + BIP-137 magic-bytes + compact-signature shape; Ledger message-signing flow; BIP-322 taproot message-signing deferred (separate `sign_message_btc_bip322` future tool)
+**Wave 1**
+
+- [ ] 24-01-PLAN.md — `prepare_btc_rbf_bump` (BTC-W-02): RBF replacement PSBT, BIP-125 sequence/fee-rate validation, `buildBtcPsbt` `sequenceOverride?` param, `signalRbf` flag on `prepare_btc_send` (Design Fork 1 Option A), `PreparedTxBtc.kind` widening to `"rbf"`, Fixture V anchor (Wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 24-02-PLAN.md — `sign_message_btc` (BTC-W-03): BIP-137 compact-signature shape, `signBtcMessage` Ledger transport spy-affordance, magic-prefix-device-applied, Fixture W anchor; BIP-322 taproot deferred (Wave 2, depends on 24-01)
 
 #### Phase 25: PSBT multisig flow (combine / sign / finalize + multisig wallet registry)
 
