@@ -255,7 +255,7 @@ UTXO model means structurally distinct primitives from account-model chains. PSB
 - [ ] **BTC-PREP-01**: BTC `payloadFingerprint = keccak256("VaultPilot-btctx-v1:" ‖ <concatenated BIP-143 sighashes for all inputs>)` — domain-tagged, prepare-time stable, distinct domain tag from EVM / Solana / TRON; UTXO-shape preimage commits per-input independently
 - [ ] **BTC-PREP-02**: `preview_send` BTC branch surfaces decoded inputs/outputs + per-input sighash + Ledger BTC-app PSBT-signing flow expectation in `LEDGER BLIND-SIGN HASH` block (multi-hash for multi-input transactions)
 - [ ] **BTC-PREP-03**: `send_transaction` BTC branch enforces `previewToken` + `userDecision: "send"` + `payloadFingerprint` drift gate identically to EVM/Solana/TRON paths
-- [ ] **BTC-PSBT-01**: `prepare_btc_send({ to, sats, feeRate? })` returns `{ handle, psbt, inputs[], outputs[], feeSats, payloadFingerprint, prepareReceipt }`; coin-selection via branch-and-bound (BnB) with manual override; native segwit (bc1q…) AND taproot (bc1p…) sends both work via the same prepare tool
+- [x] **BTC-PSBT-01**: `prepare_btc_send({ to, sats, feeRate? })` returns `{ handle, psbt, inputs[], outputs[], feeSats, payloadFingerprint, prepareReceipt }`; coin-selection via branch-and-bound (BnB) with manual override; native segwit (bc1q…) AND taproot (bc1p…) sends both work via the same prepare tool
 - [ ] **BTC-PSBT-02**: Mixed-script-type inputs supported (some segwit + some taproot inputs in one tx) — common case for users with derived addresses across both script types
 - [ ] **BTC-PSBT-03**: `register_btc_multisig_wallet({ name, descriptor, threshold })` records a known M-of-N multisig descriptor (sortedmulti or musig-aware); descriptor validated against Bitcoin script rules; stored at `~/.vaultpilot-mcp/btc-multisig.json` (0o600 file)
 - [ ] **BTC-PSBT-04**: `get_btc_multisig_balance({ walletName })` + `get_btc_multisig_utxos({ walletName })` aggregate UTXOs at the multisig descriptor's derived addresses via Esplora
@@ -265,7 +265,7 @@ UTXO model means structurally distinct primitives from account-model chains. PSB
 
 #### Writes (BTC-W-* + LTC-W-* + BTC-LIFI-*)
 
-- [ ] **BTC-W-01**: `prepare_btc_send` produces the canonical PSBT-based unsigned transaction (see BTC-PSBT-01); native segwit + taproot both supported
+- [x] **BTC-W-01**: `prepare_btc_send` produces the canonical PSBT-based unsigned transaction (see BTC-PSBT-01); native segwit + taproot both supported
 - [ ] **BTC-W-02**: `prepare_btc_rbf_bump({ txid, newFeeRate })` produces an unsigned RBF replacement PSBT with the higher fee rate; original input set preserved; BIP-125 sequence-number rules enforced; refused on confirmed transactions (mempool-only) or transactions that didn't signal RBF (sequence ≥ `0xfffffffe`)
 - [ ] **BTC-W-03**: `sign_message_btc({ wallet, message })` produces a BIP-137 compact signature over `magic_bytes ‖ varint_length ‖ message`; works against the segwit address by default; BIP-322 taproot message-signing deferred to a future `sign_message_btc_bip322` tool
 - [ ] **BTC-W-04**: PSBT multisig flow (see BTC-PSBT-03..07) — combine / sign / finalize lifecycle for M-of-N multisig participation
