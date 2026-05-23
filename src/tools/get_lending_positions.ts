@@ -164,10 +164,25 @@ interface MorphoLendingPositionRow {
   displayValue: string;
 }
 
+/**
+ * Phase 29 Plan 29-03 — Per-market degraded sentinel (WR-02). When a per-market
+ * 3-read fan-out fails (position / market / marketParams), surface a discriminated
+ * row mirroring get_morpho_positions.ts:257-265 instead of silently dropping.
+ * The protocol discriminator pins the union arm; the rpcDegraded sentinel +
+ * reason mirror the get_morpho_positions degraded surface verbatim.
+ */
+interface MorphoLendingPositionDegradedRow {
+  protocol: "morpho-blue";
+  marketId: Hex;
+  rpcDegraded: true;
+  reason: string;
+}
+
 type LendingPositionRow =
   | AaveLendingPositionRow
   | CompoundLendingPositionRow
-  | MorphoLendingPositionRow;
+  | MorphoLendingPositionRow
+  | MorphoLendingPositionDegradedRow;
 
 interface CompoundCometSummary {
   comet: Address;
@@ -180,6 +195,15 @@ interface CompoundCometSummary {
 interface MorphoSourceSummary {
   marketsTouched: number;
   marketsActive: number;
+  // Phase 29 Plan 29-03 — WR-02: per-market degraded-read counter. Increments
+  // when an individual market's 3-read fan-out rejects; the outer handler
+  // promotes a > 0 value to top-level `result.rpcDegraded = true`.
+  marketsDegraded: number;
+  // WR-02 — event-log scan failure flag. Set true when scanTouchedMarkets
+  // itself rejects (vs an individual per-market read). The outer handler
+  // promotes this to top-level `result.rpcDegraded = true` so a primary-RPC
+  // scan failure that bypassed the public-node fallback still surfaces.
+  scanFailed: boolean;
 }
 
 interface SourcesSummary {
@@ -437,31 +461,50 @@ async function readMorphoPositionsForWallet(
   client: import("viem").PublicClient,
   chainId: ChainId,
   wallet: Address,
-): Promise<{ rows: MorphoLendingPositionRow[]; summary: MorphoSourceSummary }> {
+): Promise<{
+  rows: Array<MorphoLendingPositionRow | MorphoLendingPositionDegradedRow>;
+  summary: MorphoSourceSummary;
+}> {
   // Phase 29 ships chainId 1 only; non-mainnet → empty.
   if (chainId !== 1) {
-    return { rows: [], summary: { marketsTouched: 0, marketsActive: 0 } };
+    return {
+      rows: [],
+      summary: { marketsTouched: 0, marketsActive: 0, marketsDegraded: 0, scanFailed: false },
+    };
   }
   const morpho = getMorphoBlueAddress(1);
   if (!morpho) {
-    return { rows: [], summary: { marketsTouched: 0, marketsActive: 0 } };
+    return {
+      rows: [],
+      summary: { marketsTouched: 0, marketsActive: 0, marketsDegraded: 0, scanFailed: false },
+    };
   }
 
   let touchedMarketIds: Set<Hex>;
   try {
     touchedMarketIds = await _morphoChains.scanTouchedMarkets(client, wallet, { morpho });
   } catch {
-    // Event-log scan failure — caller surfaces rpcDegraded via the
-    // public-node fallback path. Don't throw; return empty.
-    return { rows: [], summary: { marketsTouched: 0, marketsActive: 0 } };
+    // Phase 29 WR-02: event-log scan failure surfaces via `scanFailed: true`
+    // so the outer handler can flag top-level `result.rpcDegraded = true`
+    // even when the public-node fallback is NOT in use. Mirror of
+    // get_morpho_positions.ts:388 top-level rpcDegraded surface.
+    return {
+      rows: [],
+      summary: { marketsTouched: 0, marketsActive: 0, marketsDegraded: 0, scanFailed: true },
+    };
   }
 
   if (touchedMarketIds.size === 0) {
-    return { rows: [], summary: { marketsTouched: 0, marketsActive: 0 } };
+    return {
+      rows: [],
+      summary: { marketsTouched: 0, marketsActive: 0, marketsDegraded: 0, scanFailed: false },
+    };
   }
 
   const marketIdList = Array.from(touchedMarketIds);
-  const marketResults = await Promise.all(
+  const marketResults: Array<
+    MorphoLendingPositionRow | MorphoLendingPositionDegradedRow | null
+  > = await Promise.all(
     marketIdList.map(async (id) => {
       try {
         const [pos, mkt, params] = await Promise.all([
@@ -522,20 +565,44 @@ async function readMorphoPositionsForWallet(
             "approx (stale market state; on-chain accrueInterest happens at tx time)",
         };
         return row;
-      } catch {
-        // Per-market read failure — skip; the per-market degraded surface
-        // lives in get_morpho_positions; here we collapse to zero contribution.
-        return null;
+      } catch (err) {
+        // Phase 29 WR-02: per-market read failure surfaces as a degraded-row
+        // sentinel (mirror of get_morpho_positions.ts:257-265). The market
+        // is NEVER silently dropped — the agent sees the marketId + reason
+        // verbatim, and the outer handler promotes via `marketsDegraded` to
+        // top-level `result.rpcDegraded = true`.
+        const reason = err instanceof Error ? err.message : String(err);
+        const degradedRow: MorphoLendingPositionDegradedRow = {
+          protocol: "morpho-blue",
+          marketId: id,
+          rpcDegraded: true,
+          reason,
+        };
+        return degradedRow;
       }
     }),
   );
 
-  const rows = marketResults.filter((r): r is MorphoLendingPositionRow => r !== null);
+  const rows: Array<MorphoLendingPositionRow | MorphoLendingPositionDegradedRow> = [];
+  let marketsActive = 0;
+  let marketsDegraded = 0;
+  for (const r of marketResults) {
+    if (r === null) continue;
+    if ("rpcDegraded" in r) {
+      marketsDegraded += 1;
+      rows.push(r);
+    } else {
+      marketsActive += 1;
+      rows.push(r);
+    }
+  }
   return {
     rows,
     summary: {
       marketsTouched: touchedMarketIds.size,
-      marketsActive: rows.length,
+      marketsActive,
+      marketsDegraded,
+      scanFailed: false,
     },
   };
 }
@@ -563,7 +630,10 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
   // chains short-circuit to empty arrays. Aave runs on all 5 chains.
   let aaveLeg: Awaited<ReturnType<typeof readAavePositions>>;
   let compoundLeg: CometStateDecoded[];
-  let morphoLeg: { rows: MorphoLendingPositionRow[]; summary: MorphoSourceSummary };
+  let morphoLeg: {
+    rows: Array<MorphoLendingPositionRow | MorphoLendingPositionDegradedRow>;
+    summary: MorphoSourceSummary;
+  };
   try {
     [aaveLeg, compoundLeg, morphoLeg] = await Promise.all([
       readAavePositions(client, chainId, wallet),
@@ -615,9 +685,13 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
 
   // Merge Aave + Compound + Morpho rows. Order is deterministic: Aave first
   // (preserving pre-28-04 ordering for byte-identity), then Compound, then
-  // Morpho (added in Plan 29-03 — purely additive).
+  // Morpho (added in Plan 29-03 — purely additive). The Morpho arm may
+  // include degraded-row sentinels per WR-02 — they ride through the same
+  // discriminated union and the agent reads `rpcDegraded` on the row to
+  // distinguish.
   const aaveRows: AaveLendingPositionRow[] = aaveLeg.positions;
-  const morphoRows: MorphoLendingPositionRow[] = morphoLeg.rows;
+  const morphoRows: Array<MorphoLendingPositionRow | MorphoLendingPositionDegradedRow> =
+    morphoLeg.rows;
   const positions: LendingPositionRow[] = [...aaveRows, ...compoundRows, ...morphoRows];
 
   const result: LendingPositionsResult = {
@@ -644,6 +718,13 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     },
   };
   if (isPublicNodeFallback(chainId)) result.rpcDegraded = true;
+  // Phase 29 WR-02: promote Morpho per-market degradation OR event-log scan
+  // failure to top-level rpcDegraded. Mirror of get_morpho_positions.ts
+  // rpcDegraded surfacing — without this, a primary-RPC scan failure that
+  // bypassed the public-node fallback path produced a silent zero-anchor.
+  if (morphoLeg.summary.marketsDegraded > 0 || morphoLeg.summary.scanFailed) {
+    result.rpcDegraded = true;
+  }
 
   const summaryLines: string[] = [];
   summaryLines.push(`Aave V3 positions for ${wallet}:`);
@@ -705,11 +786,28 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     summaryLines.push("");
     summaryLines.push(`Morpho Blue positions for ${wallet}:`);
     if (morphoRows.length === 0) {
-      summaryLines.push(
-        `  (no positions across ${morphoLeg.summary.marketsTouched} touched markets)`,
-      );
+      // WR-02: if the scan itself failed, surface that explicitly — the empty
+      // rows array is no longer ambiguous between "truly no positions" and
+      // "RPC failure dropped them silently".
+      if (morphoLeg.summary.scanFailed) {
+        summaryLines.push(
+          "  (event-log scan failed — rpcDegraded; treat as unknown rather than empty)",
+        );
+      } else {
+        summaryLines.push(
+          `  (no positions across ${morphoLeg.summary.marketsTouched} touched markets)`,
+        );
+      }
     } else {
       for (const r of morphoRows) {
+        if ("rpcDegraded" in r) {
+          // WR-02: per-market degraded row — surface the marketId + reason
+          // verbatim so the agent sees what was lost.
+          summaryLines.push(
+            `  ${r.marketId}: rpcDegraded (${r.reason})`,
+          );
+          continue;
+        }
         const label = r.marketLabel ?? `[UNKNOWN MARKET — verify oracle + IRM externally]`;
         const parts: string[] = [];
         if (r.supplyShares !== "0") {
