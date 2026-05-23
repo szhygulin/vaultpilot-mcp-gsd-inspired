@@ -853,7 +853,7 @@ Plans:
 
 **Wave 1**
 
-- [ ] 30-01-PLAN.md — Lido SOT extension (`LidoContracts` + 3 getters + 2 KNOWN_SPENDERS rows) + canonical-dispatch Lido arm (Ethereum chainId=1; Arbitrum sentinels filtered) + `src/protocols/lido.ts` (4 ABI fragments + 4 verified selectors + 4 encoders + `_lidoProtocol` indirection) + `src/signing/blocks.ts` (4 PREPARE-RECEIPT templates + `NFT_RECEIPT_EXPECTED_TEMPLATE` append-only) + Fixtures V/W/X/Y hardcoded literals + T-LIDO-SPENDER-DRIFT-1 cross-view assertion
+- [x] 30-01-PLAN.md — Lido SOT extension (`LidoContracts` + 3 getters + 2 KNOWN_SPENDERS rows) + canonical-dispatch Lido arm (Ethereum chainId=1; Arbitrum sentinels filtered) + `src/protocols/lido.ts` (4 ABI fragments + 4 verified selectors + 4 encoders + `_lidoProtocol` indirection) + `src/signing/blocks.ts` (4 PREPARE-RECEIPT templates + `NFT_RECEIPT_EXPECTED_TEMPLATE` append-only) + Fixtures V/W/X/Y hardcoded literals + T-LIDO-SPENDER-DRIFT-1 cross-view assertion
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -1146,7 +1146,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 27. Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics | v2.2 | 2/3 | In Progress|  |
 | 28. Compound V3 — multi-Comet supply/withdraw/borrow/repay (Ethereum mainnet — 6 Comets) | v2.3 | 4/4 | Complete (verify-phase open); closes #64 | 2026-05-20 |
 | 29. Morpho Blue — supply/withdraw/borrow/repay | v2.3 | 3/3 | Complete   | 2026-05-23 |
-| 30. Lido — stake/unstake/wrap/unwrap (stETH↔wstETH) | v2.3 | 0/3 | Not started | - |
+| 30. Lido — stake/unstake/wrap/unwrap (stETH↔wstETH) | v2.3 | 1/3 | In Progress|  |
 | 31. EigenLayer + Rocket Pool | v2.3 | 0/3 | Not started | - |
 | 32. Uniswap V3 swap (auto-fee-tier, same-chain) | v2.4 | 0/2 | Not started | - |
 | 33. Uniswap V3 full LP verb set + `get_lp_positions` with IL estimate | v2.4 | 0/3 | Not started | - |
