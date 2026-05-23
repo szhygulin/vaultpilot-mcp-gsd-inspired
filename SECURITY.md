@@ -437,3 +437,47 @@ The fingerprint recompute at `preview_send` (Layer 1) and `send_transaction` (La
 | T-23-18 | Information Disclosure | MEDIUM | Esplora broadcast failure masked as success: `broadcastTx` returns `{ kind: "rejected" \| "error" }` mapped to `BROADCAST_FAILED` with upstream message verbatim; never a silent success. |
 | T-23-07 | Spoofing | MEDIUM | Esplora endpoint trust: accepted residual — operator-configurable; on-device review is the backstop. |
 | T-23-SC | Tampering | LOW | npm supply-chain: no new packages in Phase 23 (RESEARCH §Package Legitimacy Audit). |
+
+---
+
+## Phase 27 — v2.2 Bitcoin/Litecoin Milestone Close-Out
+
+Phase 27 (Plans 27-01 through 27-03) ships read-only forensic surface — Bitcoin Core + Litecoin Core JSON-RPC client, six forensic tools (`get_btc_block_tip`, `get_btc_block_stats`, `get_btc_blocks_recent`, `get_btc_chain_tips`, `get_btc_mempool_summary`, `get_litecoin_block_tip`, `get_litecoin_mempool_summary`), the cross-chain `build_incident_report` anomaly aggregator, and the `bitcoinCoreConfigured` / `litecoinCoreConfigured` boolean extension to `get_vaultpilot_config_status`. No signing-path changes; the FROZEN three-gate region of `send_transaction.ts` is byte-identical to `origin/main` across the full v2.2 milestone.
+
+### v2.2 milestone PSBT serialization (cross-link)
+
+PSBT serialization trust shape, per-input BIP-143/341 sighash binding, and the multi-input sighash recompute as the Layer 1 defense are documented at `## Phase 23 — Bitcoin (BTC) Native SegWit + Taproot Trust Pipeline`. Litecoin inherits the same shape via the Phase 26 LTC PSBT pipeline (Fixture Y/Z anchor in `test/signing-fingerprint.test.ts`); Phase 26 LTC threat-model content lives in the Phase 26 plan summaries. This sub-section is a navigation pointer — no new content.
+
+### v2.2 milestone per-input BIP-143 sighash binding (cross-link)
+
+The `payloadFingerprint` divergence table at `## Phase 23 — Bitcoin (BTC) Native SegWit + Taproot Trust Pipeline` documents BTC's per-input sighash composition (one keccak input per UTXO). LTC inherits the same shape with the `VaultPilot-ltctx-v1:` domain tag — every UTXO contributes one BIP-143 sighash to the fingerprint preimage, the device renders N per-input sighashes (one per UTXO), and `previewSendBtcBranch` / `previewSendLtcBranch` recompute all N sighashes from the stored canonical artifact at Layer 1. Navigation pointer only.
+
+### Bitcoin Core RPC trust shape (NEW)
+
+Phase 27's BTC + LTC forensic surface introduces a new trust boundary: the MCP server consumes a Bitcoin Core (and optionally Litecoin Core) JSON-RPC endpoint controlled by the operator. The operator is the adversary model for this surface — a compromised Core node returns tampered chain data — and the threat model is bounded by Phase 27 being read-only by construction.
+
+- **private-node deployment recommendation.** Public Bitcoin Core RPC endpoints are rare; most operators run their own node (BitcoinD on `localhost` or a LAN-internal host). VaultPilot assumes a self-operated Core node and surfaces `bitcoinCoreConfigured` as a boolean only — the URL and credentials are out-of-band operator state.
+- **Plain HTTP trust boundary.** Bitcoin Core RPC has no built-in TLS; the MCP server connects over plain HTTP. Deployments MUST be LAN-only OR routed through a TLS-terminating reverse proxy (nginx / Caddy). Operating Core RPC across the public internet without TLS termination is an explicit deployment defect, not a defended posture.
+- **Basic-auth credentials in env vars.** `BITCOIN_CORE_RPC_USER` + `BITCOIN_CORE_RPC_PASS` (and the LTC siblings) are sensitive — the same handling rules as `WALLETCONNECT_PROJECT_ID` and `ETHERSCAN_API_KEY` apply. Credentials are consumed only by `src/clients/bitcoin-core-rpc.ts` internally; they NEVER appear in tool responses, structured content, or log output. `get_vaultpilot_config_status` surfaces only the `bitcoinCoreConfigured` / `litecoinCoreConfigured` booleans — never the URL, never the credentials. Secret-safety scrub asserts this at the `test/get-vaultpilot-config-status.test.ts` test surface.
+- **Tampered-node threat model.** A compromised Core node returns manipulated chain data — fabricated `getblockchaininfo`, fake `getchaintips` fork tips, inflated `getmempoolinfo` size. This affects forensic accuracy (the agent surfaces wrong anomaly signals via `build_incident_report`) but NOT signing security. Phase 27 is read-only by construction: the Ledger device independently validates every PSBT at signing time against its own derivation, and Core RPC tampered data has no path into the signing pipeline. The residual risk surfaces in the agent's forensic claims to the user, not in fund movement.
+- **SSRF accepted residual.** `BITCOIN_CORE_RPC_URL` is operator-configurable with no allowlist — the same accepted residual as `ETHEREUM_RPC_URL` and `BTC_ESPLORA_URL`. The operator controls the URL; defense in depth at the URL boundary is out-of-scope for the MCP server.
+
+### LTC threat model (NEW)
+
+Litecoin Core mirrors Bitcoin Core in trust shape — every BTC point above applies to LTC via `LITECOIN_CORE_RPC_URL` + `LITECOIN_CORE_RPC_USER` + `LITECOIN_CORE_RPC_PASS`. Two divergences:
+
+- **MWEB (MimbleWimble Extension Blocks) is out of scope.** Litecoin Core's `getmempoolinfo`, `getblockstats`, and block responses may include MWEB-specific fields (`mweb_usage`, `mweb_size`, …). Phase 27 absorbs these via `[key: string]: unknown` index signatures on response types and intentionally does NOT surface them. MWEB privacy implications, MWEB transaction validation, and MWEB-aware anomaly detection are out-of-scope for Phase 27 — the forensic tools surface standard UTXO-model chain data only. A v2.3+ MWEB-aware extension is the canonical follow-up.
+- **Chain-tip-lag baseline uses LTC's 2.5-minute target block time.** `build_incident_report` derives `expectedHeight = blocks + Math.floor((Date.now() / 1000 - mediantime) / 150)` for LTC (vs `600` for BTC). The local-clock trust input is accepted residual (T-27-INCIDENT-WALL-CLOCK) — surfaced to the agent via the `chain-tip-lag` anomaly's `note` field for downstream context.
+
+### Phase 27 threat register summary
+
+| Threat ID | STRIDE | Severity | Disposition | Mitigation |
+|-----------|--------|----------|-------------|------------|
+| T-27-CORE-CRED-LEAK | Information Disclosure | CRITICAL | mitigate | Core credentials structurally unreachable from `get_vaultpilot_config_status.ts` by import-graph construction (only URL readers imported, never `_USER`/`_PASS` readers). Runtime secret-safety scrub anchored in `test/get-vaultpilot-config-status.test.ts`. |
+| T-27-MEMPOOL-DOS | Denial of Service | MEDIUM | mitigate | `getrawmempool(verbose=true)` is NEVER called — response can be tens of MB on a production node (RESEARCH §Pitfall 6). Tools use `getmempoolinfo` only. Source-grep regression at Plan 27-02 acceptance criteria. |
+| T-27-MEMPOOL-RPC-ERR | Tampering | LOW | mitigate | RESEARCH §Pitfall 2 — Bitcoin Core uses HTTP 500 for JSON-RPC application-level errors. `callBitcoinCoreRpc` parses the body to extract `error.code` + `error.message` before emitting the `rpc-error` arm. Anchored in `test/clients-bitcoin-core-rpc.test.ts` Test 4. |
+| T-27-INCIDENT-TIMEOUT | Denial of Service | LOW | mitigate | `build_incident_report` per-chain `AbortController` 10s timeout (`INCIDENT_REPORT_CHAIN_TIMEOUT_MS`) — a slow Core node cannot block the aggregate response. Mirror of Phase 8 `get_portfolio_summary` defense. |
+| T-27-TAMPERED-CORE | Spoofing | MEDIUM | accept | A tampered Core node returns wrong forensic data and the agent surfaces wrong anomaly signals. Accepted residual: Phase 27 is read-only; affects forensic accuracy NOT signing security; the Ledger device independently validates PSBTs at signing time. |
+| T-27-SC | Tampering | LOW | mitigate | NO new npm packages in Phase 27 (RESEARCH §Package Legitimacy Audit — empty table). Native `fetch` + `Buffer.from(...).toString("base64")` cover the full surface. |
+
+The v2.2 milestone (Bitcoin + Litecoin, Phases 22–27) is functionally complete. The v2.2 verify-phase remains pending a real-Ledger USB-HID BTC + LTC app smoke against mainnet — small native send + RBF bump + BIP-137 message sign + multisig flow + Core RPC reads + LiFi bridge + `build_incident_report` cross-chain triage. Phase 27's forensic + incident-report surface is read-only by construction; the FROZEN three-gate region of `send_transaction.ts` is byte-identical to `origin/main` across the full v2.2 milestone.

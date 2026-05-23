@@ -576,3 +576,105 @@ describe("get_vaultpilot_config_status — skillIntegrity (Plan 09-02 / SEC-31)"
     expect(text).not.toContain(COMPUTED_SENTINEL);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 27 Plan 27-02 — bitcoinCoreConfigured + litecoinCoreConfigured booleans.
+// T-27-CORE-CRED-LEAK structural defense: only URL readers imported; _USER/_PASS
+// readers are NOT imported into this module (import-graph construction guarantee).
+// The credential-leak scrub test below provides the runtime assertion.
+// ---------------------------------------------------------------------------
+describe("get_vaultpilot_config_status — bitcoinCoreConfigured (Phase 27 Plan 27-02)", () => {
+  it("Test 50 — BITCOIN_CORE_RPC_URL unset → bitcoinCoreConfigured false", async () => {
+    delete process.env.BITCOIN_CORE_RPC_URL;
+
+    const result = await callTool();
+    const sc = result.structuredContent as { bitcoinCoreConfigured: boolean };
+
+    expect(sc.bitcoinCoreConfigured).toBe(false);
+  });
+
+  it("Test 51 — BITCOIN_CORE_RPC_URL set → bitcoinCoreConfigured true", async () => {
+    process.env.BITCOIN_CORE_RPC_URL = "http://localhost:8332";
+
+    const result = await callTool();
+    const sc = result.structuredContent as { bitcoinCoreConfigured: boolean };
+
+    expect(sc.bitcoinCoreConfigured).toBe(true);
+
+    delete process.env.BITCOIN_CORE_RPC_URL;
+  });
+});
+
+describe("get_vaultpilot_config_status — litecoinCoreConfigured (Phase 27 Plan 27-02)", () => {
+  it("Test 52 — LITECOIN_CORE_RPC_URL unset → litecoinCoreConfigured false", async () => {
+    delete process.env.LITECOIN_CORE_RPC_URL;
+
+    const result = await callTool();
+    const sc = result.structuredContent as { litecoinCoreConfigured: boolean };
+
+    expect(sc.litecoinCoreConfigured).toBe(false);
+  });
+
+  it("Test 53 — LITECOIN_CORE_RPC_URL set → litecoinCoreConfigured true", async () => {
+    process.env.LITECOIN_CORE_RPC_URL = "http://localhost:9332";
+
+    const result = await callTool();
+    const sc = result.structuredContent as { litecoinCoreConfigured: boolean };
+
+    expect(sc.litecoinCoreConfigured).toBe(true);
+
+    delete process.env.LITECOIN_CORE_RPC_URL;
+  });
+});
+
+describe("get_vaultpilot_config_status — T-27-CORE-CRED-LEAK credential-leak scrub (Phase 27 Plan 27-02)", () => {
+  it("Test 54 (LOAD-BEARING) — BTC/LTC Core RPC credentials NEVER appear in response (T-27-CORE-CRED-LEAK)", async () => {
+    // Set all credential env vars with unique sentinel values.
+    process.env.BITCOIN_CORE_RPC_URL = "http://leak-canary:topsecret@localhost:8332";
+    process.env.BITCOIN_CORE_RPC_USER = "alice";
+    process.env.BITCOIN_CORE_RPC_PASS = "supersecret123";
+    process.env.LITECOIN_CORE_RPC_URL = "http://ltc-canary:ltcSecret@localhost:9332";
+    process.env.LITECOIN_CORE_RPC_USER = "bob";
+    process.env.LITECOIN_CORE_RPC_PASS = "ltcSuperSecret";
+
+    const result = await callTool();
+    const serialized = JSON.stringify(result.structuredContent);
+    const text = result.content[0]?.text ?? "";
+
+    // LOAD-BEARING: none of the credential values or embedded-URL credentials
+    // must appear in the structuredContent or text block.
+    expect(serialized).not.toContain("topsecret");
+    expect(serialized).not.toContain("supersecret123");
+    expect(serialized).not.toContain("ltcSecret");
+    expect(serialized).not.toContain("ltcSuperSecret");
+    expect(serialized).not.toContain("alice");
+    expect(serialized).not.toContain("bob");
+    expect(serialized).not.toContain("leak-canary");
+    expect(serialized).not.toContain("ltc-canary");
+
+    expect(text).not.toContain("topsecret");
+    expect(text).not.toContain("supersecret123");
+    expect(text).not.toContain("ltcSecret");
+    expect(text).not.toContain("ltcSuperSecret");
+    expect(text).not.toContain("alice");
+    expect(text).not.toContain("bob");
+    expect(text).not.toContain("leak-canary");
+    expect(text).not.toContain("ltc-canary");
+
+    // Presence detection still works — booleans are correct.
+    const sc = result.structuredContent as {
+      bitcoinCoreConfigured: boolean;
+      litecoinCoreConfigured: boolean;
+    };
+    expect(sc.bitcoinCoreConfigured).toBe(true);
+    expect(sc.litecoinCoreConfigured).toBe(true);
+
+    // Cleanup
+    delete process.env.BITCOIN_CORE_RPC_URL;
+    delete process.env.BITCOIN_CORE_RPC_USER;
+    delete process.env.BITCOIN_CORE_RPC_PASS;
+    delete process.env.LITECOIN_CORE_RPC_URL;
+    delete process.env.LITECOIN_CORE_RPC_USER;
+    delete process.env.LITECOIN_CORE_RPC_PASS;
+  });
+});

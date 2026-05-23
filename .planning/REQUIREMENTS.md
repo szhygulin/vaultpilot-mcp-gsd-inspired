@@ -277,12 +277,12 @@ UTXO model means structurally distinct primitives from account-model chains. PSB
 
 Optional Bitcoin Core / Litecoin Core JSON-RPC unlocks forensic chain reads Esplora cannot serve. Absent → tools return `coreNotConfigured` envelope (never silent failure).
 
-- [ ] **BTC-FORENSIC-01**: `BITCOIN_CORE_RPC_URL` (with optional `_USER`/`_PASS` basic-auth) enables Bitcoin Core JSON-RPC; absent → forensic tools return `coreNotConfigured` envelope
-- [ ] **BTC-FORENSIC-02**: `get_btc_block_tip()` returns chain tip + timestamp + difficulty (Core RPC if configured; Esplora fallback for tip-only without difficulty)
-- [ ] **BTC-FORENSIC-03**: `get_btc_block_stats({ blockHeight })` returns per-block tx count + fee percentiles + size + segwit/taproot adoption
-- [ ] **BTC-FORENSIC-04**: `get_btc_blocks_recent({ count })` returns the last N block summaries; `get_btc_chain_tips()` returns all known chain tips (reorg detection)
-- [ ] **BTC-FORENSIC-05**: `get_btc_mempool_summary()` returns mempool size + fee-rate histogram (Core RPC only — Esplora API doesn't expose full mempool)
-- [ ] **LTC-FORENSIC-01**: `LITECOIN_CORE_RPC_URL` enables the LTC-equivalent forensic suite — `get_litecoin_block_tip` + `get_litecoin_mempool_summary` + parallel tools mirroring BTC-FORENSIC-02..05
+- [x] **BTC-FORENSIC-01**: `BITCOIN_CORE_RPC_URL` (with optional `_USER`/`_PASS` basic-auth) enables Bitcoin Core JSON-RPC; absent → forensic tools return `coreNotConfigured` envelope
+- [x] **BTC-FORENSIC-02**: `get_btc_block_tip()` returns chain tip + timestamp + difficulty (Core RPC if configured; Esplora fallback for tip-only without difficulty)
+- [x] **BTC-FORENSIC-03**: `get_btc_block_stats({ blockHeight })` returns per-block tx count + fee percentiles + size + segwit/taproot adoption
+- [x] **BTC-FORENSIC-04**: `get_btc_blocks_recent({ count })` returns the last N block summaries; `get_btc_chain_tips()` returns all known chain tips (reorg detection)
+- [x] **BTC-FORENSIC-05**: `get_btc_mempool_summary()` returns mempool size + fee-rate histogram (Core RPC only — Esplora API doesn't expose full mempool)
+- [x] **LTC-FORENSIC-01**: `LITECOIN_CORE_RPC_URL` enables the LTC-equivalent forensic suite — `get_litecoin_block_tip` + `get_litecoin_mempool_summary` + parallel tools mirroring BTC-FORENSIC-02..05
 
 #### Incident report (BTC-INC-*)
 
