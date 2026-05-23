@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Bitcoin + Litecoin
 status: executing
-last_updated: "2026-05-23T04:49:47.821Z"
+last_updated: "2026-05-23T05:43:17.691Z"
 last_activity: 2026-05-22 -- Phase 27 planning complete
 progress:
   total_phases: 6
@@ -312,6 +312,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-23T04:49:47.647Z
-Stopped at: Completed 26-ltc-scaffolding-lifi-btc-bridging-26-01-PLAN.md
-Resume file: None
+Last session: 2026-05-23T05:43:17.680Z
+Stopped at: Phase 30 context gathered
+Resume file: .planning/phases/30-evm-lido-stake-unstake-wrap-unwrap/30-CONTEXT.md
