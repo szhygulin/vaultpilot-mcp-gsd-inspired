@@ -9,6 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  BITCOIN_CORE_RPC_TIMEOUT_MS,
   callBitcoinCoreRpc,
   type BitcoinCoreRpcResult,
 } from "../src/clients/bitcoin-core-rpc.js";
@@ -180,26 +181,26 @@ describe("callBitcoinCoreRpc", () => {
     }
   });
 
-  // ─── Test 8: fetch throws AbortError → network-error timeout ───────────────
+  // ─── Test 8: AbortController setTimeout → controller.abort() → fetch rejects via signal ───
+  // Drives the client's REAL internal timeout chain end-to-end with fake timers
+  // (per WR-02): the single makeAbortFetch() stub honors opts.signal — when the
+  // client's own setTimeout fires after BITCOIN_CORE_RPC_TIMEOUT_MS, the
+  // controller.abort() event triggers the fetch to reject with an AbortError,
+  // and the client's catch arm classifies it as network-error/timeout.
 
   it("returns network-error with 'timeout' when AbortController fires", async () => {
-    // Use a mock that fires the abort immediately after the signal is registered.
-    const mockFetch = makeAbortFetch();
-    vi.stubGlobal("fetch", mockFetch);
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", makeAbortFetch());
 
-    // Use a very short timeout (1ms) to force the abort.
-    const abortErr = Object.assign(new Error("The operation was aborted."), {
-      name: "AbortError",
-    });
-    vi.stubGlobal("fetch", makeThrowFetch(abortErr));
-
-    // Directly simulate AbortError by making fetch throw it.
-    const result = await callBitcoinCoreRpc(CORE_URL, USER, PASS, "getblockchaininfo", []);
+    const promise = callBitcoinCoreRpc(CORE_URL, USER, PASS, "getblockchaininfo", []);
+    await vi.advanceTimersByTimeAsync(BITCOIN_CORE_RPC_TIMEOUT_MS + 1);
+    const result = await promise;
 
     expect(result.kind).toBe("network-error");
     if (result.kind === "network-error") {
       expect(result.message).toMatch(/timeout/);
     }
+    vi.useRealTimers();
   });
 
   // ─── Test 9: user+pass set → correct Authorization header ──────────────────
