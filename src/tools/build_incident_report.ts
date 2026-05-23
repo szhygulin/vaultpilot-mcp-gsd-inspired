@@ -268,15 +268,53 @@ async function runProbeWithTimeout(probe: Probe, timeoutMs: number): Promise<Pro
   }
 }
 
-// ─── BTC probe ───────────────────────────────────────────────────────────────
+// ─── Chain-parameterized core probe ──────────────────────────────────────────
+//
+// WR-05: BTC + LTC probes were line-for-line identical except for the chain
+// literal, env readers, mempool baseline, and target block time. Extract a
+// single runCoreProbe(cfg) so a future sub-probe addition (e.g. verifychain)
+// or partial-success-aggregation tweak touches one site, not two.
+//
+// IN-06 note: the `kind !== "not-configured"` guards on each non-ok arm are
+// defensive — callBitcoinCoreRpc only emits the not-configured arm when its
+// URL argument is null (client line 92), and runCoreProbe short-circuits on
+// `url === null` above before any RPC call. The guards keep type-narrowing
+// tidy (rpcMessage cannot consume the not-configured arm).
 
-async function runBtcProbe(): Promise<ProbeResult> {
-  const url = getBitcoinCoreRpcUrl();
+interface ChainProbeConfig {
+  chain: SupportedChain;
+  getUrl: () => string | null;
+  getUser: () => string | undefined;
+  getPass: () => string | undefined;
+  mempoolBaselineTxs: number;
+  targetBlockTimeSecs: number;
+}
+
+const BTC_PROBE_CONFIG: ChainProbeConfig = {
+  chain: "bitcoin",
+  getUrl: getBitcoinCoreRpcUrl,
+  getUser: getBitcoinCoreRpcUser,
+  getPass: getBitcoinCoreRpcPass,
+  mempoolBaselineTxs: BTC_MEMPOOL_BASELINE_TXS_DEFAULT,
+  targetBlockTimeSecs: BTC_TARGET_BLOCK_TIME_SECS,
+};
+
+const LTC_PROBE_CONFIG: ChainProbeConfig = {
+  chain: "litecoin",
+  getUrl: getLitecoinCoreRpcUrl,
+  getUser: getLitecoinCoreRpcUser,
+  getPass: getLitecoinCoreRpcPass,
+  mempoolBaselineTxs: LTC_MEMPOOL_BASELINE_TXS_DEFAULT,
+  targetBlockTimeSecs: LTC_TARGET_BLOCK_TIME_SECS,
+};
+
+async function runCoreProbe(cfg: ChainProbeConfig): Promise<ProbeResult> {
+  const url = cfg.getUrl();
   if (url === null) {
     return { status: "core-not-configured", anomalies: [] };
   }
-  const user = getBitcoinCoreRpcUser();
-  const pass = getBitcoinCoreRpcPass();
+  const user = cfg.getUser();
+  const pass = cfg.getPass();
 
   // Three parallel RPC calls. Partial-success aggregation — one failed sub-call
   // contributes a `probe-failed` anomaly tagged to its method but the OTHER
@@ -291,16 +329,12 @@ async function runBtcProbe(): Promise<ProbeResult> {
 
   // chain-tip-lag
   if (infoRes.kind === "ok") {
-    const lagAnomaly = deriveTipLag(
-      "bitcoin",
-      infoRes.result,
-      BTC_TARGET_BLOCK_TIME_SECS,
-    );
+    const lagAnomaly = deriveTipLag(cfg.chain, infoRes.result, cfg.targetBlockTimeSecs);
     if (lagAnomaly !== null) anomalies.push(lagAnomaly);
   } else if (infoRes.kind !== "not-configured") {
     anomalies.push({
       type: "probe-failed",
-      chain: "bitcoin",
+      chain: cfg.chain,
       reason: `getblockchaininfo: ${rpcMessage(infoRes)}`,
     });
   }
@@ -311,7 +345,7 @@ async function runBtcProbe(): Promise<ProbeResult> {
       if (tip.status !== "active" && tip.branchlen >= 1 && tip.status !== "invalid") {
         anomalies.push({
           type: "reorg-detected",
-          chain: "bitcoin",
+          chain: cfg.chain,
           forkBranchLen: tip.branchlen,
           forkTipHash: tip.hash,
           forkStatus: tip.status,
@@ -321,23 +355,19 @@ async function runBtcProbe(): Promise<ProbeResult> {
   } else if (tipsRes.kind !== "not-configured") {
     anomalies.push({
       type: "probe-failed",
-      chain: "bitcoin",
+      chain: cfg.chain,
       reason: `getchaintips: ${rpcMessage(tipsRes)}`,
     });
   }
 
   // mempool-spike
   if (memRes.kind === "ok") {
-    const spike = deriveMempoolSpike(
-      "bitcoin",
-      memRes.result.size,
-      BTC_MEMPOOL_BASELINE_TXS_DEFAULT,
-    );
+    const spike = deriveMempoolSpike(cfg.chain, memRes.result.size, cfg.mempoolBaselineTxs);
     if (spike !== null) anomalies.push(spike);
   } else if (memRes.kind !== "not-configured") {
     anomalies.push({
       type: "probe-failed",
-      chain: "bitcoin",
+      chain: cfg.chain,
       reason: `getmempoolinfo: ${rpcMessage(memRes)}`,
     });
   }
@@ -345,75 +375,12 @@ async function runBtcProbe(): Promise<ProbeResult> {
   return { status: "ok", anomalies };
 }
 
-// ─── LTC probe ───────────────────────────────────────────────────────────────
+async function runBtcProbe(): Promise<ProbeResult> {
+  return runCoreProbe(BTC_PROBE_CONFIG);
+}
 
 async function runLtcProbe(): Promise<ProbeResult> {
-  const url = getLitecoinCoreRpcUrl();
-  if (url === null) {
-    return { status: "core-not-configured", anomalies: [] };
-  }
-  const user = getLitecoinCoreRpcUser();
-  const pass = getLitecoinCoreRpcPass();
-
-  const [infoRes, tipsRes, memRes] = await Promise.all([
-    callBitcoinCoreRpc<GetBlockchainInfoResult>(url, user, pass, "getblockchaininfo", []),
-    callBitcoinCoreRpc<ChainTip[]>(url, user, pass, "getchaintips", []),
-    callBitcoinCoreRpc<GetMempoolInfoResult>(url, user, pass, "getmempoolinfo", []),
-  ]);
-
-  const anomalies: AnomalySignal[] = [];
-
-  if (infoRes.kind === "ok") {
-    const lagAnomaly = deriveTipLag(
-      "litecoin",
-      infoRes.result,
-      LTC_TARGET_BLOCK_TIME_SECS,
-    );
-    if (lagAnomaly !== null) anomalies.push(lagAnomaly);
-  } else if (infoRes.kind !== "not-configured") {
-    anomalies.push({
-      type: "probe-failed",
-      chain: "litecoin",
-      reason: `getblockchaininfo: ${rpcMessage(infoRes)}`,
-    });
-  }
-
-  if (tipsRes.kind === "ok") {
-    for (const tip of tipsRes.result) {
-      if (tip.status !== "active" && tip.branchlen >= 1 && tip.status !== "invalid") {
-        anomalies.push({
-          type: "reorg-detected",
-          chain: "litecoin",
-          forkBranchLen: tip.branchlen,
-          forkTipHash: tip.hash,
-          forkStatus: tip.status,
-        });
-      }
-    }
-  } else if (tipsRes.kind !== "not-configured") {
-    anomalies.push({
-      type: "probe-failed",
-      chain: "litecoin",
-      reason: `getchaintips: ${rpcMessage(tipsRes)}`,
-    });
-  }
-
-  if (memRes.kind === "ok") {
-    const spike = deriveMempoolSpike(
-      "litecoin",
-      memRes.result.size,
-      LTC_MEMPOOL_BASELINE_TXS_DEFAULT,
-    );
-    if (spike !== null) anomalies.push(spike);
-  } else if (memRes.kind !== "not-configured") {
-    anomalies.push({
-      type: "probe-failed",
-      chain: "litecoin",
-      reason: `getmempoolinfo: ${rpcMessage(memRes)}`,
-    });
-  }
-
-  return { status: "ok", anomalies };
+  return runCoreProbe(LTC_PROBE_CONFIG);
 }
 
 // ─── Anomaly derivation helpers ──────────────────────────────────────────────

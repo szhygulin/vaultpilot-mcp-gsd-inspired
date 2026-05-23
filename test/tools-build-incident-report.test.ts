@@ -323,6 +323,42 @@ describe("build_incident_report", () => {
     expect(String(failed?.reason)).toContain("getchaintips");
   });
 
+  // ─── 8b. WR-05 anchor: LTC partial-success mirrors the BTC partial-success ──
+  // After WR-05 extracted runCoreProbe(cfg), BTC and LTC run the SAME body —
+  // pin the LTC half so a future regression that breaks one chain breaks
+  // the test for the other too.
+
+  it("WR-05: LTC partial-success — one sub-RPC fails (HTTP 500) + other two succeed → status === ok + one probe-failed anomaly tagged litecoin", async () => {
+    process.env.LITECOIN_CORE_RPC_URL = "http://localhost:9332";
+    const nowSecs = Math.floor(Date.now() / 1000);
+
+    vi.stubGlobal(
+      "fetch",
+      makeMethodFetch({
+        getblockchaininfo: [
+          { status: 200, body: okBody({ blocks: 3000000, bestblockhash: "0xltc", mediantime: nowSecs - 60 }) },
+        ],
+        getchaintips: [
+          // HTTP 500 → BitcoinCoreRpcResult `rpc-error` arm.
+          { status: 500, body: { result: null, error: { code: -32603, message: "Internal error" }, id: "vaultpilot" } },
+        ],
+        getmempoolinfo: [{ status: 200, body: okBody({ size: 5_000, bytes: 2_500_000 }) }],
+      }),
+    );
+
+    const result = await invokeTool({ includeChains: ["litecoin"] });
+    const report = sc(result);
+
+    // Chain-level status remains "ok" — partial success at the chain level.
+    expect(report.chainProbeStatus.litecoin).toBe("ok");
+    // The sub-call failure surfaces tagged with the method name in the reason.
+    const failed = report.anomaliesDetected.find(
+      (a) => a.type === "probe-failed" && a.chain === "litecoin",
+    );
+    expect(failed).toBeDefined();
+    expect(String(failed?.reason)).toContain("getchaintips");
+  });
+
   // ─── 9. LTC distinct baseline (5_000) ────────────────────────────────────
 
   it("uses LTC's 5_000-tx mempool baseline for mempool-spike (distinct from BTC's 100_000)", async () => {
