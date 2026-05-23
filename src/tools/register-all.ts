@@ -99,6 +99,7 @@ import "./prepare_eigenlayer_deposit.js"; // Phase 31 Plan 31-02 (EIG-02) — St
 import "./get_rocketpool_positions.js";   // Phase 31 Plan 31-03 (RP-01) — rETH balance + exchange rate + ETH-equivalent value
 import "./prepare_rocketpool_stake.js";   // Phase 31 Plan 31-03 (RP-02 stake) — RocketDepositPool.deposit (value-bearing; 0xd0e30db0 collides with WETH9.deposit — preview_send tuple-dispatches)
 import "./prepare_rocketpool_unstake.js"; // Phase 31 Plan 31-03 (RP-02 unstake) — rETH.burn(uint256) (0x42966c68 is generic ERC-20 Burnable — preview_send tuple-dispatches)
+import "./get_uniswap_quote.js"; // Phase 32 Plan 32-02 (UNI-01) — Uniswap V3 quote with auto-fee-tier + multi-hop + sandwich-MEV warning
 import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";
