@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Address, Hex } from "viem";
+import { getAddress } from "viem";
 import { Transaction, networks, payments } from "bitcoinjs-lib";
 import { BIP32Factory } from "bip32";
 import * as tinySecp256k1 from "tiny-secp256k1";
@@ -29,7 +30,18 @@ import {
   encodeCompoundSupply,
   encodeCompoundWithdraw,
 } from "../src/protocols/compound-v3.js";
-import { getCompoundCometAddress } from "../src/config/contracts.js";
+import {
+  getCompoundCometAddress,
+  getLidoStethAddress,
+  getLidoWstethAddress,
+  getLidoWithdrawalQueueAddress,
+} from "../src/config/contracts.js";
+import {
+  encodeLidoSubmit,
+  encodeRequestWithdrawals,
+  encodeWstethWrap,
+  encodeWstethUnwrap,
+} from "../src/protocols/lido.js";
 
 describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
   it("Fixture A — native send → 0x7e1867b2... byte-for-byte", () => {
@@ -300,6 +312,101 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     // (Plan 28-03) — the prepare tool emits this exact calldata when
     // `amount: "max"`.
     expect(fp).toBe("0x287f7b8731dbe64fbfcaf023382eb31c385a33938b52548887daef807f7e480c");
+  });
+
+  // ==========================================================================
+  // Phase 30 — Plan 30-01. Fixtures V / W / X / Y — Lido protocol.
+  //
+  // D-11 fixture letter assignment (CONTEXT.md):
+  //   V = Lido.submit(referral=address(0))         — ETH value-bearing stake
+  //   W = WithdrawalQueue.requestWithdrawals(...)  — single-element array unstake
+  //   X = WstETH.wrap(1e18)                        — stETH → wstETH
+  //   Y = WstETH.unwrap(1e18)                      — wstETH → stETH
+  //
+  // Each fingerprint computed at write-time via node inline script (2026-05-23)
+  // and pasted as a hardcoded literal per CLAUDE.md cryptographic-binding rule.
+  // NO `beforeAll`-snapshot — drift in preimage assembly fails at a specific line.
+  //
+  // Cross-link: test/prepare-lido-stake.test.ts (Plan 30-03) re-anchors V;
+  // test/prepare-lido-unstake.test.ts re-anchors W; prepare-lido-wrap re-anchors X;
+  // prepare-lido-unwrap re-anchors Y. test/lido-lifecycle.integration.test.ts
+  // verifies persona-cycle byte-identity across these fixtures.
+  // ==========================================================================
+
+  it("Fixture V — Lido.submit(referral=address(0)) with value=1e18 ETH fingerprint (hardcoded literal anchor, Phase 30 Plan 30-01)", () => {
+    const steth = getLidoStethAddress(1)!;
+    // referral = address(0) per D-07; Phase 30 hardcodes this, no third-party referral
+    const submitData = encodeLidoSubmit("0x0000000000000000000000000000000000000000" as Address);
+    // 36 bytes = 4 selector (0xa1903eab) + 32 zero-padded referral address
+    expect(submitData.length).toBe(74);
+    expect(submitData.slice(0, 10).toLowerCase()).toBe("0xa1903eab");
+    // Pitfall 7: Lido.submit is PAYABLE — ETH goes in tx.value, NOT calldata.
+    // The calldata only carries selector + referral; value = 1 ETH = 1e18 wei.
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: steth,
+      valueWei: 1_000_000_000_000_000_000n,
+      data: submitData,
+    });
+    // Hardcoded literal — computed at write-time (2026-05-23) via node inline script.
+    // Cross-linked from test/prepare-lido-stake.test.ts (Plan 30-03).
+    expect(fp).toBe("0xab550a2883eb494493169aeff633b77af8f5d458ed0f406b49ce9513b2fe7ed1");
+  });
+
+  it("Fixture W — WithdrawalQueue.requestWithdrawals([1e18], owner=ANVIL_WALLET_1) fingerprint (hardcoded literal anchor, Phase 30 Plan 30-01)", () => {
+    const wq = getLidoWithdrawalQueueAddress(1)!;
+    // D-06: single-element array [stethAmountWei] — Pitfall 1 (raw bigint would be wrong)
+    const owner = getAddress("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+    const reqData = encodeRequestWithdrawals(1_000_000_000_000_000_000n, owner);
+    // 132 bytes = 4 selector + 32 offset + 32 owner (static) + 32 array.length + 32 array[0]
+    // (empirically verified — plan's "100 bytes" was an arithmetic error; actual ABI layout = 132)
+    expect(reqData.length).toBe(266);
+    expect(reqData.slice(0, 10).toLowerCase()).toBe("0xd6681042");
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: wq,
+      valueWei: 0n,
+      data: reqData,
+    });
+    // Hardcoded literal — computed at write-time (2026-05-23). owner=ANVIL_WALLET_1 is a
+    // well-known test address so the fingerprint is deterministic and persona-independent
+    // for the `to`/`value`/selector fields; only `owner` in calldata is wallet-specific.
+    // Cross-linked from test/prepare-lido-unstake.test.ts (Plan 30-03).
+    expect(fp).toBe("0x5f7514882e11ddb46f07aa0b8c3d30df017941c7b4c81e66471c15c31c4a8caa");
+  });
+
+  it("Fixture X — WstETH.wrap(1e18) fingerprint (hardcoded literal anchor, Phase 30 Plan 30-01)", () => {
+    const wsteth = getLidoWstethAddress(1)!;
+    const wrapData = encodeWstethWrap(1_000_000_000_000_000_000n);
+    // 36 bytes = 4 selector (0xea598cb0) + 32 stETH amount
+    expect(wrapData.length).toBe(74);
+    expect(wrapData.slice(0, 10).toLowerCase()).toBe("0xea598cb0");
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: wsteth,
+      valueWei: 0n,
+      data: wrapData,
+    });
+    // Hardcoded literal — computed at write-time (2026-05-23).
+    // Cross-linked from test/prepare-lido-wrap.test.ts (Plan 30-03).
+    expect(fp).toBe("0x0f08b774cb218dd466b47f6df2eee97a76df67a1914ee28269ed328edac5eb20");
+  });
+
+  it("Fixture Y — WstETH.unwrap(1e18) fingerprint (hardcoded literal anchor, Phase 30 Plan 30-01)", () => {
+    const wsteth = getLidoWstethAddress(1)!;
+    const unwrapData = encodeWstethUnwrap(1_000_000_000_000_000_000n);
+    // 36 bytes = 4 selector (0xde0e9a3e) + 32 wstETH amount
+    expect(unwrapData.length).toBe(74);
+    expect(unwrapData.slice(0, 10).toLowerCase()).toBe("0xde0e9a3e");
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: wsteth,
+      valueWei: 0n,
+      data: unwrapData,
+    });
+    // Hardcoded literal — computed at write-time (2026-05-23).
+    // Cross-linked from test/prepare-lido-unwrap.test.ts (Plan 30-03).
+    expect(fp).toBe("0x6d0dff107199edaf752aa542f219edbf26db1319f206aec4dc4027b368476089");
   });
 
   it("invalid `to` (not a 0x-prefixed 20-byte hex) → throws via viem.hexToBytes", () => {

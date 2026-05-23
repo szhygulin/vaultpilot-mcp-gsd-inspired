@@ -60,6 +60,9 @@ import { getAddress, type Address } from "viem";
 import {
   getAaveV3PoolAddress,
   getAllCompoundCometsForChain,
+  getLidoStethAddress,
+  getLidoWithdrawalQueueAddress,
+  getLidoWstethAddress,
   getMorphoBlueAddress,
   getWethAddress,
   type ChainId,
@@ -124,6 +127,20 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
   // builder picks them up automatically.
   const morphoBlue = getMorphoBlueAddress(chainId);
   const morphoEntries: Address[] = morphoBlue ? [morphoBlue] : [];
+  // Phase 30 — Plan 30-01. Lido write-side allowlist (Ethereum arm only).
+  // Three contracts: stETH proxy (prepare_lido_stake + approval target label),
+  // wstETH (prepare_lido_wrap + prepare_lido_unwrap),
+  // WithdrawalQueueERC721 (prepare_lido_unstake).
+  // Arbitrum wstETH has a non-zero slot but zero steth/withdrawalQueue —
+  // the address(0) sentinels are filtered by the non-zero check below so
+  // Arbitrum gets NO Lido write targets in the allowlist (writes refuse pre-
+  // dispatch via D-03 CHAIN_ID_MISMATCH). v2.3.x Arbitrum reads are READ-ONLY.
+  const lidoSteth = getLidoStethAddress(chainId);
+  const lidoWsteth = getLidoWstethAddress(chainId);
+  const lidoWq = getLidoWithdrawalQueueAddress(chainId);
+  const lidoEntries: Address[] = [lidoSteth, lidoWsteth, lidoWq].filter(
+    (a): a is Address => !!a && a !== "0x0000000000000000000000000000000000000000",
+  );
   return new Set<Address>([
     getAaveV3PoolAddress(chainId),
     getWethAddress(chainId),
@@ -132,6 +149,7 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
     ...tokenContracts,
     ...compoundComets,
     ...morphoEntries,
+    ...lidoEntries,
   ]);
 }
 
@@ -141,10 +159,11 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
  * new chain extends this Record alongside the `ChainId` union in
  * `src/config/contracts.ts`.
  *
- * Membership counts per chain (execute-time, 2026-05-23 — Phase 29 Plan 29-03
- * Ethereum-arm extended by 1 Morpho Blue singleton):
- *   - Ethereum (1):  27 entries (4 canonical + 17 BRIDGED_VARIANTS — 1 WETH overlap + 6 Comets + 1 Morpho)
- *   - Arbitrum (42161): 21 entries (4 + 18 — 1 WETH overlap; Compound + Morpho v2.3.x)
+ * Membership counts per chain (execute-time, 2026-05-23 — Phase 30 Plan 30-01
+ * Ethereum-arm extended by 3 Lido contracts; wstETH de-duped via BRIDGED_VARIANTS):
+ *   - Ethereum (1):  29 entries (27 pre-Phase-30 + stETH proxy + WithdrawalQueue;
+ *                    wstETH 0x7f39C581… already in BRIDGED_VARIANTS → Set de-dupe → net +2)
+ *   - Arbitrum (42161): 22 entries (4 + 18 — 1 WETH overlap; Lido wstETH bridged + Compound + Morpho v2.3.x)
  *   - Polygon (137):    22 entries (4 + 19 — 1 WETH overlap; Compound + Morpho v2.3.x)
  *   - Base (8453):       8 entries (4 + 5 — 1 WETH overlap; Compound + Morpho v2.3.x)
  *   - Optimism (10):    17 entries (4 + 14 — 1 WETH overlap; Compound + Morpho v2.3.x)
