@@ -49,11 +49,19 @@ import { encodeDepositIntoStrategy } from "../src/protocols/eigenlayer.js";
 import {
   getRocketPoolDepositPoolAddress,
   getRocketPoolRethAddress,
+  getUniswapV3SwapRouter02Address,
 } from "../src/config/contracts.js";
 import {
   encodeRocketPoolDeposit,
   encodeRocketPoolBurn,
 } from "../src/protocols/rocketpool.js";
+import {
+  encodeExactInput,
+  encodeExactInputSingle,
+  encodeMulticallWithDeadline,
+  encodeUnwrapWeth9,
+} from "../src/protocols/uniswap-v3.js";
+import { encodeV3Path } from "../src/signing/uniswap-path.js";
 
 describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
   it("Fixture A — native send → 0x7e1867b2... byte-for-byte", () => {
@@ -524,6 +532,181 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     // test/integration-eigenlayer-rocketpool.test.ts re-anchor via this
     // literal. Cross-persona byte-identity proves from-INDEPENDENCE (T-BIND-1).
     expect(fp).toBe("0xd12144239fb353612c20a3aa0a9dbcd9dd73de4141e1adce866ecf0974854edc");
+  });
+
+  // ===========================================================================
+  // Phase 32 Plan 32-01 — Fixtures UNI-A / UNI-B / UNI-C
+  // ===========================================================================
+  //
+  // Three canonical Uniswap V3 calldata shapes anchored as hardcoded 0x...
+  // payloadFingerprint literals per CLAUDE.md cryptographic-binding fixture
+  // discipline ("NO `beforeAll`-snapshot" rule). Each fixture's preimage flows
+  // through SOT getters + Task 3 path encoder + Task 4 protocol encoders —
+  // NEVER inlined. Each fixture asserts the outer selector at 0x5ae401dc
+  // BEFORE the fingerprint assertion so encoder drift fires before preimage
+  // drift.
+  //
+  // FIXTURE_PERSONA = Anvil account 1 (0x70997970...) — matches the Fixture W
+  // owner literal at line 371 + Fixtures A/B `to` literal at lines 62/81.
+  // Re-anchoring across personas in test/integration-uniswap-v3.test.ts
+  // (Plan 32-03) proves `from`-independence end-to-end (T-BIND-1 anchor).
+
+  const FIXTURE_UNI_A_FP =
+    "0xc9f4eb062c04a605a2c49f623d2831751e96c76f177b5aacb85a5016ccfa766e";
+  const FIXTURE_UNI_B_FP =
+    "0x5599bb306e4b2296a89e3349fc0c83ffe6e2143d8234d94cfc489831a1a1790c";
+  const FIXTURE_UNI_C_FP =
+    "0x795086fdfb9f86ff26ffd6cec6100223c0bf041d9427936b51b60e038f2beb8f";
+
+  it("Fixture UNI-A — SwapRouter02.multicall(deadline, [exactInputSingle(USDC→WETH 0.05%, 100 USDC, amountOutMin 0.0481 ETH)]) fingerprint (hardcoded literal anchor, Phase 32 Plan 32-01)", () => {
+    // Phase 32 canonical single-hop USDC→WETH swap fixture.
+    // Inputs resolved via SOT getters + Task 3 + Task 4 encoders (NEVER inlined per CLAUDE.md).
+    const swapRouter02 = getUniswapV3SwapRouter02Address(1)!;
+    const USDC = getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    const WETH = getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    const persona = getAddress("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+    const deadline = 1748707200n; // FIXED literal for fixture reproducibility (2025-05-31 12:00 UTC)
+    const amountIn = 100_000000n; // 100 USDC (6 decimals)
+    const amountOutMinimum = 48_100_000_000_000_000n; // 0.0481 WETH (18 decimals)
+
+    const inner = encodeExactInputSingle({
+      tokenIn: USDC,
+      tokenOut: WETH,
+      fee: 500,
+      recipient: persona,
+      amountIn,
+      amountOutMinimum,
+      sqrtPriceLimitX96: 0n,
+    });
+    const data = encodeMulticallWithDeadline(deadline, [inner]);
+
+    // Outer selector must be 0x5ae401dc (multicall(uint256,bytes[])) — Pitfall 4.
+    expect(data.slice(0, 10).toLowerCase()).toBe("0x5ae401dc");
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: swapRouter02,
+      valueWei: 0n,
+      data,
+    });
+
+    // Hardcoded literal — computed at write-time (2026-05-23) per CLAUDE.md
+    // "NO `beforeAll`-snapshot" rule. Drift in preimage assembly for any of
+    // {swapRouter02 SOT getter, USDC/WETH literals, fee=500, recipient=persona,
+    // amountIn=100e6, amountOutMin=4.81e16, sqrtPriceLimitX96=0n,
+    // deadline=1748707200n, encodeExactInputSingle shape,
+    // encodeMulticallWithDeadline shape, computePayloadFingerprint shape}
+    // fails THIS exact assertion.
+    //
+    // Fixture UNI-A cross-link: test/get-uniswap-quote.test.ts (Plan 32-02),
+    // test/prepare-uniswap-swap.test.ts (Plan 32-03), and
+    // test/integration-uniswap-v3.test.ts (Plan 32-03) re-anchor via this
+    // literal. Re-anchoring across persona swaps proves from-INDEPENDENCE
+    // end-to-end (T-BIND-1 anchor).
+    expect(fp).toBe(FIXTURE_UNI_A_FP);
+  });
+
+  it("Fixture UNI-B — SwapRouter02.multicall(deadline, [exactInputSingle(USDC→WETH 0.05%, recipient=router), unwrapWETH9(0.0481 ETH, persona)]) fingerprint (hardcoded literal anchor, Phase 32 Plan 32-01)", () => {
+    // Phase 32 canonical ETH-OUT swap fixture (D-15 corrected: inner recipient
+    // = router-address, NOT persona).
+    const swapRouter02 = getUniswapV3SwapRouter02Address(1)!;
+    const USDC = getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    const WETH = getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    const persona = getAddress("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+    const deadline = 1748707200n;
+    const amountIn = 100_000000n;
+    const amountOutMinimum = 48_100_000_000_000_000n;
+
+    // PITFALL 3 / D-15 fixture correction: inner exactInputSingle recipient
+    // MUST be the SwapRouter02 address itself (the router holds WETH between
+    // sub-calls). unwrapWETH9 then unwraps the router's WETH balance into
+    // native ETH and sends it to the persona atomically.
+    const inner1 = encodeExactInputSingle({
+      tokenIn: USDC,
+      tokenOut: WETH,
+      fee: 500,
+      recipient: swapRouter02,
+      amountIn,
+      amountOutMinimum,
+      sqrtPriceLimitX96: 0n,
+    });
+    const inner2 = encodeUnwrapWeth9(amountOutMinimum, persona);
+    const data = encodeMulticallWithDeadline(deadline, [inner1, inner2]);
+
+    expect(data.slice(0, 10).toLowerCase()).toBe("0x5ae401dc");
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: swapRouter02,
+      valueWei: 0n,
+      data,
+    });
+
+    // Hardcoded literal — computed at write-time (2026-05-23). NO `beforeAll`-snapshot.
+    // Drift in any of {inner-recipient=router, unwrapWETH9 selector + arg order,
+    // multicall composition order [swap, unwrap]} fails THIS line.
+    //
+    // Fixture UNI-B cross-link: test/get-uniswap-quote.test.ts (Plan 32-02),
+    // test/prepare-uniswap-swap.test.ts (Plan 32-03),
+    // test/integration-uniswap-v3.test.ts (Plan 32-03).
+    expect(fp).toBe(FIXTURE_UNI_B_FP);
+  });
+
+  it("Fixture UNI-C — SwapRouter02.multicall(deadline, [exactInput(USDC→WETH→WBTC packed-path, persona, 100 USDC, 1)]) fingerprint (hardcoded literal anchor, Phase 32 Plan 32-01)", () => {
+    // Phase 32 canonical multi-hop ERC-20-to-ERC-20 swap fixture.
+    const swapRouter02 = getUniswapV3SwapRouter02Address(1)!;
+    const USDC = getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    const WETH = getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    const WBTC = getAddress("0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599");
+    const persona = getAddress("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+    const deadline = 1748707200n;
+    const amountIn = 100_000000n;
+    // amountOutMinimum pinned at 1n — any fixed bigint works; the choice IS
+    // part of the cryptographic-binding pin (drift here fails the fp assertion).
+    const amountOutMinimumC = 1n;
+
+    const path = encodeV3Path([
+      { tokenIn: USDC, fee: 3000, tokenOut: WETH },
+      { tokenIn: WETH, fee: 3000, tokenOut: WBTC },
+    ]);
+    // 66 bytes packed: 20+3+20+3+20. Hex length = 2 + 132 = 134.
+    expect(path.length).toBe(134);
+
+    const inner = encodeExactInput({
+      path,
+      recipient: persona,
+      amountIn,
+      amountOutMinimum: amountOutMinimumC,
+    });
+    const data = encodeMulticallWithDeadline(deadline, [inner]);
+
+    expect(data.slice(0, 10).toLowerCase()).toBe("0x5ae401dc");
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: swapRouter02,
+      valueWei: 0n,
+      data,
+    });
+
+    // Hardcoded literal — computed at write-time (2026-05-23). NO `beforeAll`-snapshot.
+    // Drift in {path encoding (encodePacked NOT word-padded — Pitfall 2),
+    // fee tiers 3000+3000, amountOutMinimum=1n, exactInput struct shape}
+    // fails THIS line.
+    //
+    // Fixture UNI-C cross-link: test/get-uniswap-quote.test.ts (Plan 32-02),
+    // test/prepare-uniswap-swap.test.ts (Plan 32-03),
+    // test/integration-uniswap-v3.test.ts (Plan 32-03).
+    expect(fp).toBe(FIXTURE_UNI_C_FP);
+  });
+
+  it("Fixtures UNI-A / UNI-B / UNI-C produce 3 distinct fingerprints (calldata-shape distinctness)", () => {
+    // The 3 fixtures cover different calldata shapes (single-hop / ETH-out /
+    // multi-hop); their fingerprints MUST differ. A regression that collapses
+    // calldata-shape distinguishability (e.g. accidentally dropping the
+    // amountIn slot from the multicall preimage) fires this Set-size assertion.
+    const distinct = new Set([FIXTURE_UNI_A_FP, FIXTURE_UNI_B_FP, FIXTURE_UNI_C_FP]);
+    expect(distinct.size).toBe(3);
   });
 
   it("invalid `to` (not a 0x-prefixed 20-byte hex) → throws via viem.hexToBytes", () => {

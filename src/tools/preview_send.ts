@@ -99,6 +99,12 @@ import {
   getRocketPoolDepositPoolAddress as _getRocketPoolDepositPoolAddress,
   getRocketPoolRethAddress as _getRocketPoolRethAddress,
 } from "../protocols/rocketpool.js";
+import {
+  MULTICALL_DEADLINE_ABI as UNISWAP_MULTICALL_DEADLINE_ABI,
+  SWAP_ROUTER_02_ABI as UNISWAP_SWAP_ROUTER_02_ABI,
+  UNISWAP_V3_SELECTORS,
+} from "../protocols/uniswap-v3.js";
+import { getUniswapV3SwapRouter02Address as _getUniswapV3SwapRouter02Address } from "../config/contracts.js";
 import { _solanaSpl } from "../protocols/solana-spl.js";
 import { _solanaSystem } from "../protocols/solana-system.js";
 import { _tronStake } from "../protocols/tron-stake.js";
@@ -114,6 +120,7 @@ import {
   LEDGER_NOTICE_COMPOUND_TEMPLATE,
   LEDGER_NOTICE_EIGENLAYER_DEPOSIT_TEMPLATE,
   LEDGER_NOTICE_ROCKETPOOL_TEMPLATE,
+  LEDGER_NOTICE_UNISWAP_V3_TEMPLATE,
   LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
   build4byteBlock,
@@ -125,10 +132,12 @@ import {
   buildMorphoDecodedArgsBlock,
   buildRocketPoolDecodedArgsBlock,
   buildSimulationBlock,
+  buildUniswapV3DecodedArgsBlock,
   chunkHex,
   type EigenLayerDecoded,
   type LidoDecoded,
   type RocketPoolDecoded,
+  type UniswapV3Decoded,
 } from "../signing/blocks.js";
 import "../chains/bitcoin/types.js"; // ensure initEccLib(tinySecp256k1) fires
 import "../chains/litecoin/types.js"; // ensure initEccLib fires for LTC address derivation
@@ -262,6 +271,198 @@ function buildMorphoDecodedArgsJson(
     result.data = d.data;
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 32 Plan 32-03 — Uniswap V3 (to, selector) tuple dispatch decoder.
+// ---------------------------------------------------------------------------
+
+/**
+ * Short-form address display for path rendering (first 6 + last 4 chars).
+ * Falls back to a symbol map for the 5 Phase 32 anchor tokens (USDC / USDT /
+ * DAI / WETH / WBTC) for friendlier UX.
+ */
+const UNISWAP_V3_TOKEN_SYMBOLS: ReadonlyMap<string, string> = new Map([
+  ["0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", "USDC"],
+  ["0xdac17f958d2ee523a2206206994597c13d831ec7", "USDT"],
+  ["0x6b175474e89094c44da98b954eedeac495271d0f", "DAI"],
+  ["0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", "WETH"],
+  ["0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", "WBTC"],
+]);
+
+function shortAddrOrSymbol(addr: string): string {
+  const sym = UNISWAP_V3_TOKEN_SYMBOLS.get(addr.toLowerCase());
+  if (sym !== undefined) return sym;
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+/**
+ * Decode the packed-bytes Uniswap V3 path into a human-readable arrow-
+ * separated route. Format: 20-byte token + 3-byte fee + 20-byte token + ...
+ * For an N-hop path the total byte length is 20 + N*(3+20) = 20 + 23N bytes.
+ */
+function decodeUniswapV3PackedPath(path: Hex): string {
+  const raw = path.toLowerCase().startsWith("0x")
+    ? path.slice(2)
+    : path;
+  const hopParts: string[] = [];
+  let i = 0;
+  // First token (20 bytes = 40 hex chars)
+  if (raw.length < 40) return path; // malformed; surface raw
+  let prevTokenHex = `0x${raw.slice(i, i + 40)}`;
+  hopParts.push(shortAddrOrSymbol(prevTokenHex));
+  i += 40;
+  while (i + 6 + 40 <= raw.length) {
+    const feeHex = raw.slice(i, i + 6);
+    const fee = parseInt(feeHex, 16);
+    i += 6;
+    const tokenHex = `0x${raw.slice(i, i + 40)}`;
+    i += 40;
+    hopParts.push(`${(fee / 10000).toFixed(2)}%`);
+    hopParts.push(shortAddrOrSymbol(tokenHex));
+    prevTokenHex = tokenHex;
+  }
+  return hopParts.join(" → ");
+}
+
+/**
+ * Decode a Uniswap V3 SwapRouter02 calldata for `preview_send` DECODED ARGS.
+ * `data` is the inner call's raw hex; `sel` is the 4-byte selector prefix.
+ * Returns null if the ABI decode fails (defense; caller falls through).
+ *
+ * Multicall arm recurses inner sub-calls via the same `(swapRouter02 addr,
+ * inner selector)` tuple. Inner calls execute against SwapRouter02 — the
+ * recursion shares the outer's `tx.to` context.
+ */
+function decodeUniswapV3Call(data: Hex, sel: Hex): UniswapV3Decoded | null {
+  try {
+    switch (sel) {
+      case UNISWAP_V3_SELECTORS.multicallWithDeadline: {
+        const decodedOuter = decodeFunctionData({
+          abi: UNISWAP_MULTICALL_DEADLINE_ABI,
+          data,
+        });
+        const [deadline, calls] = decodedOuter.args as [
+          bigint,
+          readonly Hex[],
+        ];
+        const subCalls: UniswapV3Decoded[] = [];
+        for (const innerCall of calls) {
+          const innerSel = innerCall.slice(0, 10).toLowerCase() as Hex;
+          const sub = decodeUniswapV3Call(innerCall, innerSel);
+          if (sub !== null) subCalls.push(sub);
+        }
+        return { kind: "multicall", deadline, subCalls };
+      }
+      case UNISWAP_V3_SELECTORS.exactInputSingle: {
+        const decoded = decodeFunctionData({
+          abi: UNISWAP_SWAP_ROUTER_02_ABI,
+          data,
+        });
+        const [params] = decoded.args as [
+          {
+            tokenIn: Address;
+            tokenOut: Address;
+            fee: number;
+            recipient: Address;
+            amountIn: bigint;
+            amountOutMinimum: bigint;
+            sqrtPriceLimitX96: bigint;
+          },
+        ];
+        return {
+          kind: "exactInputSingle",
+          tokenIn: params.tokenIn,
+          tokenOut: params.tokenOut,
+          fee: params.fee,
+          recipient: params.recipient,
+          amountIn: params.amountIn,
+          amountOutMinimum: params.amountOutMinimum,
+          sqrtPriceLimitX96: params.sqrtPriceLimitX96,
+        };
+      }
+      case UNISWAP_V3_SELECTORS.exactInput: {
+        const decoded = decodeFunctionData({
+          abi: UNISWAP_SWAP_ROUTER_02_ABI,
+          data,
+        });
+        const [params] = decoded.args as [
+          {
+            path: Hex;
+            recipient: Address;
+            amountIn: bigint;
+            amountOutMinimum: bigint;
+          },
+        ];
+        return {
+          kind: "exactInput",
+          pathDecoded: decodeUniswapV3PackedPath(params.path),
+          recipient: params.recipient,
+          amountIn: params.amountIn,
+          amountOutMinimum: params.amountOutMinimum,
+        };
+      }
+      case UNISWAP_V3_SELECTORS.unwrapWETH9: {
+        const decoded = decodeFunctionData({
+          abi: UNISWAP_SWAP_ROUTER_02_ABI,
+          data,
+        });
+        const [amountMinimum, recipient] = decoded.args as [bigint, Address];
+        return {
+          kind: "unwrapWETH9",
+          amountMinimum,
+          recipient,
+        };
+      }
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Serialize a Uniswap V3 decoded call to JSON-safe form for
+ * `structuredContent.decodedArgs`. Bigints → strings; recursive multicall
+ * arm preserves the sub-call array shape.
+ */
+function serializeUniswapV3Decoded(
+  d: UniswapV3Decoded,
+): Record<string, unknown> {
+  switch (d.kind) {
+    case "exactInputSingle":
+      return {
+        kind: "uniswap-v3-exact-input-single" as const,
+        tokenIn: d.tokenIn,
+        tokenOut: d.tokenOut,
+        fee: d.fee,
+        recipient: d.recipient,
+        amountIn: d.amountIn.toString(),
+        amountOutMinimum: d.amountOutMinimum.toString(),
+        sqrtPriceLimitX96: d.sqrtPriceLimitX96.toString(),
+      };
+    case "exactInput":
+      return {
+        kind: "uniswap-v3-exact-input" as const,
+        pathDecoded: d.pathDecoded,
+        recipient: d.recipient,
+        amountIn: d.amountIn.toString(),
+        amountOutMinimum: d.amountOutMinimum.toString(),
+      };
+    case "multicall":
+      return {
+        kind: "uniswap-v3-multicall" as const,
+        deadline: d.deadline.toString(),
+        subCalls: d.subCalls.map(serializeUniswapV3Decoded),
+      };
+    case "unwrapWETH9":
+      return {
+        kind: "uniswap-v3-unwrap-weth9" as const,
+        amountMinimum: d.amountMinimum.toString(),
+        recipient: d.recipient,
+      };
+  }
 }
 
 const DESCRIPTION = [
@@ -624,6 +825,7 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     let lidoDecoded: LidoDecoded | null = null;
     let eigenLayerDecoded: EigenLayerDecoded | null = null;
     let rocketPoolDecoded: RocketPoolDecoded | null = null;
+    let uniswapV3Decoded: UniswapV3Decoded | null = null;
     if (decodedArgs.kind === "unknown") {
       const aave = _aaveProtocols.decodeAaveV3Call(record.tx.data);
       if (aave.kind !== "unknown") {
@@ -780,6 +982,29 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                   };
                 } catch { /* ABI decode error — fall through to unknown */ }
               }
+            } else if (
+              sel === UNISWAP_V3_SELECTORS.multicallWithDeadline ||
+              sel === UNISWAP_V3_SELECTORS.exactInputSingle ||
+              sel === UNISWAP_V3_SELECTORS.exactInput ||
+              sel === UNISWAP_V3_SELECTORS.unwrapWETH9
+            ) {
+              // Phase 32 Plan 32-03 — Uniswap V3 SwapRouter02 DECODED ARGS arm.
+              // (tx.to, selector) TUPLE dispatch — load-bearing per Pitfall 4
+              // (0x5ae401dc is shared between Uniswap V3 SwapRouter02 multicall
+              // AND Uniswap UniversalRouter multicall; selector-only routing
+              // would mis-route UniversalRouter calls to this arm).
+              const swapRouter02Addr = _getUniswapV3SwapRouter02Address(
+                record.tx.chainId as ChainId,
+              );
+              if (swapRouter02Addr && record.tx.to === swapRouter02Addr) {
+                uniswapV3Decoded = decodeUniswapV3Call(
+                  record.tx.data as Hex,
+                  sel,
+                );
+              }
+              // tx.to !== SwapRouter02 (e.g. UniversalRouter call with same
+              // 0x5ae401dc multicall selector) → fall through; existing
+              // handling (no Uniswap V3 arm rendered). Defense per Pitfall 4.
             }
           }
         }
@@ -982,7 +1207,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                 ? buildEigenLayerDecodedArgsBlock(eigenLayerDecoded)
                 : rocketPoolDecoded !== null
                   ? buildRocketPoolDecodedArgsBlock(rocketPoolDecoded)
-                  : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
+                  : uniswapV3Decoded !== null
+                    ? buildUniswapV3DecodedArgsBlock(uniswapV3Decoded)
+                    : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
 
     // Phase 6 — Plan 06-02: wide eth_call simulation. DF-1 LOCKED. Runs for
     // ALL tx shapes including native sends (defense-in-depth uniform per
@@ -1061,6 +1288,12 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // is already enforced upstream when populating rocketPoolDecoded.
     const isRocketPool = rocketPoolDecoded !== null;
 
+    // Phase 32 Plan 32-03 — LEDGER NOTICE for Uniswap V3 (D-11 UNCONDITIONAL).
+    // Every Phase 32 swap's outer multicall selector 0x5ae401dc is NOT in the
+    // Ledger ERC-7730 clear-sign plugin registry; the device blind-signs.
+    // (tx.to, selector) tuple gate is upstream when populating uniswapV3Decoded.
+    const isUniswapV3 = uniswapV3Decoded !== null;
+
     const ledgerNoticeBlock: string | null = isWethUnwrap
       ? LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE
       : isCompoundComet
@@ -1069,7 +1302,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
           ? LEDGER_NOTICE_EIGENLAYER_DEPOSIT_TEMPLATE
           : isRocketPool
             ? LEDGER_NOTICE_ROCKETPOOL_TEMPLATE
-            : null;
+            : isUniswapV3
+              ? LEDGER_NOTICE_UNISWAP_V3_TEMPLATE
+              : null;
 
     // Filter empty decoded-args block (unknown-kind / native sends) so the
     // text-array join doesn't emit a stray empty block alongside the 4byte
@@ -1178,7 +1413,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                         contractAddress: rocketPoolDecoded.contractAddress,
                         amountWei: rocketPoolDecoded.amountWei.toString(),
                       }
-                  : decodedArgs.kind === "transfer"
+                  : uniswapV3Decoded !== null
+                    ? serializeUniswapV3Decoded(uniswapV3Decoded)
+                    : decodedArgs.kind === "transfer"
                 ? { kind: "transfer" as const, to: decodedArgs.to, amount: decodedArgs.amount.toString() }
                 : decodedArgs.kind === "approve"
                   ? {
@@ -1223,7 +1460,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
               ? ("eigenlayer-deposit-blind-sign" as const)
               : isRocketPool
                 ? ("rocketpool-blind-sign" as const)
-                : null,
+                : isUniswapV3
+                  ? ("uniswap-v3-blind-sign" as const)
+                  : null,
         // Plan 09-05 (SEC-36) — WC session topic surface for user cross-check
         // against Ledger Live → Settings → Connected Apps. `null` in demo
         // mode (no WC session); real-mode carries the last-8-chars of the WC

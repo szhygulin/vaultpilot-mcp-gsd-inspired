@@ -333,9 +333,9 @@ Uniswap V3 swap + full LP verb set; Curve swap + add-liquidity (stETH/ETH legacy
 
 #### Uniswap V3 (UNI-*)
 
-- [ ] **UNI-01**: `get_uniswap_quote({ chain, tokenIn, tokenOut, amount, slippageBps? })` returns the Uniswap V3 Quoter V2 quote envelope (out amount, fee tier, route plan, price impact)
-- [ ] **UNI-02**: `prepare_uniswap_swap({ chain, tokenIn, tokenOut, amount, slippageBps })` returns an unsigned SwapRouter02 transaction with auto-fee-tier selection (best price across 0.01% / 0.05% / 0.30% / 1.00% pools); multi-hop routing supported when single-hop has worse price
-- [ ] **UNI-03**: Sandwich-MEV defense — default slippage hint = 50 bps; refuses without explicit `slippageBps` when price impact > 2% (pre-loaded by v2.6 MEV-01 per-L2 thresholds)
+- [x] **UNI-01**: `get_uniswap_quote({ chain, tokenIn, tokenOut, amount, slippageBps? })` returns the Uniswap V3 Quoter V2 quote envelope (out amount, fee tier, route plan, price impact)
+- [x] **UNI-02**: `prepare_uniswap_swap({ chain, tokenIn, tokenOut, amount, slippageBps })` returns an unsigned SwapRouter02 transaction with auto-fee-tier selection (best price across 0.01% / 0.05% / 0.30% / 1.00% pools); multi-hop routing supported when single-hop has worse price
+- [x] **UNI-03**: Sandwich-MEV defense — default slippage hint = 50 bps; refuses without explicit `slippageBps` when price impact > 2% (pre-loaded by v2.6 MEV-01 per-L2 thresholds)
 - [ ] **UNI-04**: `get_lp_positions({ wallet, chain? })` returns Uniswap V3 LP positions per NFT-id with current price + tick range + in-range/out-of-range flag + accrued fees + IL estimate (relative to a hodl baseline)
 - [ ] **UNI-05**: `prepare_uniswap_v3_mint({ chain, token0, token1, fee, tickLower, tickUpper, amount0, amount1 })` produces an unsigned NonfungiblePositionManager `mint` call
 - [ ] **UNI-06**: `prepare_uniswap_increase_liquidity` + `prepare_uniswap_decrease_liquidity` cover liquidity adjustments on existing positions (NFT-keyed)

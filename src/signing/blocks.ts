@@ -2047,3 +2047,305 @@ export function buildRocketPoolDecodedArgsBlock(decoded: RocketPoolDecoded): str
         .replace("{AMOUNT_WEI}", decoded.amountWei.toString());
   }
 }
+
+// =============================================================================
+// Phase 32 — Plan 32-01 additive extensions (APPEND-ONLY).
+// =============================================================================
+//
+// `LEDGER_NOTICE_UNISWAP_V3_TEMPLATE` is UNCONDITIONAL for every Phase 32 swap
+// per D-11 + RESEARCH § Topic 7 (2026-05-23). The outer multicall(uint256,bytes[])
+// selector (0x5ae401dc) is NOT covered by the Ledger Ethereum app's ERC-7730
+// clear-sign registry — the device always blind-signs the outer selector.
+// Sibling of `LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE` (line 389),
+// `LEDGER_NOTICE_EIGENLAYER_DEPOSIT_TEMPLATE` (line ~1801), and
+// `LEDGER_NOTICE_ROCKETPOOL_TEMPLATE` (line ~1926).
+//
+// `SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE` is the Ethereum-flavored clone of
+// `SANDWICH_MEV_REFUSAL_TRON_TEMPLATE` (src/signing/blocks-tron.ts:629) per D-08
+// — emitted at PREPARE time by Plan 32-03's sandwich-MEV gate when
+// `priceImpactBps > 200` AND `slippageBps` not explicitly supplied.
+
+/**
+ * LEDGER NOTICE template emitted UNCONDITIONALLY by `prepare_uniswap_swap`
+ * (D-11) — every Phase 32 swap wraps in `multicall(uint256 deadline, bytes[])`
+ * (D-10) whose outer selector `0x5ae401dc` is NOT in the Ledger Ethereum app's
+ * ERC-7730 clear-sign plugin registry. The device sees the outer wrapper at
+ * signing time and falls through to BLIND-SIGN (raw 32-byte hash display,
+ * no decoded args).
+ *
+ * Users on factory-default devices will hit a "Blind signing is not enabled"
+ * refusal; the template surfaces the exact navigation path BEFORE the user
+ * attempts to sign. T-32-BLIND-SIGN-UX (residual risk; documented in
+ * SECURITY.md §6 v2.4 addendum landing in Plan 32-03).
+ *
+ * Verbatim per RESEARCH § Topic 7 — the body MUST stay byte-identical to the
+ * test/signing-blocks.test.ts assertion. Phase 32 Plan 32-01.
+ */
+export const LEDGER_NOTICE_UNISWAP_V3_TEMPLATE: string = [
+  "LEDGER NOTICE",
+  "  Uniswap V3 swaps are submitted as a multicall(uint256 deadline, bytes[]) wrapper.",
+  "  The OUTER multicall selector (0x5ae401dc) is NOT covered by the Ledger Ethereum app's",
+  "  ERC-7730 clear-sign plugin registry; the inner exactInputSingle / exactInput sub-calls",
+  "  are covered, but the device only sees the outer wrapper at signing time.",
+  "  Your device will BLIND-SIGN this transaction (display a raw hash, no decoded args).",
+  "",
+  "  If your device refuses with \"Blind signing is not enabled\":",
+  "    1. Open the Ethereum app on your device",
+  "    2. Settings → Blind signing → Enabled",
+  "    3. Retry send_transaction",
+  "",
+  "  After send_transaction fires, compare the PREDICTED hash below to the",
+  "  value your hardware device displays — character-for-character. This",
+  "  on-device match is the cryptographic anchor.",
+].join("\n");
+
+/**
+ * SANDWICH-MEV DEFENSE template (Uniswap V3 — Ethereum mainnet) — prepare-time
+ * refusal envelope for D-08 gate. Rendered ONLY in the `prepare_uniswap_swap`
+ * refusal path when `priceImpactBps > 200` AND the agent did NOT explicitly
+ * supply `slippageBps` (per D-08).
+ *
+ * Two slots:
+ *   - `{PRICE_IMPACT_BPS}` — detected price impact in basis points (e.g. "350" = 3.5%).
+ *   - `{THRESHOLD_BPS}`    — hardcoded gate threshold (always "200" = 2%).
+ *
+ * Structured envelope: `INVALID_INPUT + hintTool: "get_uniswap_quote"`.
+ * The 21-code error union in `src/signing/error-codes.ts` stays FROZEN (D-08
+ * reuses `INVALID_INPUT` with `hintTool` per the Phase 14 Jupiter + Phase 20
+ * SunSwap precedents).
+ *
+ * Clone of `SANDWICH_MEV_REFUSAL_TRON_TEMPLATE` (src/signing/blocks-tron.ts:629)
+ * with Ethereum-flavored copy: "TRON" → "Uniswap V3 — Ethereum mainnet",
+ * `get_sunswap_quote` → `get_uniswap_quote`,
+ * `prepare_sunswap_swap` → `prepare_uniswap_swap`,
+ * "front-running" expanded to "front-running by MEV bots that bracket the
+ * transaction with buys/sells timed to extract value".
+ *
+ * Phase 32 Plan 32-01. Consumed at PREPARE time by Plan 32-03.
+ */
+export const SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE: string = [
+  "⚠ SANDWICH-MEV DEFENSE (Uniswap V3 — Ethereum mainnet)",
+  "  priceImpactBps: {PRICE_IMPACT_BPS}",
+  "  threshold:      {THRESHOLD_BPS} (2% — sandwich extraction threshold per D-08)",
+  "",
+  "  The swap's estimated price impact ({PRICE_IMPACT_BPS} bps) exceeds the {THRESHOLD_BPS} bps",
+  "  sandwich-MEV defense threshold. This swap may be vulnerable to front-running by MEV",
+  "  bots that bracket the transaction with buys/sells timed to extract value from the price",
+  "  movement your swap creates.",
+  "",
+  "  To proceed: call get_uniswap_quote to review the route and expected output,",
+  "  then call prepare_uniswap_swap again with slippageBps set explicitly (any value).",
+  "  Explicitly supplying slippageBps signals that you acknowledge the high price impact.",
+].join("\n");
+
+// =============================================================================
+// Phase 32 — Plan 32-03 additive extensions (APPEND-ONLY).
+// =============================================================================
+//
+// All Plan 32-01 templates above (LEDGER_NOTICE_UNISWAP_V3_TEMPLATE +
+// SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE) stay BYTE-IDENTICAL — this section
+// is strictly additive. The five constants + one helper below back the
+// `prepare_uniswap_swap` (Plan 32-03) tool's PREPARE RECEIPT block and the
+// `preview_send` (to, selector) tuple-dispatch DECODED ARGS arms for the
+// 4 Uniswap V3 selectors (exactInputSingle / exactInput / multicall /
+// unwrapWETH9).
+//
+// D-09: PREPARE RECEIPT carries 10 verbatim slots covering chain / router /
+// tokens / amounts / route / impact / slippage / deadline. D-11: LEDGER
+// NOTICE is unconditional for every swap (multicall outer selector 0x5ae401dc
+// NOT in ERC-7730 registry). The DECODED ARGS multicall arm recursively
+// renders its inner sub-calls — defense against the agent missing inner-
+// selector context.
+
+/**
+ * PREPARE RECEIPT template for `prepare_uniswap_swap` (Uniswap V3 swap via
+ * SwapRouter02 multicall+deadline outer wrapper). Slots:
+ *   `{CHAIN}`, `{SWAP_ROUTER}`, `{TOKEN_IN}`, `{TOKEN_OUT}`, `{AMOUNT_IN}`,
+ *   `{AMOUNT_OUT_MIN}`, `{FEE_TIER_OR_PATH}`, `{PRICE_IMPACT_BPS}`,
+ *   `{SLIPPAGE_BPS}`, `{DEADLINE}`.
+ * Consumed by Plan 32-03 `prepare_uniswap_swap.ts` via `.replace(...)` calls.
+ * Mirrors the Phase 31 `EIGENLAYER_DEPOSIT_PREPARE_RECEIPT_TEMPLATE` shape.
+ */
+export const UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT — Uniswap V3 swap (SwapRouter02)",
+  "  chain:              {CHAIN}",
+  "  router:             {SWAP_ROUTER}",
+  "  tokenIn:            {TOKEN_IN}",
+  "  tokenOut:           {TOKEN_OUT}",
+  "  amountIn:           {AMOUNT_IN}",
+  "  amountOutMinimum:   {AMOUNT_OUT_MIN}",
+  "  route:              {FEE_TIER_OR_PATH}",
+  "  priceImpactBps:     {PRICE_IMPACT_BPS}",
+  "  slippageBps:        {SLIPPAGE_BPS}",
+  "  deadline:           {DEADLINE}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `SwapRouter02.exactInputSingle(params)`.
+ * Slots: `{TOKEN_IN}`, `{TOKEN_OUT}`, `{FEE}`, `{RECIPIENT}`, `{AMOUNT_IN}`,
+ *        `{AMOUNT_OUT_MIN}`, `{SQRT_PRICE_LIMIT}`.
+ * Consumed by `buildUniswapV3DecodedArgsBlock` for `preview_send` selector
+ * dispatch (Plan 32-03).
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE: string = [
+  "DECODED ARGS — exactInputSingle (Uniswap V3 SwapRouter02)",
+  "  tokenIn:             {TOKEN_IN}",
+  "  tokenOut:            {TOKEN_OUT}",
+  "  fee:                 {FEE}",
+  "  recipient:           {RECIPIENT}",
+  "  amountIn:            {AMOUNT_IN}",
+  "  amountOutMinimum:    {AMOUNT_OUT_MIN}",
+  "  sqrtPriceLimitX96:   {SQRT_PRICE_LIMIT}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `SwapRouter02.exactInput(params)` (multi-hop).
+ * Slots: `{PATH_DECODED}`, `{RECIPIENT}`, `{AMOUNT_IN}`, `{AMOUNT_OUT_MIN}`.
+ * `{PATH_DECODED}` is the human-readable arrow-separated route (e.g.
+ * `"USDC → 0.30% → WETH → 0.30% → WBTC"`) formatted by the caller.
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT: string = [
+  "DECODED ARGS — exactInput (Uniswap V3 SwapRouter02, multi-hop)",
+  "  path:                {PATH_DECODED}",
+  "  recipient:           {RECIPIENT}",
+  "  amountIn:            {AMOUNT_IN}",
+  "  amountOutMinimum:    {AMOUNT_OUT_MIN}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for the OUTER multicall(uint256 deadline, bytes[]).
+ * Slots: `{DEADLINE_ISO}`, `{SUB_CALL_COUNT}`, `{SUB_CALLS_RENDERED}`.
+ * `{SUB_CALLS_RENDERED}` is the recursively-rendered inner sub-call DECODED
+ * ARGS blocks, each indented 2 spaces and separated by a blank line — built
+ * by `buildUniswapV3DecodedArgsBlock` (multicall arm).
+ *
+ * D-11 trust-anchor reduction: the outer selector 0x5ae401dc is NOT in the
+ * Ledger ERC-7730 clear-sign registry — every Phase 32 swap blind-signs at
+ * the device; this DECODED ARGS arm is the agent-side decoder surface for
+ * the inner sub-calls (defense-in-depth against the device's missing
+ * coverage).
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_MULTICALL: string = [
+  "DECODED ARGS — multicall(uint256 deadline, bytes[] data) (Uniswap V3 outer wrapper)",
+  "  deadline:            {DEADLINE_ISO}",
+  "  sub-call count:      {SUB_CALL_COUNT}",
+  "  inner calls:",
+  "{SUB_CALLS_RENDERED}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `SwapRouter02.unwrapWETH9(amountMinimum, recipient)`.
+ * Slots: `{AMOUNT_MINIMUM}`, `{RECIPIENT}`. Consumed by the ETH-out
+ * multicall sub-call decoder (Plan 32-03).
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_UNWRAP_WETH9: string = [
+  "DECODED ARGS — unwrapWETH9 (Uniswap V3 SwapRouter02)",
+  "  amountMinimum:       {AMOUNT_MINIMUM}",
+  "  recipient:           {RECIPIENT}",
+].join("\n");
+
+/**
+ * Uniswap V3 decoded-args discriminated union for `preview_send`
+ * (tx.to, selector) tuple-dispatch arms. Four variants — one per the 4
+ * Uniswap V3 selectors `preview_send` routes:
+ *   - `exactInputSingle`: single-hop swap params (struct fields)
+ *   - `exactInput`:       multi-hop swap with pre-formatted human-readable path
+ *   - `multicall`:        outer wrapper carrying inner sub-call array
+ *   - `unwrapWETH9`:      ETH-out helper unwrapping the router's WETH balance
+ *
+ * The multicall arm carries `subCalls: readonly UniswapV3Decoded[]` —
+ * recursive shape; `buildUniswapV3DecodedArgsBlock` walks the array and
+ * renders each inner sub-call with 2-space indent and blank-line separation.
+ */
+export type UniswapV3Decoded =
+  | {
+      kind: "exactInputSingle";
+      tokenIn: Address;
+      tokenOut: Address;
+      fee: number;
+      recipient: Address;
+      amountIn: bigint;
+      amountOutMinimum: bigint;
+      sqrtPriceLimitX96: bigint;
+    }
+  | {
+      kind: "exactInput";
+      pathDecoded: string;
+      recipient: Address;
+      amountIn: bigint;
+      amountOutMinimum: bigint;
+    }
+  | {
+      kind: "multicall";
+      deadline: bigint;
+      subCalls: readonly UniswapV3Decoded[];
+    }
+  | {
+      kind: "unwrapWETH9";
+      amountMinimum: bigint;
+      recipient: Address;
+    };
+
+/**
+ * Build the DECODED ARGS block for a Uniswap V3 protocol call.
+ *
+ * Mirrors `buildLidoDecodedArgsBlock` / `buildEigenLayerDecodedArgsBlock` /
+ * `buildRocketPoolDecodedArgsBlock`. Called from `src/tools/preview_send.ts`
+ * after a (tx.to, selector) tuple match against the SwapRouter02 SOT
+ * address + one of the 4 Uniswap V3 selectors.
+ *
+ * Decimals at this layer are unknown in the general case — tokenIn/tokenOut
+ * decimals would require an RPC read or a registry lookup the caller may
+ * not have performed yet. The bigint amount fields render as raw `wei`
+ * strings; the caller (preview_send) is responsible for human-decimal
+ * augmentation if it has the token context.
+ *
+ * The multicall arm recursively renders its `subCalls`: each inner sub-call
+ * block has every line prefixed with 2 spaces and blocks are separated by a
+ * blank line. Deadline renders as ISO-8601 via `new Date(Number(deadline) *
+ * 1000).toISOString()`.
+ *
+ * D-11: NO clear-sign coverage at the device — the OUTER multicall selector
+ * 0x5ae401dc is absent from the Ledger ERC-7730 plugin registry.
+ * `prepare_uniswap_swap` ALREADY emits LEDGER_NOTICE_UNISWAP_V3_TEMPLATE at
+ * prepare time; `preview_send` ALSO surfaces it at preview time so the user
+ * sees the blind-sign warning regardless of which surface they entered via.
+ */
+export function buildUniswapV3DecodedArgsBlock(decoded: UniswapV3Decoded): string {
+  switch (decoded.kind) {
+    case "exactInputSingle":
+      return DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE
+        .replace("{TOKEN_IN}", decoded.tokenIn)
+        .replace("{TOKEN_OUT}", decoded.tokenOut)
+        .replace("{FEE}", `${decoded.fee} (${(decoded.fee / 10000).toFixed(2)}%)`)
+        .replace("{RECIPIENT}", decoded.recipient)
+        .replace("{AMOUNT_IN}", `${decoded.amountIn.toString()} (wei-units)`)
+        .replace("{AMOUNT_OUT_MIN}", `${decoded.amountOutMinimum.toString()} (wei-units)`)
+        .replace("{SQRT_PRICE_LIMIT}", decoded.sqrtPriceLimitX96.toString());
+    case "exactInput":
+      return DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT
+        .replace("{PATH_DECODED}", decoded.pathDecoded)
+        .replace("{RECIPIENT}", decoded.recipient)
+        .replace("{AMOUNT_IN}", `${decoded.amountIn.toString()} (wei-units)`)
+        .replace("{AMOUNT_OUT_MIN}", `${decoded.amountOutMinimum.toString()} (wei-units)`);
+    case "multicall": {
+      const deadlineIso = new Date(Number(decoded.deadline) * 1000).toISOString();
+      const rendered = decoded.subCalls
+        .map((sub) =>
+          buildUniswapV3DecodedArgsBlock(sub)
+            .split("\n")
+            .map((line) => `  ${line}`)
+            .join("\n"),
+        )
+        .join("\n\n");
+      return DECODED_ARGS_TEMPLATE_UNISWAP_MULTICALL
+        .replace("{DEADLINE_ISO}", deadlineIso)
+        .replace("{SUB_CALL_COUNT}", decoded.subCalls.length.toString())
+        .replace("{SUB_CALLS_RENDERED}", rendered);
+    }
+    case "unwrapWETH9":
+      return DECODED_ARGS_TEMPLATE_UNISWAP_UNWRAP_WETH9
+        .replace("{AMOUNT_MINIMUM}", `${decoded.amountMinimum.toString()} (wei-units)`)
+        .replace("{RECIPIENT}", decoded.recipient);
+  }
+}

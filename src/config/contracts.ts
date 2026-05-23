@@ -699,6 +699,98 @@ export function getRocketPoolDepositSettingsAddress(chainId: ChainId): Address |
 export const ROCKET_POOL_MINIMUM_DEPOSIT_FALLBACK_WEI: bigint = 10_000_000_000_000_000n;
 
 // ---------------------------------------------------------------------------
+// Uniswap V3 per-chain SOT — Phase 32 Plan 32-01.
+// ---------------------------------------------------------------------------
+//
+// Sibling sub-table (NOT a widening of `ContractsForChain`) per Phase 28/29/30/31
+// precedent. Uniswap V3 ships THREE core contracts per chain VaultPilot routes:
+//   - SwapRouter02 — `exactInputSingle` / `exactInput` / `unwrapWETH9` / `multicall`
+//     write surface; D-13 dispatch allowlist target.
+//   - Quoter V2 — `quoteExactInputSingle` / `quoteExactInput` read surface; D-13
+//     read-only, NOT in the canonical-dispatch allowlist.
+//   - NonfungiblePositionManager — Phase 33 LP-verb dispatch target (RESERVED at
+//     Phase 32 per D-01; Phase 32 itself does NOT consume but the slot is
+//     pre-populated so Phase 33 reads the existing SOT without re-extending).
+//
+// Per D-03: Phase 32 is Ethereum-mainnet-only; chainId=1 populated, all other
+// chains return null from the 3 getters. Multi-chain SwapRouter02 + Quoter V2
+// deployments exist (per Uniswap docs) but their SOT extension is deferred
+// (see CONTEXT.md § Deferred).
+//
+// Provenance (research date 2026-05-23 — RESEARCH § Topic 2 + Topic 1 + Topic 9):
+// All three addresses cross-verified against docs.uniswap.org/contracts/v3/reference/
+// deployments/ethereum-deployments + Etherscan proxy resolution. Canonical
+// EIP-55 checksums applied at the `getAddress`-wrap below.
+//
+// Cross-view byte-identity invariant:
+//   UNISWAP_V3_RAW[1].swapRouter02 === KNOWN_SPENDERS_ETHEREUM "Uniswap V3
+//   SwapRouter02" row address (the inline literal at Phase 6 lines 864-868
+//   is promoted to a SOT-getter delegate at Phase 32 per D-13a; the row's
+//   array index + neighboring-row order are preserved byte-identically).
+//   T-UNISWAP-V3-SPENDER-DRIFT-1 anchored in test/config-contracts.test.ts.
+//
+// Each literal `getAddress`-wrapped at the literal site so a corrupted snapshot
+// — single hex digit flipped at rest — throws EIP-55 at module load.
+
+/**
+ * Per-chain Uniswap V3 canonical contract registry. Phase 32 ships chainId=1
+ * only; v2.4+ may widen (all 5 EVM chains have SwapRouter02 + Quoter V2 +
+ * NonfungiblePositionManager deployments per Uniswap docs, but Phase 32 keeps
+ * the surface Ethereum-only by D-03).
+ */
+export interface UniswapV3Contracts {
+  /** SwapRouter02 — D-13 dispatch target for every `prepare_uniswap_swap` call. */
+  swapRouter02: Address;
+  /** Quoter V2 — D-13 read-only (NOT in dispatch allowlist by design). */
+  quoterV2: Address;
+  /** NonfungiblePositionManager — RESERVED for Phase 33 LP verbs (D-01); pre-populated at Phase 32. */
+  nonfungiblePositionManager: Address;
+}
+
+const UNISWAP_V3_RAW: Partial<Record<ChainId, UniswapV3Contracts>> = {
+  1: {
+    swapRouter02:               getAddress("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
+    quoterV2:                   getAddress("0x61fFE014bA17989E743c5F6cB21bF9697530B21e"),
+    nonfungiblePositionManager: getAddress("0xC36442b4a4522E871399CD717aBDD847Ab11FE88"),
+  },
+};
+
+/**
+ * Get the canonical Uniswap V3 SwapRouter02 address. Returns `null` for chains
+ * without a Uniswap V3 SwapRouter02 SOT slot (everything except Ethereum at
+ * Phase 32 scope). Consumed by Plan 32-03's `prepare_uniswap_swap` (as `tx.to`)
+ * and the canonical-dispatch Ethereum arm + KNOWN_SPENDERS_ETHEREUM
+ * (T-UNISWAP-V3-SPENDER-DRIFT-1).
+ */
+export function getUniswapV3SwapRouter02Address(chainId: ChainId): Address | null {
+  return UNISWAP_V3_RAW[chainId]?.swapRouter02 ?? null;
+}
+
+/**
+ * Get the canonical Uniswap V3 Quoter V2 address. Returns `null` for chains
+ * without a Uniswap V3 Quoter V2 SOT slot. Consumed by Plan 32-02's
+ * `get_uniswap_quote` (auto-fee-tier `quoteExactInputSingle` iteration +
+ * multi-hop `quoteExactInput` path quote). Read-only; NOT added to the
+ * canonical-dispatch allowlist by design (D-13a).
+ */
+export function getUniswapV3QuoterV2Address(chainId: ChainId): Address | null {
+  return UNISWAP_V3_RAW[chainId]?.quoterV2 ?? null;
+}
+
+/**
+ * Get the canonical Uniswap V3 NonfungiblePositionManager address. Returns
+ * `null` for chains without an NPM SOT slot. RESERVED for Phase 33 LP verbs
+ * (mint / increase / decrease / collect / burn / rebalance); pre-populated at
+ * Phase 32 per D-01 so Phase 33 reads the existing slot without re-extending
+ * the SOT.
+ */
+export function getUniswapV3NonfungiblePositionManagerAddress(
+  chainId: ChainId,
+): Address | null {
+  return UNISWAP_V3_RAW[chainId]?.nonfungiblePositionManager ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // Known-spender table — PREP-30 surface for approval-class DECODED ARGS.
 // ---------------------------------------------------------------------------
 
@@ -861,8 +953,11 @@ export const KNOWN_SPENDERS_ETHEREUM: readonly KnownSpender[] = [
     label: "Uniswap V3 SwapRouter",
     source: "https://docs.uniswap.org/contracts/v3/reference/deployments/ethereum-deployments",
   },
+  // Address delegated to SOT getter per Phase 32 D-13a; promoted from inline
+  // literal to break the drift seam between this view and
+  // src/security/canonical-dispatch.ts. Cross-checked by T-UNISWAP-V3-SPENDER-DRIFT-1.
   {
-    address: getAddress("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"),
+    address: getUniswapV3SwapRouter02Address(1)!,
     label: "Uniswap V3 SwapRouter02",
     source: "https://docs.uniswap.org",
   },
