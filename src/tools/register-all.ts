@@ -11,6 +11,7 @@ import "./get_solana_balance.js";
 import "./get_solana_token_balance.js";
 import "./get_solana_token_metadata.js";
 import "./get_lending_positions.js";
+import "./get_morpho_positions.js"; // Phase 29 Plan 29-02 (MOR-01) — Morpho Blue isolated-market positions on Ethereum mainnet
 import "./get_compound_market_info.js";  // Phase 28 Plan 28-04 (CMP-02) — Compound V3 per-Comet market info
 import "./pair_ledger_live.js";
 import "./pair_ledger_live_start.js";
