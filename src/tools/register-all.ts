@@ -96,6 +96,9 @@ import "./prepare_lido_wrap.js";          // Phase 30 Plan 30-03 (LIDO-04) — s
 import "./prepare_lido_unwrap.js";        // Phase 30 Plan 30-03 (LIDO-04) — wstETH → stETH (WstETH.unwrap)
 import "./get_eigenlayer_positions.js";   // Phase 31 Plan 31-02 (EIG-01) — EigenLayer strategy-level deposits + queued withdrawals
 import "./prepare_eigenlayer_deposit.js"; // Phase 31 Plan 31-02 (EIG-02) — StrategyManager.depositIntoStrategy (3-arg ERC-20 + LEDGER NOTICE)
+import "./get_rocketpool_positions.js";   // Phase 31 Plan 31-03 (RP-01) — rETH balance + exchange rate + ETH-equivalent value
+import "./prepare_rocketpool_stake.js";   // Phase 31 Plan 31-03 (RP-02 stake) — RocketDepositPool.deposit (value-bearing; 0xd0e30db0 collides with WETH9.deposit — preview_send tuple-dispatches)
+import "./prepare_rocketpool_unstake.js"; // Phase 31 Plan 31-03 (RP-02 unstake) — rETH.burn(uint256) (0x42966c68 is generic ERC-20 Burnable — preview_send tuple-dispatches)
 import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";
