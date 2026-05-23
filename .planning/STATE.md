@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Bitcoin + Litecoin
-status: ready_to_plan
-last_updated: 2026-05-23T07:54:33.892Z
-last_activity: 2026-05-23 -- Phase 30 execution started
+status: planning
+last_updated: "2026-05-23T08:04:16.280Z"
+last_activity: 2026-05-23
 progress:
   total_phases: 6
   completed_phases: 6
   total_plans: 19
-  completed_plans: 60
+  completed_plans: 19
   percent: 100
-stopped_at: Phase 30 complete (3/3) — ready to discuss Phase 31
 ---
 
 # Project State
@@ -314,6 +313,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-23T05:43:17.680Z
-Stopped at: Phase 30 context gathered
-Resume file: .planning/phases/30-evm-lido-stake-unstake-wrap-unwrap/30-CONTEXT.md
+Last session: 2026-05-23T08:04:16.269Z
+Stopped at: Phase 31 context gathered
+Resume file: .planning/phases/31-evm-eigenlayer-rocket-pool/31-CONTEXT.md
