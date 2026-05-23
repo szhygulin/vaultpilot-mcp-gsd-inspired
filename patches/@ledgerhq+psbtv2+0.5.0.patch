@@ -1,0 +1,28 @@
+diff --git a/node_modules/@ledgerhq/psbtv2/lib-es/index.js b/node_modules/@ledgerhq/psbtv2/lib-es/index.js
+index cb2fb59..74694f2 100644
+--- a/node_modules/@ledgerhq/psbtv2/lib-es/index.js
++++ b/node_modules/@ledgerhq/psbtv2/lib-es/index.js
+@@ -1,5 +1,5 @@
+-export { PsbtV2, psbtGlobal, psbtIn, psbtOut, NoSuchEntry } from "./psbtv2";
+-export { BufferReader, BufferWriter, unsafeTo64bitLE, unsafeFrom64bitLE } from "./buffertools";
+-export { normalizeToBuffer, parsePsbt } from "./psbtParsing";
+-export { SCRIPT_CONSTANTS, detectScriptType, extractHashFromScriptPubKey } from "./scriptDetection";
++export { PsbtV2, psbtGlobal, psbtIn, psbtOut, NoSuchEntry } from "./psbtv2.js";
++export { BufferReader, BufferWriter, unsafeTo64bitLE, unsafeFrom64bitLE } from "./buffertools.js";
++export { normalizeToBuffer, parsePsbt } from "./psbtParsing.js";
++export { SCRIPT_CONSTANTS, detectScriptType, extractHashFromScriptPubKey } from "./scriptDetection.js";
+ //# sourceMappingURL=index.js.map
+\ No newline at end of file
+diff --git a/node_modules/@ledgerhq/psbtv2/lib-es/psbtv2.js b/node_modules/@ledgerhq/psbtv2/lib-es/psbtv2.js
+index d6ac1f5..8269af3 100644
+--- a/node_modules/@ledgerhq/psbtv2/lib-es/psbtv2.js
++++ b/node_modules/@ledgerhq/psbtv2/lib-es/psbtv2.js
+@@ -1,7 +1,7 @@
+ /* oxlint-disable typescript/no-non-null-assertion */
+ /* oxlint-disable typescript/explicit-module-boundary-types */
+ import { Psbt, Transaction } from "bitcoinjs-lib";
+-import { BufferReader, BufferWriter, unsafeFrom64bitLE, unsafeTo64bitLE } from "./buffertools";
++import { BufferReader, BufferWriter, unsafeFrom64bitLE, unsafeTo64bitLE } from "./buffertools.js";
+ export var psbtGlobal;
+ (function (psbtGlobal) {
+     psbtGlobal[psbtGlobal["TX_VERSION"] = 2] = "TX_VERSION";
