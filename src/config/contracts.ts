@@ -348,6 +348,96 @@ export function getMorphoBlueAddress(chainId: ChainId): Address | null {
 }
 
 // ---------------------------------------------------------------------------
+// Lido per-chain SOT — Phase 30 Plan 30-01.
+// ---------------------------------------------------------------------------
+//
+// Sibling sub-table (NOT a widening of `ContractsForChain`) per Phase 28/29
+// precedent. Lido ships THREE contracts per chain in different roles:
+//   - stETH proxy (Lido) — Ethereum mainnet only; `submit` = stake ETH.
+//   - wstETH — Ethereum mainnet + Arbitrum (bridged ERC20Bridged); wrap/unwrap.
+//   - WithdrawalQueueERC721 — Ethereum mainnet only; `requestWithdrawals` = unstake.
+//
+// Arbitrum slot carries wstETH only (bridged ERC20Bridged from lidofinance/lido-l2).
+// steth + withdrawalQueue on Arbitrum are set to address(0) sentinels — D-03
+// enforces that prepare_lido_* refuses for non-Ethereum chains before reaching
+// these slots; D-10 canonical-dispatch filter removes address(0) entries from
+// the Arbitrum allowlist arm automatically.
+//
+// Provenance (research date 2026-05-23 — research § Topic 1 + Topic 5):
+//   - stETH proxy:            0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84 (Ethereum)
+//   - wstETH:                 0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0 (Ethereum)
+//   - WithdrawalQueueERC721:  0x889edC2eDab5f40e902b864aD4d7AdE8E412F9B1 (Ethereum)
+//   - wstETH ERC20Bridged:    0x5979D7b546E38E414F7E9822514be443A4800529 (Arbitrum)
+// All verified against docs.lido.fi/deployed-contracts + lidofinance/core GitHub.
+//
+// Each literal `getAddress`-wrapped at the literal site so a corrupted snapshot
+// — single hex digit flipped at rest — throws EIP-55 at module load.
+// T-LIDO-SPENDER-DRIFT-1 cross-view: `getLidoWstethAddress(1)` and
+// `getLidoWithdrawalQueueAddress(1)` are byte-identical to their
+// `KNOWN_SPENDERS_ETHEREUM` row addresses (asserted in test/config-contracts.test.ts).
+
+/**
+ * Per-chain Lido contract addresses. Ethereum has the full triple (stETH +
+ * wstETH + WithdrawalQueueERC721). Arbitrum has wstETH bridged only; stETH
+ * and WithdrawalQueue slots carry address(0) sentinels (D-01 / D-03).
+ */
+export interface LidoContracts {
+  steth: Address;            // stETH proxy (Lido) — Ethereum only; address(0) on Arbitrum
+  wsteth: Address;           // wstETH (Ethereum native + Arbitrum ERC20Bridged)
+  withdrawalQueue: Address;  // WithdrawalQueueERC721 — Ethereum only; address(0) on Arbitrum
+}
+
+const LIDO_RAW: Partial<Record<ChainId, LidoContracts>> = {
+  // Ethereum mainnet: full 3-contract set — all write tools land here.
+  1: {
+    steth: getAddress("0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84"),
+    wsteth: getAddress("0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0"),
+    withdrawalQueue: getAddress("0x889edC2eDab5f40e902b864aD4d7AdE8E412F9B1"),
+  },
+  // Arbitrum: wstETH bridged (read-only); steth + withdrawalQueue unused.
+  // D-03: prepare_lido_* refuses for non-Ethereum chains before reaching this slot.
+  // D-10: canonical-dispatch filter removes address(0) entries from the allowlist.
+  42161: {
+    steth: getAddress("0x0000000000000000000000000000000000000000"),   // N/A — no bridged stETH on Arbitrum
+    wsteth: getAddress("0x5979D7b546E38E414F7E9822514be443A4800529"),  // ERC20Bridged from lidofinance/lido-l2
+    withdrawalQueue: getAddress("0x0000000000000000000000000000000000000000"), // N/A
+  },
+};
+
+/**
+ * Get the canonical Lido stETH proxy address for the given chain. Returns
+ * `null` for chains without a Lido stETH entry (all except Ethereum).
+ * Note: Arbitrum returns the address(0) sentinel — callers that need a
+ * non-null, non-zero result should check the return value.
+ * Consumed by Plan 30-03's `prepare_lido_stake` and by canonical-dispatch.ts.
+ */
+export function getLidoStethAddress(chainId: ChainId): Address | null {
+  return LIDO_RAW[chainId]?.steth ?? null;
+}
+
+/**
+ * Get the canonical Lido wstETH contract address for the given chain. Returns
+ * `null` for chains without a Lido wstETH entry. Ethereum returns the native
+ * wstETH contract; Arbitrum returns the bridged ERC20Bridged proxy.
+ * Consumed by Plan 30-03's `prepare_lido_wrap` / `prepare_lido_unwrap` and
+ * by canonical-dispatch.ts + KNOWN_SPENDERS_ETHEREUM (T-LIDO-SPENDER-DRIFT-1).
+ */
+export function getLidoWstethAddress(chainId: ChainId): Address | null {
+  return LIDO_RAW[chainId]?.wsteth ?? null;
+}
+
+/**
+ * Get the canonical Lido WithdrawalQueueERC721 address for the given chain.
+ * Returns `null` for chains without a WithdrawalQueue entry (all except
+ * Ethereum). Note: Arbitrum returns the address(0) sentinel.
+ * Consumed by Plan 30-03's `prepare_lido_unstake` and by canonical-dispatch.ts
+ * + KNOWN_SPENDERS_ETHEREUM (T-LIDO-SPENDER-DRIFT-1).
+ */
+export function getLidoWithdrawalQueueAddress(chainId: ChainId): Address | null {
+  return LIDO_RAW[chainId]?.withdrawalQueue ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // Known-spender table — PREP-30 surface for approval-class DECODED ARGS.
 // ---------------------------------------------------------------------------
 
@@ -437,6 +527,22 @@ export const KNOWN_SPENDERS_ETHEREUM: readonly KnownSpender[] = [
     address: getMorphoBlueAddress(1)!,
     label: "Morpho Blue",
     source: "https://docs.morpho.org/addresses",
+  },
+  // Lido — Phase 30 Plan 30-01. Two spender entries for the approval pre-flight
+  // gates (D-05): wstETH spender for `prepare_lido_wrap` (stETH → wstETH) and
+  // WithdrawalQueueERC721 spender for `prepare_lido_unstake` (stETH → NFT receipt).
+  // Both `address` fields delegate to the SOT getters so T-LIDO-SPENDER-DRIFT-1
+  // cross-view byte-identity is enforced by construction. The `!` non-null
+  // assertion is safe because `LIDO_RAW[1]` is populated at module load.
+  {
+    address: getLidoWstethAddress(1)!,
+    label: "Lido wstETH (for stETH wrap)",
+    source: "https://docs.lido.fi/deployed-contracts/",
+  },
+  {
+    address: getLidoWithdrawalQueueAddress(1)!,
+    label: "Lido WithdrawalQueueERC721 (for stETH unstake)",
+    source: "https://docs.lido.fi/deployed-contracts/",
   },
   {
     address: getAddress("0x111111125421cA6dc452d289314280a0F8842A65"),

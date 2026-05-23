@@ -1553,3 +1553,103 @@ export function buildMorphoDecodedArgsBlock(
     .replace("{IS_SHARE_BASED}", encodingStr)
     .replace("{ONBEHALF}", shareBased.onBehalf);
 }
+
+// =============================================================================
+// Phase 30 — Plan 30-01 additive extensions (APPEND-ONLY).
+// All Phase 4 / 6 / 7 / 8 / 9 / 28 / 29 templates above stay byte-identical
+// (FROZEN). Four new PREPARE-RECEIPT templates back the `prepare_lido_stake` /
+// `prepare_lido_unstake` / `prepare_lido_wrap` / `prepare_lido_unwrap` tools.
+// `NFT_RECEIPT_EXPECTED_TEMPLATE` backs the novel [NFT RECEIPT EXPECTED] block
+// emitted by `prepare_lido_unstake` (D-04 / T-LIDO-NFT-TOKENID-RACE residual
+// risk disclosure). No LEDGER NOTICE template added — D-12 confirmed all 4
+// write functions have ERC-7730 clear-sign coverage (mirrors Phase 7 Aave).
+// `Address` is already imported from "viem" at the top of this file (line 21).
+// =============================================================================
+
+/**
+ * PREPARE RECEIPT template for `prepare_lido_stake` (Lido.submit — ETH → stETH).
+ * Slots: `{CHAIN}`, `{STETH_CONTRACT}`, `{AMOUNT}`.
+ * Consumed by Plan 30-03 `prepare_lido_stake.ts` via `.replace(...)` calls.
+ * Matches the COMPOUND_SUPPLY_PREPARE_RECEIPT_TEMPLATE shape (lines 921–928).
+ */
+export const LIDO_STAKE_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Lido stake (ETH → stETH)",
+  "  chain:        {CHAIN}",
+  "  stethContract: {STETH_CONTRACT}",
+  "  amount:       {AMOUNT} ETH",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT template for `prepare_lido_unstake` (WithdrawalQueue.requestWithdrawals — stETH → NFT).
+ * Slots: `{CHAIN}`, `{WQ_CONTRACT}`, `{AMOUNT}`.
+ * Consumed by Plan 30-03 `prepare_lido_unstake.ts` via `.replace(...)` calls.
+ * A separate `[NFT RECEIPT EXPECTED]` block from `NFT_RECEIPT_EXPECTED_TEMPLATE`
+ * is appended after this receipt to surface the expected NFT tokenId.
+ */
+export const LIDO_UNSTAKE_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Lido unstake (stETH → withdrawal NFT)",
+  "  chain:        {CHAIN}",
+  "  withdrawalQueue: {WQ_CONTRACT}",
+  "  stethAmount:  {AMOUNT} stETH",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT template for `prepare_lido_wrap` (WstETH.wrap — stETH → wstETH).
+ * Slots: `{CHAIN}`, `{WSTETH_CONTRACT}`, `{AMOUNT}`.
+ * Consumed by Plan 30-03 `prepare_lido_wrap.ts` via `.replace(...)` calls.
+ */
+export const LIDO_WRAP_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Lido wrap (stETH → wstETH)",
+  "  chain:        {CHAIN}",
+  "  wstethContract: {WSTETH_CONTRACT}",
+  "  stethAmount:  {AMOUNT} stETH",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT template for `prepare_lido_unwrap` (WstETH.unwrap — wstETH → stETH).
+ * Slots: `{CHAIN}`, `{WSTETH_CONTRACT}`, `{AMOUNT}`.
+ * Consumed by Plan 30-03 `prepare_lido_unwrap.ts` via `.replace(...)` calls.
+ */
+export const LIDO_UNWRAP_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Lido unwrap (wstETH → stETH)",
+  "  chain:        {CHAIN}",
+  "  wstethContract: {WSTETH_CONTRACT}",
+  "  wstethAmount: {AMOUNT} wstETH",
+].join("\n");
+
+/**
+ * Build the `[NFT RECEIPT EXPECTED]` block emitted by `prepare_lido_unstake`.
+ *
+ * D-04: The expected `tokenId` is deterministic at prepare time via
+ * `getLastRequestId() + 1` — but carries residual risk T-LIDO-NFT-TOKENID-RACE:
+ * another withdrawal queued between prepare time and tx submission shifts the
+ * actual minted tokenId. The disclaimer on the `expectedTokenId` line is
+ * LOAD-BEARING — it informs the user this is a best-effort estimate.
+ *
+ * Standalone block (separate from PREPARE RECEIPT / LEDGER NOTICE / CHECKS
+ * PERFORMED) — matches Phase 6 LEDGER NOTICE precedent for novel post-tx
+ * artifacts. Consumed by Plan 30-03 `prepare_lido_unstake.ts`.
+ *
+ * @param args.nftContract        - WithdrawalQueueERC721 contract address (checksummed)
+ * @param args.expectedTokenId    - Predicted tokenId = `getLastRequestId() + 1n` at prepare time
+ * @param args.requestor          - The `owner` address that will receive the NFT
+ * @param args.claimableAfter     - Human-readable finalization window estimate
+ */
+export function NFT_RECEIPT_EXPECTED_TEMPLATE(args: {
+  nftContract: Address;
+  expectedTokenId: string;
+  requestor: Address;
+  claimableAfter: string;
+}): string {
+  return [
+    `[NFT RECEIPT EXPECTED]`,
+    `NFT contract:  ${args.nftContract}`,
+    `Expected token ID: ${args.expectedTokenId}  (best-effort at prepare time; may shift if another withdrawal queues before this tx lands)`,
+    `Requestor:     ${args.requestor}`,
+    `Claimable:     ${args.claimableAfter}`,
+  ].join("\n");
+}
