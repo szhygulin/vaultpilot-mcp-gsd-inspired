@@ -102,6 +102,25 @@ describe("get_litecoin_block_tip", () => {
     expect(tip!.timestamp).toBeNull();
   });
 
+  // ─── WR-04 anchor: strict integer regex rejects digit-prefixed garbage ─────
+  // litecoinspace.org is operator-configurable for LTC; mirror the BTC fix.
+
+  it("WR-04: rejects digit-prefixed garbage from Esplora /blocks/tip/height (e.g. '2750000<html>')", async () => {
+    vi.stubGlobal(
+      "fetch",
+      makeEsploraFetch(200, "2750000<html>", 200, "abc123"),
+    );
+
+    const result = await invokeTool("get_litecoin_block_tip");
+    const sc = result.structuredContent as Record<string, unknown>;
+
+    expect(sc.status).toBe("core-not-configured");
+    expect(sc.tip).toBeNull();
+    expect(typeof sc.esploraError).toBe("string");
+    expect(sc.esploraError as string).toMatch(/non-integer/);
+    expect(sc.esploraError as string).toContain("2750000<html>");
+  });
+
   // ─── Litecoin Core path ────────────────────────────────────────────────────
 
   it("returns ok with height/difficulty/timestamp from Core 2-call sequence", async () => {

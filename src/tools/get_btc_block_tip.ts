@@ -85,10 +85,15 @@ registerTool("get_btc_block_tip", DESCRIPTION, INPUT_SCHEMA, async () => {
       } else {
         const heightText = await heightResp.text();
         const hashText = await hashResp.text();
-        const height = parseInt(heightText.trim(), 10);
-        if (isNaN(height)) {
-          esploraError = `Esplora /blocks/tip/height returned non-integer: ${heightText.slice(0, 20)}`;
+        // WR-04: strict integer regex. parseInt is permissive — "850000<html>"
+        // returns 850000, "850000.5" returns 850000 — so an upstream Esplora
+        // returning an HTML error page that starts with digits would leak
+        // garbage past the validation gate. Require ^\d+$ end-to-end.
+        const trimmed = heightText.trim();
+        if (!/^\d+$/.test(trimmed)) {
+          esploraError = `Esplora /blocks/tip/height returned non-integer: ${trimmed.slice(0, 20)}`;
         } else {
+          const height = Number(trimmed);
           tip = {
             height,
             hash: hashText.trim(),

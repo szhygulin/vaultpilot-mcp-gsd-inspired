@@ -107,6 +107,27 @@ describe("get_btc_block_tip", () => {
     expect((sc.esploraError as string).length).toBeGreaterThan(0);
   });
 
+  // ─── WR-04 anchor: strict integer regex rejects digit-prefixed garbage ─────
+  // parseInt("850000<html>", 10) returns 850000 silently. A misbehaving
+  // upstream Esplora returning an HTML error page with a leading digit would
+  // have leaked garbage past the validation gate. Require ^\d+$ end-to-end.
+
+  it("WR-04: rejects digit-prefixed garbage from Esplora /blocks/tip/height (e.g. '850000<html>')", async () => {
+    vi.stubGlobal(
+      "fetch",
+      makeEsploraFetch(200, "850000<html>", 200, "abc123"),
+    );
+
+    const result = await invokeTool("get_btc_block_tip");
+    const sc = result.structuredContent as Record<string, unknown>;
+
+    expect(sc.status).toBe("core-not-configured");
+    expect(sc.tip).toBeNull();
+    expect(typeof sc.esploraError).toBe("string");
+    expect(sc.esploraError as string).toMatch(/non-integer/);
+    expect(sc.esploraError as string).toContain("850000<html>");
+  });
+
   // ─── Bitcoin Core path ─────────────────────────────────────────────────────
 
   it("returns ok with height/difficulty/timestamp from Core 2-call sequence", async () => {

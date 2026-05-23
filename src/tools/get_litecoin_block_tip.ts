@@ -98,10 +98,14 @@ registerTool("get_litecoin_block_tip", DESCRIPTION, INPUT_SCHEMA, async () => {
       } else {
         const heightText = await heightResp.text();
         const hashText = await hashResp.text();
-        const height = parseInt(heightText.trim(), 10);
-        if (isNaN(height)) {
-          esploraError = `Esplora /blocks/tip/height returned non-integer: ${heightText.slice(0, 20)}`;
+        // WR-04: strict integer regex (same fix as get_btc_block_tip.ts).
+        // litecoinspace.org is operator-configurable for LTC; a misbehaving
+        // upstream returning HTML-with-leading-digits would slip past parseInt.
+        const trimmed = heightText.trim();
+        if (!/^\d+$/.test(trimmed)) {
+          esploraError = `Esplora /blocks/tip/height returned non-integer: ${trimmed.slice(0, 20)}`;
         } else {
+          const height = Number(trimmed);
           tip = {
             height,
             hash: hashText.trim(),
