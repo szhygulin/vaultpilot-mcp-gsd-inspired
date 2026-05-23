@@ -13,14 +13,27 @@ import {
   COMPOUND_WITHDRAW_PREPARE_RECEIPT_TEMPLATE,
   DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY,
   DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW,
+  DECODED_ARGS_TEMPLATE_MORPHO_BORROW,
+  DECODED_ARGS_TEMPLATE_MORPHO_REPAY,
+  DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY,
+  DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY_COLLATERAL,
+  DECODED_ARGS_TEMPLATE_MORPHO_WITHDRAW,
+  DECODED_ARGS_TEMPLATE_MORPHO_WITHDRAW_COLLATERAL,
   ERC20_PREPARE_RECEIPT_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
   LEDGER_NOTICE_COMPOUND_TEMPLATE,
+  MORPHO_BORROW_PREPARE_RECEIPT_TEMPLATE,
+  MORPHO_REPAY_PREPARE_RECEIPT_TEMPLATE,
+  MORPHO_SUPPLY_COLLATERAL_PREPARE_RECEIPT_TEMPLATE,
+  MORPHO_SUPPLY_PREPARE_RECEIPT_TEMPLATE,
+  MORPHO_WITHDRAW_COLLATERAL_PREPARE_RECEIPT_TEMPLATE,
+  MORPHO_WITHDRAW_PREPARE_RECEIPT_TEMPLATE,
   PREPARE_RECEIPT_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
   WETH_UNWRAP_PREPARE_RECEIPT_TEMPLATE,
   build4byteBlock,
   buildCompoundDecodedArgsBlock,
+  buildMorphoDecodedArgsBlock,
   chunkHex,
 } from "../src/signing/blocks.js";
 import type { FourbyteResult } from "../src/clients/fourbyte.js";
@@ -511,5 +524,241 @@ describe("Phase 28 Plan 28-04 — buildCompoundDecodedArgsBlock helper", () => {
       "supply-collateral",
     );
     expect(out).toContain("(unknown asset — no registry match)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 29 Plan 29-03 — Morpho Blue template byte-identity (12 templates).
+//
+// 6 PREPARE RECEIPT (one per tool) + 6 DECODED ARGS (one per Morpho function).
+// Each test asserts: slot placeholders are correct, no shape drift, no
+// accidental overlap with Compound / Aave templates.
+// ---------------------------------------------------------------------------
+
+describe("Phase 29 Plan 29-03 — MORPHO_SUPPLY_PREPARE_RECEIPT_TEMPLATE byte-identity", () => {
+  it("contains all expected slots + operation label", () => {
+    expect(MORPHO_SUPPLY_PREPARE_RECEIPT_TEMPLATE).toContain("PREPARE RECEIPT");
+    expect(MORPHO_SUPPLY_PREPARE_RECEIPT_TEMPLATE).toContain(
+      "operation:    Morpho Blue supply (lender position)",
+    );
+    expect(MORPHO_SUPPLY_PREPARE_RECEIPT_TEMPLATE).toContain("{CHAIN}");
+    expect(MORPHO_SUPPLY_PREPARE_RECEIPT_TEMPLATE).toContain("{MARKET_ID}");
+    expect(MORPHO_SUPPLY_PREPARE_RECEIPT_TEMPLATE).toContain("{MARKET_LABEL}");
+    expect(MORPHO_SUPPLY_PREPARE_RECEIPT_TEMPLATE).toContain("{ASSET} (must be loanToken)");
+    expect(MORPHO_SUPPLY_PREPARE_RECEIPT_TEMPLATE).toContain("{AMOUNT}");
+    expect(MORPHO_SUPPLY_PREPARE_RECEIPT_TEMPLATE).toContain("{ONBEHALF}");
+  });
+});
+
+describe("Phase 29 Plan 29-03 — MORPHO_WITHDRAW_PREPARE_RECEIPT_TEMPLATE byte-identity", () => {
+  it("contains receiver slot (withdraw has receiver)", () => {
+    expect(MORPHO_WITHDRAW_PREPARE_RECEIPT_TEMPLATE).toContain(
+      "operation:    Morpho Blue withdraw (lender position close)",
+    );
+    expect(MORPHO_WITHDRAW_PREPARE_RECEIPT_TEMPLATE).toContain("{RECEIVER}");
+    expect(MORPHO_WITHDRAW_PREPARE_RECEIPT_TEMPLATE).toContain("(must be loanToken)");
+  });
+});
+
+describe("Phase 29 Plan 29-03 — MORPHO_SUPPLY_COLLATERAL_PREPARE_RECEIPT_TEMPLATE byte-identity", () => {
+  it("asset annotation is collateralToken (NOT loanToken)", () => {
+    expect(MORPHO_SUPPLY_COLLATERAL_PREPARE_RECEIPT_TEMPLATE).toContain(
+      "operation:    Morpho Blue supplyCollateral (post collateral to enable borrowing)",
+    );
+    expect(MORPHO_SUPPLY_COLLATERAL_PREPARE_RECEIPT_TEMPLATE).toContain(
+      "(must be collateralToken)",
+    );
+    // No receiver — supplyCollateral has no receiver arg.
+    expect(MORPHO_SUPPLY_COLLATERAL_PREPARE_RECEIPT_TEMPLATE).not.toContain("{RECEIVER}");
+  });
+});
+
+describe("Phase 29 Plan 29-03 — MORPHO_WITHDRAW_COLLATERAL_PREPARE_RECEIPT_TEMPLATE byte-identity", () => {
+  it("collateralToken annotation + receiver slot", () => {
+    expect(MORPHO_WITHDRAW_COLLATERAL_PREPARE_RECEIPT_TEMPLATE).toContain(
+      "operation:    Morpho Blue withdrawCollateral (collateral release)",
+    );
+    expect(MORPHO_WITHDRAW_COLLATERAL_PREPARE_RECEIPT_TEMPLATE).toContain(
+      "(must be collateralToken)",
+    );
+    expect(MORPHO_WITHDRAW_COLLATERAL_PREPARE_RECEIPT_TEMPLATE).toContain("{RECEIVER}");
+  });
+});
+
+describe("Phase 29 Plan 29-03 — MORPHO_BORROW_PREPARE_RECEIPT_TEMPLATE byte-identity", () => {
+  it("loanToken annotation + receiver slot", () => {
+    expect(MORPHO_BORROW_PREPARE_RECEIPT_TEMPLATE).toContain(
+      "operation:    Morpho Blue borrow (debt position)",
+    );
+    expect(MORPHO_BORROW_PREPARE_RECEIPT_TEMPLATE).toContain("(must be loanToken)");
+    expect(MORPHO_BORROW_PREPARE_RECEIPT_TEMPLATE).toContain("{RECEIVER}");
+  });
+});
+
+describe("Phase 29 Plan 29-03 — MORPHO_REPAY_PREPARE_RECEIPT_TEMPLATE byte-identity", () => {
+  it("loanToken annotation + NO receiver (repay has no receiver arg)", () => {
+    expect(MORPHO_REPAY_PREPARE_RECEIPT_TEMPLATE).toContain("operation:    Morpho Blue repay");
+    expect(MORPHO_REPAY_PREPARE_RECEIPT_TEMPLATE).toContain("(must be loanToken)");
+    expect(MORPHO_REPAY_PREPARE_RECEIPT_TEMPLATE).not.toContain("{RECEIVER}");
+  });
+
+  it("supports verbatim 'max' substitution (CLAUDE.md verbatim discipline)", () => {
+    const out = MORPHO_REPAY_PREPARE_RECEIPT_TEMPLATE
+      .replace("{CHAIN}", "ethereum")
+      .replace("{MARKET_ID}", "0xabcd")
+      .replace("{MARKET_LABEL}", "USDC/wstETH")
+      .replace("{ASSET}", "0xA0b8")
+      .replace("{AMOUNT}", "max")
+      .replace("{ONBEHALF}", "0xdead");
+    expect(out).toContain("amount:       max");
+    expect(out).not.toContain("{AMOUNT}");
+  });
+});
+
+describe("Phase 29 Plan 29-03 — DECODED_ARGS_TEMPLATE_MORPHO_* byte-identity (6 templates)", () => {
+  it("MORPHO_SUPPLY: function: supply + assets + shares + encoding + onBehalf (no receiver)", () => {
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY).toContain("function:     supply");
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY).toContain("{ASSETS}");
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY).toContain("{SHARES}");
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY).toContain("{IS_SHARE_BASED}");
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY).not.toContain("{RECEIVER}");
+  });
+
+  it("MORPHO_WITHDRAW: function: withdraw + receiver slot", () => {
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_WITHDRAW).toContain("function:     withdraw");
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_WITHDRAW).toContain("{RECEIVER}");
+  });
+
+  it("MORPHO_SUPPLY_COLLATERAL: function: supplyCollateral + NO shares + NO encoding (asset-only)", () => {
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY_COLLATERAL).toContain(
+      "function:     supplyCollateral",
+    );
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY_COLLATERAL).not.toContain("{SHARES}");
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY_COLLATERAL).not.toContain("{IS_SHARE_BASED}");
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY_COLLATERAL).not.toContain("{RECEIVER}");
+  });
+
+  it("MORPHO_WITHDRAW_COLLATERAL: function: withdrawCollateral + receiver + NO shares", () => {
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_WITHDRAW_COLLATERAL).toContain(
+      "function:     withdrawCollateral",
+    );
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_WITHDRAW_COLLATERAL).toContain("{RECEIVER}");
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_WITHDRAW_COLLATERAL).not.toContain("{SHARES}");
+  });
+
+  it("MORPHO_BORROW: function: borrow + receiver + shares + encoding", () => {
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_BORROW).toContain("function:     borrow");
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_BORROW).toContain("{RECEIVER}");
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_BORROW).toContain("{IS_SHARE_BASED}");
+  });
+
+  it("MORPHO_REPAY: function: repay + NO receiver (repay has no receiver arg) + shares + encoding", () => {
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_REPAY).toContain("function:     repay");
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_REPAY).not.toContain("{RECEIVER}");
+    expect(DECODED_ARGS_TEMPLATE_MORPHO_REPAY).toContain("{IS_SHARE_BASED}");
+  });
+});
+
+describe("Phase 29 Plan 29-03 — buildMorphoDecodedArgsBlock dispatch", () => {
+  const PARAMS = {
+    loanToken: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as `0x${string}`,
+    collateralToken: "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0" as `0x${string}`,
+    lltv: 860000000000000000n,
+  };
+  const ONBEHALF = "0x000000000000000000000000000000000000dEaD" as `0x${string}`;
+  const RECEIVER = "0x000000000000000000000000000000000000bEEF" as `0x${string}`;
+  const MARKET_ID = "0xb323495f7e4148be5643a4ea4a8221eef163e4bccfdedc2a6f4696baacbc86cc" as `0x${string}`;
+
+  it("supply arm: renders share-based vs asset-based encoding annotation", () => {
+    const out = buildMorphoDecodedArgsBlock(
+      {
+        kind: "morpho-supply",
+        marketId: MARKET_ID,
+        marketParams: PARAMS,
+        assets: 100_000_000n,
+        shares: 0n,
+        onBehalf: ONBEHALF,
+        data: "0x",
+        isShareBased: false,
+      },
+      { symbol: "USDC", decimals: 6 },
+      { symbol: "wstETH", decimals: 18 },
+    );
+    expect(out).toContain("function:     supply");
+    expect(out).toContain("encoding:     asset-based");
+    expect(out).toContain("(USDC)");
+    expect(out).toContain("(wstETH)");
+  });
+
+  it("repay-max arm: share-based encoding annotation", () => {
+    const out = buildMorphoDecodedArgsBlock(
+      {
+        kind: "morpho-repay",
+        marketId: MARKET_ID,
+        marketParams: PARAMS,
+        assets: 0n,
+        shares: 1_000_000_000n,
+        onBehalf: ONBEHALF,
+        data: "0x",
+        isShareBased: true,
+      },
+      { symbol: "USDC", decimals: 6 },
+      { symbol: "wstETH", decimals: 18 },
+    );
+    expect(out).toContain("encoding:     share-based");
+    expect(out).toContain("shares:       1000000000");
+  });
+
+  it("supplyCollateral arm: asset-only (no shares / encoding lines)", () => {
+    const out = buildMorphoDecodedArgsBlock(
+      {
+        kind: "morpho-supply-collateral",
+        marketId: MARKET_ID,
+        marketParams: PARAMS,
+        assets: 1_000_000_000_000_000_000n,
+        onBehalf: ONBEHALF,
+        data: "0x",
+      },
+      { symbol: "USDC", decimals: 6 },
+      { symbol: "wstETH", decimals: 18 },
+    );
+    expect(out).toContain("function:     supplyCollateral");
+    expect(out).not.toContain("encoding:");
+    expect(out).not.toContain("shares:");
+  });
+
+  it("withdrawCollateral arm: receiver surfaces", () => {
+    const out = buildMorphoDecodedArgsBlock(
+      {
+        kind: "morpho-withdraw-collateral",
+        marketId: MARKET_ID,
+        marketParams: PARAMS,
+        assets: 500_000_000_000_000_000n,
+        onBehalf: ONBEHALF,
+        receiver: RECEIVER,
+      },
+      { symbol: "USDC", decimals: 6 },
+      { symbol: "wstETH", decimals: 18 },
+    );
+    expect(out).toContain(`receiver:     ${RECEIVER}`);
+  });
+
+  it("off-list tokens: fallback labels surface", () => {
+    const out = buildMorphoDecodedArgsBlock(
+      {
+        kind: "morpho-supply",
+        marketId: MARKET_ID,
+        marketParams: PARAMS,
+        assets: 100n,
+        shares: 0n,
+        onBehalf: ONBEHALF,
+        data: "0x",
+        isShareBased: false,
+      },
+      null,
+      null,
+    );
+    expect(out).toContain("(unknown loanToken — no registry match)");
+    expect(out).toContain("(unknown collateralToken — no registry match)");
   });
 });
