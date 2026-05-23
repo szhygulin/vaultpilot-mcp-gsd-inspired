@@ -35,6 +35,9 @@ import {
   getLidoStethAddress,
   getLidoWstethAddress,
   getLidoWithdrawalQueueAddress,
+  getEigenLayerStrategyManagerAddress,
+  getEigenLayerStrategyAddress,
+  getEigenLayerLstTokenAddress,
 } from "../src/config/contracts.js";
 import {
   encodeLidoSubmit,
@@ -42,6 +45,7 @@ import {
   encodeWstethWrap,
   encodeWstethUnwrap,
 } from "../src/protocols/lido.js";
+import { encodeDepositIntoStrategy } from "../src/protocols/eigenlayer.js";
 
 describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
   it("Fixture A — native send → 0x7e1867b2... byte-for-byte", () => {
@@ -407,6 +411,37 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     // Hardcoded literal — computed at write-time (2026-05-23).
     // Cross-linked from test/prepare-lido-unwrap.test.ts (Plan 30-03).
     expect(fp).toBe("0x6d0dff107199edaf752aa542f219edbf26db1319f206aec4dc4027b368476089");
+  });
+
+  it("Fixture Z — StrategyManager.depositIntoStrategy(stETH-Strategy, stETH, 1e18) fingerprint (hardcoded literal anchor, Phase 31 Plan 31-02)", () => {
+    // EigenLayer Phase 31 canonical anchor: stETH-Strategy deposit of 1 stETH.
+    // Inputs resolved via SOT getters (NEVER inlined per CLAUDE.md).
+    const strategyManager = getEigenLayerStrategyManagerAddress(1)!;
+    const strategy = getEigenLayerStrategyAddress(1, "stETH")!;
+    const lstToken = getEigenLayerLstTokenAddress(1, "stETH")!;
+    const amountWei = 1_000_000_000_000_000_000n; // 1 stETH
+
+    const data = encodeDepositIntoStrategy(strategy, lstToken, amountWei);
+    // 100 bytes = 4-byte selector (0xe7a050aa) + 3 × 32-byte words (strategy, token, amount).
+    expect(data.length).toBe(202);
+    expect(data.slice(0, 10).toLowerCase()).toBe("0xe7a050aa");
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: strategyManager,
+      valueWei: 0n, // deposit is NOT payable; LST consumed as ERC-20
+      data,
+    });
+
+    // Hardcoded literal — computed at write-time (2026-05-23) per CLAUDE.md
+    // "NO `beforeAll`-snapshot" rule. Drift in preimage assembly for any of
+    // {STRATEGY_MANAGER, stETH-Strategy, stETH token, 1e18, encodeDepositIntoStrategy
+    // shape, computePayloadFingerprint shape} fails THIS exact assertion.
+    //
+    // Fixture Z cross-link: test/prepare-eigenlayer-deposit.test.ts re-anchors
+    // via this literal; future integration tests will re-anchor across persona
+    // swaps (proves `from`-independence end-to-end, T-BIND-1 anchor).
+    expect(fp).toBe("0x2c36a77f8e39c8d0f8d276f88169608e1a247bb288117da00f90b1f7dd158684");
   });
 
   it("invalid `to` (not a 0x-prefixed 20-byte hex) → throws via viem.hexToBytes", () => {
