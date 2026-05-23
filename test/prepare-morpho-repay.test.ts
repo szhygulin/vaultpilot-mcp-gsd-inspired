@@ -10,8 +10,31 @@
 //   T4: repay-max with no debt (borrowShares === 0n) → INVALID_INPUT
 //   T5: MAX_UINT256 anti-pattern rejection (research § Pitfall 3)
 //   T6: WC-session not paired
+//   T7 (WR-03): repay-max with allowance < MAX_UINT256 → preFlightNote fires
+//   T8 (WR-03): repay-max with allowance === MAX_UINT256 → NO preFlightNote
+//   T9 (WR-03): structuredContent carries repayMaxAmountWeiNote on repay-max
 
+import type { PublicClient } from "viem";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// WR-03: mock the chain client so we can inject controlled allowance reads
+// per test. The default returns 0n (allowance unknown); per-test cases
+// override via the readContractSpy. Mirror of test/get-lending-positions.test.ts
+// chains/registry mock.
+const { readContractSpy } = vi.hoisted(() => ({
+  readContractSpy: vi.fn(),
+}));
+
+vi.mock("../src/chains/registry.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/chains/registry.js")>(
+    "../src/chains/registry.js",
+  );
+  return {
+    ...actual,
+    getChainClient: () =>
+      ({ readContract: readContractSpy }) as unknown as PublicClient,
+  };
+});
 
 const { getStatusSpy, createHandleSpy } = vi.hoisted(() => ({
   getStatusSpy: vi.fn(),
@@ -111,6 +134,11 @@ beforeEach(() => {
   readMarketParamsSpy.mockReset();
   readPositionSpy.mockReset();
   readMarketSpy.mockReset();
+  // Default: any client.readContract call rejects → readAllowance catches
+  // and returns null → no preFlightNote. Per-test cases (WR-03 T7-T9)
+  // override with a controlled resolved value.
+  readContractSpy.mockReset();
+  readContractSpy.mockRejectedValue(new Error("readContract not configured for test"));
   _resetHandleStoreForTesting();
   savedDemo = process.env[DEMO_KEY];
   process.env[DEMO_KEY] = "false";
@@ -245,5 +273,138 @@ describe("prepare_morpho_repay — T6: WC-session not paired", () => {
     expect(result.isError).toBe(true);
     const sc = result.structuredContent as { errorCode: string };
     expect(sc.errorCode).toBe("WALLET_NOT_PAIRED");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 29 code-review WR-03 — repay-max approval gate uses MAX_UINT256.
+//
+// The repay-max branch encodes share-based repay (assets=0, shares=
+// borrowShares); the on-chain safeTransferFrom pulls assetsRepaid resolved
+// AT TX TIME after accrueInterest, NOT the stale toAssetsUp estimate. Any
+// allowance short of MAX_UINT256 may revert when interest accrues between
+// prepare time and tx time. The pre-flight note now fires whenever
+// allowance < MAX_UINT256 on the repay-max path.
+// ---------------------------------------------------------------------------
+
+const MAX_UINT256_VALUE = (1n << 256n) - 1n;
+
+describe("prepare_morpho_repay — T7 (WR-03): repay-max with allowance < MAX_UINT256 → preFlightNote fires", () => {
+  it("allowance = 1e30 (very large but < MAX_UINT256) → preFlightNote emitted (MAX_UINT256 idiom hinted)", async () => {
+    getStatusSpy.mockResolvedValueOnce(PAIRED_STATUS);
+    readMarketParamsSpy.mockResolvedValueOnce(okParams);
+    readPositionSpy.mockResolvedValueOnce({
+      supplyShares: 0n,
+      borrowShares: MOCK_BORROW_SHARES,
+      collateral: 1_000_000_000_000_000_000n,
+    });
+    readMarketSpy.mockResolvedValueOnce({
+      totalSupplyAssets: 100_000_000n,
+      totalSupplyShares: 1_000_000_000n,
+      totalBorrowAssets: 50_000_000n,
+      totalBorrowShares: 500_000_000n,
+      lastUpdate: 0n,
+      fee: 0n,
+    });
+    // allowance = 1e30 (way above the stale toAssetsUp asset figure, but
+    // strictly less than MAX_UINT256 — the repay-max gate fires regardless).
+    readContractSpy.mockResolvedValueOnce(10n ** 30n);
+
+    const result = await callTool({
+      marketId: MARKET_ID,
+      asset: USDC,
+      amount: "max",
+      onBehalf: ONBEHALF,
+    });
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      preFlightNote?: string;
+      repayMaxAmountWeiNote?: string;
+    };
+    expect(sc.preFlightNote).toBeDefined();
+    expect(sc.preFlightNote).toMatch(/repay-max/);
+    expect(sc.preFlightNote).toMatch(/MAX_UINT256/);
+  });
+});
+
+describe("prepare_morpho_repay — T8 (WR-03): repay-max with allowance === MAX_UINT256 → NO preFlightNote", () => {
+  it("allowance === MAX_UINT256 → preFlightNote is absent (canonical max-approval idiom satisfied)", async () => {
+    getStatusSpy.mockResolvedValueOnce(PAIRED_STATUS);
+    readMarketParamsSpy.mockResolvedValueOnce(okParams);
+    readPositionSpy.mockResolvedValueOnce({
+      supplyShares: 0n,
+      borrowShares: MOCK_BORROW_SHARES,
+      collateral: 1_000_000_000_000_000_000n,
+    });
+    readMarketSpy.mockResolvedValueOnce({
+      totalSupplyAssets: 100_000_000n,
+      totalSupplyShares: 1_000_000_000n,
+      totalBorrowAssets: 50_000_000n,
+      totalBorrowShares: 500_000_000n,
+      lastUpdate: 0n,
+      fee: 0n,
+    });
+    readContractSpy.mockResolvedValueOnce(MAX_UINT256_VALUE);
+
+    const result = await callTool({
+      marketId: MARKET_ID,
+      asset: USDC,
+      amount: "max",
+      onBehalf: ONBEHALF,
+    });
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { preFlightNote?: string };
+    expect(sc.preFlightNote).toBeUndefined();
+  });
+});
+
+describe("prepare_morpho_repay — T9 (WR-03): structuredContent carries repayMaxAmountWeiNote", () => {
+  it("repay-max → structuredContent.repayMaxAmountWeiNote annotates the amountWei semantic", async () => {
+    getStatusSpy.mockResolvedValueOnce(PAIRED_STATUS);
+    readMarketParamsSpy.mockResolvedValueOnce(okParams);
+    readPositionSpy.mockResolvedValueOnce({
+      supplyShares: 0n,
+      borrowShares: MOCK_BORROW_SHARES,
+      collateral: 1_000_000_000_000_000_000n,
+    });
+    readMarketSpy.mockResolvedValueOnce({
+      totalSupplyAssets: 100_000_000n,
+      totalSupplyShares: 1_000_000_000n,
+      totalBorrowAssets: 50_000_000n,
+      totalBorrowShares: 500_000_000n,
+      lastUpdate: 0n,
+      fee: 0n,
+    });
+    // allowance read can fail — repayMaxAmountWeiNote is independent of the
+    // allowance check, surfaces whenever the path is repay-max.
+
+    const result = await callTool({
+      marketId: MARKET_ID,
+      asset: USDC,
+      amount: "max",
+      onBehalf: ONBEHALF,
+    });
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as {
+      repayMaxAmountWeiNote?: string;
+      resolvedBorrowShares?: string;
+    };
+    // Annotation explains amountWei is the toAssetsUp approval-threshold
+    // estimate (NOT the encoded shares value; NOT the on-chain transfer).
+    expect(sc.repayMaxAmountWeiNote).toBeDefined();
+    expect(sc.repayMaxAmountWeiNote).toMatch(/amountWei/);
+    expect(sc.repayMaxAmountWeiNote).toMatch(/toAssetsUp/);
+    expect(sc.repayMaxAmountWeiNote).toMatch(/STALE/);
+    expect(sc.repayMaxAmountWeiNote).toMatch(/resolvedBorrowShares/);
+    expect(sc.resolvedBorrowShares).toBe(MOCK_BORROW_SHARES.toString());
+  });
+
+  it("concrete amount (NOT repay-max) → structuredContent.repayMaxAmountWeiNote is absent", async () => {
+    getStatusSpy.mockResolvedValueOnce(PAIRED_STATUS);
+    readMarketParamsSpy.mockResolvedValueOnce(okParams);
+    const result = await callTool({ marketId: MARKET_ID, asset: USDC, amount: "25" });
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { repayMaxAmountWeiNote?: string };
+    expect(sc.repayMaxAmountWeiNote).toBeUndefined();
   });
 });

@@ -29,6 +29,7 @@ import {
   type ChainId,
   type ChainName,
 } from "../config/contracts.js";
+import { MAX_UINT256 } from "../protocols/erc20.js";
 import {
   _morphoBlue,
   encodeMorphoRepay,
@@ -171,6 +172,32 @@ function buildPreFlightNote(
     `but this tx requires ${required.toString()}. Call prepare_token_approve({ tokenAddress: ${asset}, ` +
     `spender: ${spender}, amount: 'max' }) before sending this transaction — without sufficient allowance ` +
     `the on-chain call will revert.`
+  );
+}
+
+/**
+ * Phase 29 WR-03: repay-max pre-flight note. The repay-max branch encodes
+ * share-based repay (assets=0, shares=borrowShares) so the on-chain
+ * safeTransferFrom pulls the assetsRepaid value resolved at tx time AFTER
+ * accrueInterest — a value strictly >= the stale prepare-time toAssetsUp
+ * figure for accruing markets. The canonical idiom is therefore to approve
+ * MAX_UINT256: any allowance short of that may revert when accrued interest
+ * pushes the asset requirement above the stale snapshot.
+ */
+function buildRepayMaxPreFlightNote(
+  asset: string,
+  spender: Address,
+  currentAllowance: bigint,
+  staleAssetsEstimate: bigint,
+): string {
+  return (
+    `PRE-FLIGHT NOTE (repay-max): share-based repay-max encodes shares directly; the on-chain ` +
+    `safeTransferFrom pulls assetsRepaid resolved at tx time AFTER accrueInterest, NOT the ` +
+    `pre-flight estimate ${staleAssetsEstimate.toString()} (which is toAssetsUp against STALE ` +
+    `market totals). Current ERC-20 allowance(${asset}, ${spender}) is ${currentAllowance.toString()} — ` +
+    `for repay-max the canonical idiom is a MAX_UINT256 approval. Call prepare_token_approve({ ` +
+    `tokenAddress: ${asset}, spender: ${spender}, amount: 'max' }) before sending this transaction — ` +
+    `without max approval an accrued-interest gap between prepare time and tx time can cause revert.`
   );
 }
 
@@ -437,11 +464,37 @@ registerTool("prepare_morpho_repay", DESCRIPTION, INPUT_SCHEMA, async (args) => 
 
     // Approval pre-flight on the loanToken — Morpho calls safeTransferFrom
     // to pull tokens IN from the borrower.
+    //
+    // Phase 29 WR-03: the repay-max branch encodes shares (not assets); the
+    // on-chain assetsRepaid is post-accrueInterest, strictly >= the stale
+    // toAssetsUp figure. The threshold comparison is therefore
+    //   `allowance < MAX_UINT256`
+    // — any partial approval may revert when interest accrues between prepare
+    // time and tx time. The fixed-amount branch keeps the existing
+    // `allowance < amountWei` comparison since the asset transfer is the
+    // encoded value exactly.
     const allowance = await readAllowance(client, assetAddr, onBehalf, morpho);
-    const preFlightNote =
-      allowance !== null && allowance < assetsForApprovalThreshold
-        ? buildPreFlightNote(rawAsset, morpho, allowance, assetsForApprovalThreshold)
-        : null;
+    const isRepayMax = resolvedBorrowShares !== null;
+    let preFlightNote: string | null = null;
+    if (allowance !== null) {
+      if (isRepayMax) {
+        if (allowance < MAX_UINT256) {
+          preFlightNote = buildRepayMaxPreFlightNote(
+            rawAsset,
+            morpho,
+            allowance,
+            assetsForApprovalThreshold,
+          );
+        }
+      } else if (allowance < assetsForApprovalThreshold) {
+        preFlightNote = buildPreFlightNote(
+          rawAsset,
+          morpho,
+          allowance,
+          assetsForApprovalThreshold,
+        );
+      }
+    }
 
     const tx = {
       chainId,
@@ -506,6 +559,18 @@ registerTool("prepare_morpho_repay", DESCRIPTION, INPUT_SCHEMA, async (args) => 
     };
     if (resolvedBorrowShares !== null) {
       structuredContent.resolvedBorrowShares = resolvedBorrowShares.toString();
+      // Phase 29 WR-03: annotate the amountWei semantic explicitly for the
+      // repay-max path. amountWei here carries the pre-flight toAssetsUp
+      // approval-threshold estimate against STALE market totals — NOT the
+      // encoded calldata value (which is shares; surfaced separately as
+      // resolvedBorrowShares) and NOT the actual on-chain transfer amount
+      // (which is assetsRepaid at tx time, post-accrueInterest, generally
+      // slightly higher).
+      structuredContent.repayMaxAmountWeiNote =
+        "amountWei is the pre-flight toAssetsUp approval-threshold estimate against STALE market " +
+        "totals — NOT the encoded calldata value (which is shares; see resolvedBorrowShares) and " +
+        "NOT the actual on-chain transfer amount (assetsRepaid at tx time after accrueInterest, " +
+        "generally slightly higher). The canonical repay-max approval is MAX_UINT256.";
     }
     if (preFlightNote !== null) structuredContent.preFlightNote = preFlightNote;
 
