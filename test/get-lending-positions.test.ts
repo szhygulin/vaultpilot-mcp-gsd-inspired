@@ -24,6 +24,7 @@ vi.mock("../src/chains/registry.js", () => {
 
 import { _aaveChains } from "../src/chains/aave-v3.js";
 import { _compoundChains } from "../src/chains/compound-v3.js";
+import { _morphoChains } from "../src/chains/morpho-blue.js";
 import {
   _resetRegistryForTesting,
   getRegisteredTool,
@@ -126,6 +127,11 @@ beforeEach(() => {
   // every existing Aave-only test (the byte-identity regression anchor); the
   // dedicated Compound-branch tests below override this spy per case.
   vi.spyOn(_compoundChains, "getAllCometStates").mockResolvedValue([]);
+
+  // Phase 29 Plan 29-03 — default Morpho scan returns an empty set; existing
+  // Aave + Compound tests stay byte-identical (Morpho arm zero-anchored).
+  // Dedicated Morpho-branch tests below override this spy per case.
+  vi.spyOn(_morphoChains, "scanTouchedMarkets").mockResolvedValue(new Set());
 });
 
 afterEach(() => {
@@ -591,5 +597,177 @@ describe("Phase 28 Plan 28-04 — Compound V3 branch + sources zero-anchor (T-LE
       sources: { compound: { perComet: unknown[] } };
     };
     expect(out.sources.compound.perComet).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 29 Plan 29-03 — Morpho Blue branch tests (MOR-01 extension).
+//
+// Aave + Compound rows BYTE-IDENTICAL to pre-29-03 — the only change to those
+// shapes is the existing protocol discriminator (already present from Phase
+// 28). The Morpho arm is purely additive.
+// ---------------------------------------------------------------------------
+
+const USDC_ADDR: Address = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48";
+const WSTETH_ADDR: Address = "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0";
+const MORPHO_MARKET_ID =
+  "0xb323495f7e4148be5643a4ea4a8221eef163e4bccfdedc2a6f4696baacbc86cc" as `0x${string}`;
+
+describe("Phase 29 Plan 29-03 — Morpho Blue branch (three-protocol discriminated union)", () => {
+  it("sources.morpho is always present (zero-anchored when wallet has no Morpho positions)", async () => {
+    vi.spyOn(_aaveChains, "getReservesData").mockResolvedValue({
+      reserves: [mkReserve({ underlyingAsset: USDC, symbol: "USDC" })],
+      baseCurrency: BASE_CURRENCY,
+    });
+    vi.spyOn(_aaveChains, "getUserReservesData").mockResolvedValue({
+      userReserves: [],
+      userEModeCategoryId: 0,
+    });
+    const result = await callTool({ wallet: WALLET });
+    expect(result.isError).toBeUndefined();
+    const out = result.structuredContent as {
+      sources: {
+        aave: unknown;
+        compound: unknown;
+        morpho: { marketsTouched: number; marketsActive: number };
+      };
+    };
+    // Three-protocol surface; Morpho zero-anchored when scanTouchedMarkets
+    // returned an empty Set (default mock in beforeEach).
+    expect(out.sources.morpho).toEqual({ marketsTouched: 0, marketsActive: 0 });
+  });
+
+  it("Morpho-only wallet on Ethereum: row carries protocol: \"morpho-blue\" discriminator", async () => {
+    vi.spyOn(_aaveChains, "getReservesData").mockResolvedValue({
+      reserves: [],
+      baseCurrency: BASE_CURRENCY,
+    });
+    vi.spyOn(_aaveChains, "getUserReservesData").mockResolvedValue({
+      userReserves: [],
+      userEModeCategoryId: 0,
+    });
+    vi.spyOn(_morphoChains, "scanTouchedMarkets").mockResolvedValue(
+      new Set([MORPHO_MARKET_ID]),
+    );
+    vi.spyOn(_morphoChains, "readPosition").mockResolvedValue({
+      supplyShares: 1_000_000_000n,
+      borrowShares: 0n,
+      collateral: 0n,
+    });
+    vi.spyOn(_morphoChains, "readMarket").mockResolvedValue({
+      totalSupplyAssets: 100_000_000n,
+      totalSupplyShares: 1_000_000_000n,
+      totalBorrowAssets: 0n,
+      totalBorrowShares: 0n,
+      lastUpdate: 0n,
+      fee: 0n,
+    });
+    vi.spyOn(_morphoChains, "readMarketParams").mockResolvedValue({
+      loanToken: USDC_ADDR,
+      collateralToken: WSTETH_ADDR,
+      oracle: "0x48F7E36EB6B826B2dF4B2E630B62Cd25e89E40e2" as Address,
+      irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC" as Address,
+      lltv: 860000000000000000n,
+    });
+
+    const result = await callTool({ wallet: WALLET });
+    expect(result.isError).toBeUndefined();
+    const out = result.structuredContent as {
+      positions: Array<{ protocol: string; marketId?: string }>;
+      sources: { morpho: { marketsActive: number } };
+    };
+    expect(out.positions).toHaveLength(1);
+    expect(out.positions[0]?.protocol).toBe("morpho-blue");
+    expect(out.positions[0]?.marketId).toBe(MORPHO_MARKET_ID);
+    expect(out.sources.morpho.marketsActive).toBe(1);
+  });
+
+  it("Multi-protocol wallet: 3 rows (Aave + Compound + Morpho); each carries its protocol discriminator", async () => {
+    vi.spyOn(_aaveChains, "getReservesData").mockResolvedValue({
+      reserves: [mkReserve({ underlyingAsset: USDC, symbol: "USDC" })],
+      baseCurrency: BASE_CURRENCY,
+    });
+    vi.spyOn(_aaveChains, "getUserReservesData").mockResolvedValue({
+      userReserves: [
+        mkUserReserve({
+          underlyingAsset: USDC,
+          scaledATokenBalance: 500n * 10n ** 6n,
+          usageAsCollateralEnabledOnUser: true,
+        }),
+      ],
+      userEModeCategoryId: 0,
+    });
+    vi.spyOn(_compoundChains, "getAllCometStates").mockResolvedValue([
+      {
+        comet: cUSDCv3,
+        baseToken: USDC,
+        baseSupplied: 2_000_000_000n,
+        baseBorrowed: 0n,
+        isBorrowCollateralized: true,
+        isLiquidatable: false,
+        supplyRate: 0n,
+        borrowRate: 0n,
+        utilization: 0n,
+        totalSupply: 0n,
+        totalBorrow: 0n,
+        numAssets: 0,
+        baseTokenPriceFeed: PRICE_FEED,
+        baseTokenPriceUsd: 10n ** 8n,
+        collateral: [],
+      },
+    ]);
+    vi.spyOn(_morphoChains, "scanTouchedMarkets").mockResolvedValue(
+      new Set([MORPHO_MARKET_ID]),
+    );
+    vi.spyOn(_morphoChains, "readPosition").mockResolvedValue({
+      supplyShares: 1_000_000_000n,
+      borrowShares: 0n,
+      collateral: 0n,
+    });
+    vi.spyOn(_morphoChains, "readMarket").mockResolvedValue({
+      totalSupplyAssets: 100_000_000n,
+      totalSupplyShares: 1_000_000_000n,
+      totalBorrowAssets: 0n,
+      totalBorrowShares: 0n,
+      lastUpdate: 0n,
+      fee: 0n,
+    });
+    vi.spyOn(_morphoChains, "readMarketParams").mockResolvedValue({
+      loanToken: USDC_ADDR,
+      collateralToken: WSTETH_ADDR,
+      oracle: "0x48F7E36EB6B826B2dF4B2E630B62Cd25e89E40e2" as Address,
+      irm: "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC" as Address,
+      lltv: 860000000000000000n,
+    });
+
+    const result = await callTool({ wallet: WALLET });
+    const out = result.structuredContent as {
+      positions: Array<{ protocol: string }>;
+    };
+    expect(out.positions).toHaveLength(3);
+    const protocols = out.positions.map((p) => p.protocol);
+    expect(protocols).toContain("aave-v3");
+    expect(protocols).toContain("compound-v3");
+    expect(protocols).toContain("morpho-blue");
+  });
+
+  it("Non-mainnet chain (arbitrum): Morpho arm empty (Phase 29 mainnet-only); scanTouchedMarkets never called", async () => {
+    vi.spyOn(_aaveChains, "getReservesData").mockResolvedValue({
+      reserves: [mkReserve({ underlyingAsset: USDC, symbol: "USDC" })],
+      baseCurrency: BASE_CURRENCY,
+    });
+    vi.spyOn(_aaveChains, "getUserReservesData").mockResolvedValue({
+      userReserves: [],
+      userEModeCategoryId: 0,
+    });
+    const morphoSpy = vi.spyOn(_morphoChains, "scanTouchedMarkets");
+
+    const result = await callTool({ chain: "arbitrum", wallet: WALLET });
+    expect(result.isError).toBeUndefined();
+    expect(morphoSpy).not.toHaveBeenCalled();
+    const out = result.structuredContent as {
+      sources: { morpho: { marketsTouched: number; marketsActive: number } };
+    };
+    expect(out.sources.morpho).toEqual({ marketsTouched: 0, marketsActive: 0 });
   });
 });

@@ -24,12 +24,18 @@
 // is the top-50 ERC-20s); rare misses surface as the literal underlying
 // address.
 
-import { erc20Abi, formatUnits, getAddress, isAddress, type Address } from "viem";
+import { erc20Abi, formatUnits, getAddress, isAddress, type Address, type Hex } from "viem";
 
 import { _aaveChains } from "../chains/aave-v3.js";
 import { _compoundChains, type CometStateDecoded } from "../chains/compound-v3.js";
+import { _morphoChains } from "../chains/morpho-blue.js";
 import { getChainClient, isPublicNodeFallback } from "../chains/registry.js";
-import { chainIdFromName, type ChainId, type ChainName } from "../config/contracts.js";
+import {
+  chainIdFromName,
+  getMorphoBlueAddress,
+  type ChainId,
+  type ChainName,
+} from "../config/contracts.js";
 import {
   classifyLiquidationRisk,
   computeHealthFactor,
@@ -43,6 +49,7 @@ import {
   RATIO_SCALE,
   type CompoundCollateralPosition,
 } from "../signing/compound-collateralization.js";
+import morphoRegistryRaw from "../tokens/morpho-markets-ethereum.json" with { type: "json" };
 import { loadTokenRegistry } from "../tokens/registry.js";
 import { registerTool } from "./index.js";
 
@@ -130,7 +137,31 @@ interface CompoundLendingPositionRow {
   collateral: CompoundCollateralRowSurface[];
 }
 
-type LendingPositionRow = AaveLendingPositionRow | CompoundLendingPositionRow;
+/**
+ * Phase 29 Plan 29-03 — Morpho Blue row shape. Mirror of `MorphoPositionRow`
+ * from `get_morpho_positions.ts` + `protocol: "morpho-blue"` discriminator.
+ * No on-chain health-factor surface — Morpho's per-market isolation makes
+ * the cross-market HF concept inapplicable.
+ */
+interface MorphoLendingPositionRow {
+  protocol: "morpho-blue";
+  marketId: Hex;
+  marketLabel: string | null;
+  loanToken: { address: Address; symbol: string; decimals: number };
+  collateralToken: { address: Address; symbol: string; decimals: number };
+  lltv: string;
+  supplyShares: string;
+  supplyAssetsExpected: string;
+  borrowShares: string;
+  borrowAssetsExpected: string;
+  collateral: string;
+  isUnlabeled: boolean;
+}
+
+type LendingPositionRow =
+  | AaveLendingPositionRow
+  | CompoundLendingPositionRow
+  | MorphoLendingPositionRow;
 
 interface CompoundCometSummary {
   comet: Address;
@@ -138,6 +169,11 @@ interface CompoundCometSummary {
   isBorrowCollateralized: boolean;
   isLiquidatable: boolean;
   noDebt: boolean;
+}
+
+interface MorphoSourceSummary {
+  marketsTouched: number;
+  marketsActive: number;
 }
 
 interface SourcesSummary {
@@ -151,6 +187,7 @@ interface SourcesSummary {
   compound: {
     perComet: CompoundCometSummary[];
   };
+  morpho: MorphoSourceSummary;
 }
 
 interface LendingPositionsResult {
@@ -356,6 +393,145 @@ async function resolveBaseToken(
   }
 }
 
+/**
+ * Phase 29 Plan 29-03 — Morpho registry shape (mirror of
+ * `get_morpho_positions.ts` REGISTRY consumer). Lookup keyed by lowercased
+ * marketId.
+ */
+interface MorphoMarketRegistryEntry {
+  marketId: Hex;
+  loanToken: { address: Address; symbol: string; decimals: number };
+  collateralToken: { address: Address; symbol: string; decimals: number };
+  oracle: Address;
+  irm: Address;
+  lltv: string;
+  label: string;
+}
+
+const MORPHO_REGISTRY: ReadonlyMap<string, MorphoMarketRegistryEntry> = (() => {
+  const m = new Map<string, MorphoMarketRegistryEntry>();
+  for (const raw of morphoRegistryRaw as readonly MorphoMarketRegistryEntry[]) {
+    m.set(raw.marketId.toLowerCase(), raw);
+  }
+  return m;
+})();
+
+/**
+ * Morpho Blue read path — concurrent fan-out across every market the wallet
+ * has touched (Supply / Borrow / SupplyCollateral event scan). Mirror of the
+ * read path in `get_morpho_positions.ts` but inlined here to keep
+ * `get_lending_positions.ts` self-contained at the Phase 29 trust boundary.
+ *
+ * Returns the rows + a summary `{ marketsTouched, marketsActive }`. On RPC
+ * failure (either the event scan or any per-market read), returns
+ * `{ rows: [], summary: { marketsTouched: 0, marketsActive: 0 } }` and lets
+ * the caller surface rpcDegraded via the public-node fallback path.
+ */
+async function readMorphoPositionsForWallet(
+  client: import("viem").PublicClient,
+  chainId: ChainId,
+  wallet: Address,
+): Promise<{ rows: MorphoLendingPositionRow[]; summary: MorphoSourceSummary }> {
+  // Phase 29 ships chainId 1 only; non-mainnet → empty.
+  if (chainId !== 1) {
+    return { rows: [], summary: { marketsTouched: 0, marketsActive: 0 } };
+  }
+  const morpho = getMorphoBlueAddress(1);
+  if (!morpho) {
+    return { rows: [], summary: { marketsTouched: 0, marketsActive: 0 } };
+  }
+
+  let touchedMarketIds: Set<Hex>;
+  try {
+    touchedMarketIds = await _morphoChains.scanTouchedMarkets(client, wallet, { morpho });
+  } catch {
+    // Event-log scan failure — caller surfaces rpcDegraded via the
+    // public-node fallback path. Don't throw; return empty.
+    return { rows: [], summary: { marketsTouched: 0, marketsActive: 0 } };
+  }
+
+  if (touchedMarketIds.size === 0) {
+    return { rows: [], summary: { marketsTouched: 0, marketsActive: 0 } };
+  }
+
+  const marketIdList = Array.from(touchedMarketIds);
+  const marketResults = await Promise.all(
+    marketIdList.map(async (id) => {
+      try {
+        const [pos, mkt, params] = await Promise.all([
+          _morphoChains.readPosition(client, morpho, id, wallet),
+          _morphoChains.readMarket(client, morpho, id),
+          _morphoChains.readMarketParams(client, morpho, id),
+        ]);
+        if (pos.supplyShares === 0n && pos.borrowShares === 0n && pos.collateral === 0n) {
+          return null;
+        }
+        const registryEntry = MORPHO_REGISTRY.get(id.toLowerCase());
+        const isUnlabeled = !registryEntry;
+        let loanToken: { address: Address; symbol: string; decimals: number };
+        let collateralToken: { address: Address; symbol: string; decimals: number };
+        if (registryEntry) {
+          loanToken = {
+            address: getAddress(registryEntry.loanToken.address),
+            symbol: registryEntry.loanToken.symbol,
+            decimals: registryEntry.loanToken.decimals,
+          };
+          collateralToken = {
+            address: getAddress(registryEntry.collateralToken.address),
+            symbol: registryEntry.collateralToken.symbol,
+            decimals: registryEntry.collateralToken.decimals,
+          };
+        } else {
+          const [loanInfo, collateralInfo] = await Promise.all([
+            resolveBaseToken(client, chainId, params.loanToken),
+            resolveBaseToken(client, chainId, params.collateralToken),
+          ]);
+          loanToken = {
+            address: getAddress(params.loanToken),
+            symbol: loanInfo.symbol,
+            decimals: loanInfo.decimals,
+          };
+          collateralToken = {
+            address: getAddress(params.collateralToken),
+            symbol: collateralInfo.symbol,
+            decimals: collateralInfo.decimals,
+          };
+        }
+        const supplyAssetsExpected = _morphoChains.computeExpectedSupplyAssets(pos, mkt);
+        const borrowAssetsExpected = _morphoChains.computeExpectedBorrowAssets(pos, mkt);
+        const row: MorphoLendingPositionRow = {
+          protocol: "morpho-blue",
+          marketId: id,
+          marketLabel: registryEntry?.label ?? null,
+          loanToken,
+          collateralToken,
+          lltv: params.lltv.toString(),
+          supplyShares: pos.supplyShares.toString(),
+          supplyAssetsExpected: supplyAssetsExpected.toString(),
+          borrowShares: pos.borrowShares.toString(),
+          borrowAssetsExpected: borrowAssetsExpected.toString(),
+          collateral: pos.collateral.toString(),
+          isUnlabeled,
+        };
+        return row;
+      } catch {
+        // Per-market read failure — skip; the per-market degraded surface
+        // lives in get_morpho_positions; here we collapse to zero contribution.
+        return null;
+      }
+    }),
+  );
+
+  const rows = marketResults.filter((r): r is MorphoLendingPositionRow => r !== null);
+  return {
+    rows,
+    summary: {
+      marketsTouched: touchedMarketIds.size,
+      marketsActive: rows.length,
+    },
+  };
+}
+
 registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) => {
   // Phase 8 — Plan 08-02: chainId from the agent's `chain` enum. The
   // ETHEREUM_CHAIN_ID constant retired in this migration — Aave V3 reserve
@@ -374,18 +550,19 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
 
   const client = getChainClient(chainId);
 
-  // Phase 28 — Plan 28-04. Concurrent fan-out: Aave V3 reads + Compound V3
-  // multi-Comet reads. Compound is mainnet-only in Phase 28; non-mainnet
-  // chains short-circuit to an empty array (the Promise.resolve preserves
-  // the Promise.all shape without an additional RPC call).
+  // Phase 28 / 29 — three-protocol concurrent fan-out: Aave V3 + Compound V3 +
+  // Morpho Blue. Compound + Morpho are mainnet-only in v2.3; non-mainnet
+  // chains short-circuit to empty arrays. Aave runs on all 5 chains.
   let aaveLeg: Awaited<ReturnType<typeof readAavePositions>>;
   let compoundLeg: CometStateDecoded[];
+  let morphoLeg: { rows: MorphoLendingPositionRow[]; summary: MorphoSourceSummary };
   try {
-    [aaveLeg, compoundLeg] = await Promise.all([
+    [aaveLeg, compoundLeg, morphoLeg] = await Promise.all([
       readAavePositions(client, chainId, wallet),
       chainId === 1
         ? _compoundChains.getAllCometStates(client, chainId, wallet)
         : Promise.resolve<CometStateDecoded[]>([]),
+      readMorphoPositionsForWallet(client, chainId, wallet),
     ]);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -428,10 +605,12 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     if (row !== null) compoundRows.push(row);
   });
 
-  // Merge Aave + Compound rows. Order is deterministic: Aave first (preserving
-  // pre-28-04 ordering for byte-identity), then Compound.
+  // Merge Aave + Compound + Morpho rows. Order is deterministic: Aave first
+  // (preserving pre-28-04 ordering for byte-identity), then Compound, then
+  // Morpho (added in Plan 29-03 — purely additive).
   const aaveRows: AaveLendingPositionRow[] = aaveLeg.positions;
-  const positions: LendingPositionRow[] = [...aaveRows, ...compoundRows];
+  const morphoRows: MorphoLendingPositionRow[] = morphoLeg.rows;
+  const positions: LendingPositionRow[] = [...aaveRows, ...compoundRows, ...morphoRows];
 
   const result: LendingPositionsResult = {
     chain: chainName,
@@ -453,6 +632,7 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
         noDebt: aaveHf.noDebt,
       },
       compound: { perComet: compoundSummaries },
+      morpho: morphoLeg.summary,
     },
   };
   if (isPublicNodeFallback(chainId)) result.rpcDegraded = true;
@@ -511,6 +691,35 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
         summaryLines.push(
           `  ${r.comet}: ${parts.join(" + ")} — isBorrowCollateralized=${r.isBorrowCollateralized}, isLiquidatable=${r.isLiquidatable}, ${riskText}`,
         );
+      }
+    }
+
+    summaryLines.push("");
+    summaryLines.push(`Morpho Blue positions for ${wallet}:`);
+    if (morphoRows.length === 0) {
+      summaryLines.push(
+        `  (no positions across ${morphoLeg.summary.marketsTouched} touched markets)`,
+      );
+    } else {
+      for (const r of morphoRows) {
+        const label = r.marketLabel ?? `[UNKNOWN MARKET — verify oracle + IRM externally]`;
+        const parts: string[] = [];
+        if (r.supplyShares !== "0") {
+          parts.push(
+            `supplied ${formatUnits(BigInt(r.supplyAssetsExpected), r.loanToken.decimals)} ${r.loanToken.symbol}`,
+          );
+        }
+        if (r.borrowShares !== "0") {
+          parts.push(
+            `borrowed ${formatUnits(BigInt(r.borrowAssetsExpected), r.loanToken.decimals)} ${r.loanToken.symbol}`,
+          );
+        }
+        if (r.collateral !== "0") {
+          parts.push(
+            `collateral ${formatUnits(BigInt(r.collateral), r.collateralToken.decimals)} ${r.collateralToken.symbol}`,
+          );
+        }
+        summaryLines.push(`  ${label}: ${parts.join(" + ")}`);
       }
     }
   }
