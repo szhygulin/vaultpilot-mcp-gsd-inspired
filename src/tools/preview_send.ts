@@ -87,6 +87,18 @@ import {
   getLidoWstethAddress as _getLidoWstethAddress,
   getLidoWithdrawalQueueAddress as _getLidoWithdrawalQueueAddress,
 } from "../protocols/lido.js";
+import {
+  EIGENLAYER_SELECTORS,
+  STRATEGY_MANAGER_ABI,
+  getEigenLayerStrategyManagerAddress as _getEigenLayerStrategyManagerAddress,
+  getAllEigenLayerStrategiesForChain as _getAllEigenLayerStrategiesForChain,
+} from "../protocols/eigenlayer.js";
+import {
+  ROCKETPOOL_SELECTORS,
+  RETH_ABI as ROCKET_RETH_ABI,
+  getRocketPoolDepositPoolAddress as _getRocketPoolDepositPoolAddress,
+  getRocketPoolRethAddress as _getRocketPoolRethAddress,
+} from "../protocols/rocketpool.js";
 import { _solanaSpl } from "../protocols/solana-spl.js";
 import { _solanaSystem } from "../protocols/solana-system.js";
 import { _tronStake } from "../protocols/tron-stake.js";
@@ -100,17 +112,23 @@ import {
   DISPATCH_TARGET_REFUSAL_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
   LEDGER_NOTICE_COMPOUND_TEMPLATE,
+  LEDGER_NOTICE_EIGENLAYER_DEPOSIT_TEMPLATE,
+  LEDGER_NOTICE_ROCKETPOOL_TEMPLATE,
   LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
   build4byteBlock,
   buildAaveDecodedArgsBlock,
   buildCompoundDecodedArgsBlock,
   buildDecodedArgsBlock,
+  buildEigenLayerDecodedArgsBlock,
   buildLidoDecodedArgsBlock,
   buildMorphoDecodedArgsBlock,
+  buildRocketPoolDecodedArgsBlock,
   buildSimulationBlock,
   chunkHex,
+  type EigenLayerDecoded,
   type LidoDecoded,
+  type RocketPoolDecoded,
 } from "../signing/blocks.js";
 import "../chains/bitcoin/types.js"; // ensure initEccLib(tinySecp256k1) fires
 import "../chains/litecoin/types.js"; // ensure initEccLib fires for LTC address derivation
@@ -604,6 +622,8 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     let compoundDecoded: Exclude<CompoundV3Decoded, { kind: "unknown" }> | null = null;
     let morphoDecoded: Exclude<MorphoBlueDecoded, { kind: "unknown" }> | null = null;
     let lidoDecoded: LidoDecoded | null = null;
+    let eigenLayerDecoded: EigenLayerDecoded | null = null;
+    let rocketPoolDecoded: RocketPoolDecoded | null = null;
     if (decodedArgs.kind === "unknown") {
       const aave = _aaveProtocols.decodeAaveV3Call(record.tx.data);
       if (aave.kind !== "unknown") {
@@ -684,6 +704,82 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                   };
                 }
               } catch { /* ABI decode error — fall through to unknown */ }
+            } else if (sel === EIGENLAYER_SELECTORS.depositIntoStrategy) {
+              // Phase 31 Plan 31-03 — EigenLayer DECODED ARGS arm. The
+              // StrategyManager.depositIntoStrategy selector 0xe7a050aa is
+              // routed here ONLY when tx.to === SOT StrategyManager. Reverse-
+              // look up the LST symbol via the curated registry; if the
+              // (strategy, lstToken) decoded args fall outside the curated
+              // 7-LST set, treat as unknown — defense against an unrelated
+              // contract with a colliding selector.
+              try {
+                const { args: [strategy, lstToken, amount] } = decodeFunctionData({
+                  abi: STRATEGY_MANAGER_ABI,
+                  data: record.tx.data,
+                });
+                const smAddr = _getEigenLayerStrategyManagerAddress(record.tx.chainId as ChainId);
+                if (smAddr && record.tx.to === smAddr) {
+                  // Reverse-look the LST symbol from the curated registry.
+                  const curated = _getAllEigenLayerStrategiesForChain(
+                    record.tx.chainId as ChainId,
+                  );
+                  const match = curated.find(
+                    (row) => row.strategy === strategy && row.lstToken === lstToken,
+                  );
+                  if (match) {
+                    eigenLayerDecoded = {
+                      kind: "eigenlayer-deposit",
+                      strategyManager: smAddr,
+                      strategy: strategy as Address,
+                      lstSymbol: match.lst,
+                      lstToken: lstToken as Address,
+                      amount: amount as bigint,
+                    };
+                  }
+                }
+              } catch { /* ABI decode error — fall through to unknown */ }
+            } else if (sel === ROCKETPOOL_SELECTORS.deposit) {
+              // Phase 31 Plan 31-03 — Rocket Pool stake DECODED ARGS arm.
+              // Pitfall 1: selector 0xd0e30db0 COLLIDES with WETH9.deposit().
+              // (tx.to, selector) tuple check — route to Rocket Pool ONLY when
+              // tx.to === SOT RocketDepositPool. WETH9.deposit on tx.to ===
+              // WETH9 falls through to the existing generic-decode path
+              // (preserves byte-identity for prior phases). No args to decode
+              // (deposit() takes no args); the load-bearing value is
+              // record.tx.valueWei.
+              const depositPoolAddr = _getRocketPoolDepositPoolAddress(
+                record.tx.chainId as ChainId,
+              );
+              if (depositPoolAddr && record.tx.to === depositPoolAddr) {
+                rocketPoolDecoded = {
+                  kind: "rocketpool-stake",
+                  contractAddress: depositPoolAddr,
+                  valueWei: record.tx.valueWei,
+                };
+              }
+              // tx.to !== depositPool (e.g. WETH9 deposit) → fall through;
+              // existing handling (no Rocket Pool arm rendered).
+            } else if (sel === ROCKETPOOL_SELECTORS.burn) {
+              // Phase 31 Plan 31-03 — Rocket Pool burn DECODED ARGS arm.
+              // Pitfall 2: selector 0x42966c68 is the GENERIC OpenZeppelin
+              // ERC20Burnable selector. (tx.to, selector) tuple check —
+              // route to Rocket Pool ONLY when tx.to === SOT rETH. Other
+              // contracts with the OZ Burnable mixin fall through to the
+              // existing generic-decode path.
+              const rethAddr = _getRocketPoolRethAddress(record.tx.chainId as ChainId);
+              if (rethAddr && record.tx.to === rethAddr) {
+                try {
+                  const { args: [amount] } = decodeFunctionData({
+                    abi: ROCKET_RETH_ABI,
+                    data: record.tx.data,
+                  });
+                  rocketPoolDecoded = {
+                    kind: "rocketpool-burn",
+                    contractAddress: rethAddr,
+                    amountWei: amount as bigint,
+                  };
+                } catch { /* ABI decode error — fall through to unknown */ }
+              }
             }
           }
         }
@@ -882,7 +978,11 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
               )
             : lidoDecoded !== null
               ? buildLidoDecodedArgsBlock(lidoDecoded)
-              : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
+              : eigenLayerDecoded !== null
+                ? buildEigenLayerDecodedArgsBlock(eigenLayerDecoded)
+                : rocketPoolDecoded !== null
+                  ? buildRocketPoolDecodedArgsBlock(rocketPoolDecoded)
+                  : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
 
     // Phase 6 — Plan 06-02: wide eth_call simulation. DF-1 LOCKED. Runs for
     // ALL tx shapes including native sends (defense-in-depth uniform per
@@ -949,11 +1049,27 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
         selector === COMPOUND_V3_SELECTORS.withdraw) &&
       getAllCompoundCometsForChain(1).includes(record.tx.to);
 
+    // Phase 31 Plan 31-03 — LEDGER NOTICE for EigenLayer deposit (D-13).
+    // StrategyManager.depositIntoStrategy is NOT in the Ledger Ethereum app's
+    // ERC-7730 clear-sign plugin registry; conditional on the decoded variable
+    // (which itself gates on tx.to === SOT StrategyManager + curated LST match).
+    const isEigenLayerDeposit = eigenLayerDecoded !== null;
+
+    // Phase 31 Plan 31-03 — LEDGER NOTICE for Rocket Pool stake + burn (D-13,
+    // SHARED template). Both `RocketDepositPool.deposit()` and `rETH.burn` are
+    // absent from the Ledger ERC-7730 registry. (tx.to, selector) tuple check
+    // is already enforced upstream when populating rocketPoolDecoded.
+    const isRocketPool = rocketPoolDecoded !== null;
+
     const ledgerNoticeBlock: string | null = isWethUnwrap
       ? LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE
       : isCompoundComet
         ? LEDGER_NOTICE_COMPOUND_TEMPLATE
-        : null;
+        : isEigenLayerDeposit
+          ? LEDGER_NOTICE_EIGENLAYER_DEPOSIT_TEMPLATE
+          : isRocketPool
+            ? LEDGER_NOTICE_ROCKETPOOL_TEMPLATE
+            : null;
 
     // Filter empty decoded-args block (unknown-kind / native sends) so the
     // text-array join doesn't emit a stray empty block alongside the 4byte
@@ -1041,7 +1157,28 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                         wstethAmount: lidoDecoded.wstethAmount.toString(),
                         contractAddress: lidoDecoded.contractAddress,
                       }
-              : decodedArgs.kind === "transfer"
+              : eigenLayerDecoded !== null
+                ? {
+                    kind: "eigenlayer-deposit" as const,
+                    strategyManager: eigenLayerDecoded.strategyManager,
+                    strategy: eigenLayerDecoded.strategy,
+                    lstSymbol: eigenLayerDecoded.lstSymbol,
+                    lstToken: eigenLayerDecoded.lstToken,
+                    amount: eigenLayerDecoded.amount.toString(),
+                  }
+                : rocketPoolDecoded !== null
+                  ? rocketPoolDecoded.kind === "rocketpool-stake"
+                    ? {
+                        kind: "rocketpool-stake" as const,
+                        contractAddress: rocketPoolDecoded.contractAddress,
+                        valueWei: rocketPoolDecoded.valueWei.toString(),
+                      }
+                    : {
+                        kind: "rocketpool-burn" as const,
+                        contractAddress: rocketPoolDecoded.contractAddress,
+                        amountWei: rocketPoolDecoded.amountWei.toString(),
+                      }
+                  : decodedArgs.kind === "transfer"
                 ? { kind: "transfer" as const, to: decodedArgs.to, amount: decodedArgs.amount.toString() }
                 : decodedArgs.kind === "approve"
                   ? {
@@ -1082,7 +1219,11 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
           ? ("compound-v3-blind-sign" as const)
           : isWethUnwrap
             ? ("weth-unwrap-blind-sign" as const)
-            : null,
+            : isEigenLayerDeposit
+              ? ("eigenlayer-deposit-blind-sign" as const)
+              : isRocketPool
+                ? ("rocketpool-blind-sign" as const)
+                : null,
         // Plan 09-05 (SEC-36) — WC session topic surface for user cross-check
         // against Ledger Live → Settings → Connected Apps. `null` in demo
         // mode (no WC session); real-mode carries the last-8-chars of the WC
