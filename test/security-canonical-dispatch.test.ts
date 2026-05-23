@@ -334,11 +334,15 @@ describe("Phase 29 Plan 29-03 — Morpho Blue in Ethereum-arm allowlist", () => 
     }
   });
 
-  it("Ethereum-arm allowlist size grew 26 → 27 after Plan 29-03 Morpho extension", () => {
+  it("Ethereum-arm allowlist size grew 27 → 29 after Plan 30-01 Lido extension (+2 net: stETH + WithdrawalQueue; wstETH de-duped via BRIDGED_VARIANTS)", () => {
     // Hard-pinned count assertion — drift in this number indicates either a
     // missing extension or an unintended addition elsewhere. Updates require
     // an explicit plan commit.
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(27);
+    // Phase 29 Plan 29-03: 26 → 27 (Morpho Blue).
+    // Phase 30 Plan 30-01: 27 → 29 (+2 net Lido entries; wstETH 0x7f39C581…
+    // is already in BRIDGED_VARIANTS as a token contract on Ethereum, so the
+    // Set de-dupes it — only stETH proxy + WithdrawalQueue are net-new).
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(29);
   });
 
   it("Refused tx.to on Ethereum surfaces the Morpho Blue address in allowlist (verbatim)", () => {

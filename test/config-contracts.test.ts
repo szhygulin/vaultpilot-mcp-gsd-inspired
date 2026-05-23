@@ -30,6 +30,9 @@ import {
   getAaveV3UiPoolDataProvider,
   getAllCompoundCometsForChain,
   getCompoundCometAddress,
+  getLidoStethAddress,
+  getLidoWstethAddress,
+  getLidoWithdrawalQueueAddress,
   getMorphoBlueAddress,
   getWethAddress,
   lookupSpender,
@@ -549,6 +552,95 @@ describe("src/config/contracts.ts — Morpho Blue SOT (Phase 29 Plan 29-01)", ()
     const addr = getMorphoBlueAddress(1);
     expect(addr).not.toBeNull();
     expect(addr).toBe(getAddress(addr!));
+  });
+});
+
+// =============================================================================
+// Phase 30 — Plan 30-01: Lido SOT (T-LIDO-SPENDER-DRIFT-1 cross-view)
+// =============================================================================
+//
+// T-LIDO-SPENDER-DRIFT-1: `KNOWN_SPENDERS_ETHEREUM` Lido rows must be
+// byte-identical to the `getLido*Address(1)` SOT getter outputs. Drift between
+// the two views means `prepare_token_approve` UX labels diverge from the actual
+// addresses `prepare_lido_wrap` / `prepare_lido_unstake` route to — a subtle
+// security hole where the user approves one address but the tx targets another.
+//
+// Addresses verified at research time (2026-05-23) against docs.lido.fi +
+// lidofinance/core GitHub (research § Topic 1 + Topic 5).
+
+describe("src/config/contracts.ts — Lido SOT (Phase 30 Plan 30-01)", () => {
+  // T-LIDO-SPENDER-DRIFT-1a: wstETH row ↔ getLidoWstethAddress(1)
+  it("T-LIDO-SPENDER-DRIFT-1a — KNOWN_SPENDERS_ETHEREUM 'Lido wstETH (for stETH wrap)' row ↔ getLidoWstethAddress(1) byte-identical", () => {
+    const row = KNOWN_SPENDERS_ETHEREUM.find((r) => r.label === "Lido wstETH (for stETH wrap)");
+    expect(row).toBeDefined();
+    expect(row?.address).toBe(getLidoWstethAddress(1));
+  });
+
+  // T-LIDO-SPENDER-DRIFT-1b: WithdrawalQueue row ↔ getLidoWithdrawalQueueAddress(1)
+  it("T-LIDO-SPENDER-DRIFT-1b — KNOWN_SPENDERS_ETHEREUM 'Lido WithdrawalQueueERC721 (for stETH unstake)' row ↔ getLidoWithdrawalQueueAddress(1) byte-identical", () => {
+    const row = KNOWN_SPENDERS_ETHEREUM.find((r) => r.label === "Lido WithdrawalQueueERC721 (for stETH unstake)");
+    expect(row).toBeDefined();
+    expect(row?.address).toBe(getLidoWithdrawalQueueAddress(1));
+  });
+
+  // Ethereum literal anchors — byte-identity to research § Topic 1 verified addresses
+  it("getLidoStethAddress(1) === verified stETH proxy literal (0xae7ab965...)", () => {
+    expect(getLidoStethAddress(1)).toBe(getAddress("0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84"));
+  });
+
+  it("getLidoWstethAddress(1) === verified wstETH literal (0x7f39C581...)", () => {
+    expect(getLidoWstethAddress(1)).toBe(getAddress("0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0"));
+  });
+
+  it("getLidoWithdrawalQueueAddress(1) === verified WithdrawalQueueERC721 literal (0x889edC2e...)", () => {
+    expect(getLidoWithdrawalQueueAddress(1)).toBe(getAddress("0x889edC2eDab5f40e902b864aD4d7AdE8E412F9B1"));
+  });
+
+  // Arbitrum bridged wstETH literal anchor (research § Topic 5)
+  it("getLidoWstethAddress(42161) === verified Arbitrum bridged wstETH (0x5979D7b5...)", () => {
+    expect(getLidoWstethAddress(42161)).toBe(getAddress("0x5979D7b546E38E414F7E9822514be443A4800529"));
+  });
+
+  // Arbitrum sentinel documentation — address(0) for stETH + WithdrawalQueue
+  it("getLidoWithdrawalQueueAddress(42161) returns address(0) sentinel (N/A on Arbitrum — dispatch filter removes it)", () => {
+    // The Arbitrum slot carries address(0) for withdrawalQueue — it's a sentinel,
+    // NOT a real WithdrawalQueue. The canonical-dispatch filter removes address(0)
+    // entries from the Arbitrum allowlist arm automatically (D-10).
+    const addr = getLidoWithdrawalQueueAddress(42161);
+    expect(addr).toBe(getAddress("0x0000000000000000000000000000000000000000"));
+  });
+
+  // chainId pruning — non-Ethereum, non-Arbitrum chains return null
+  it("getLidoStethAddress(137) returns null (Polygon not in LIDO_RAW)", () => {
+    expect(getLidoStethAddress(137)).toBeNull();
+  });
+
+  it("getLidoStethAddress(8453) returns null (Base not in LIDO_RAW)", () => {
+    expect(getLidoStethAddress(8453)).toBeNull();
+  });
+
+  it("getLidoStethAddress(10) returns null (Optimism not in LIDO_RAW)", () => {
+    expect(getLidoStethAddress(10)).toBeNull();
+  });
+
+  // EIP-55 checksum guard — all Ethereum getters return checksummed addresses
+  it("all getLido*Address(1) results are EIP-55 checksummed (corrupted-snapshot guard)", () => {
+    const steth = getLidoStethAddress(1);
+    const wsteth = getLidoWstethAddress(1);
+    const wq = getLidoWithdrawalQueueAddress(1);
+    expect(steth).not.toBeNull();
+    expect(wsteth).not.toBeNull();
+    expect(wq).not.toBeNull();
+    expect(steth).toBe(getAddress(steth!));
+    expect(wsteth).toBe(getAddress(wsteth!));
+    expect(wq).toBe(getAddress(wq!));
+  });
+
+  // Additive row anchor — KNOWN_SPENDERS_ETHEREUM now has 2 more rows than the
+  // Phase 29 baseline. No existing rows should be shifted.
+  it("KNOWN_SPENDERS_ETHEREUM has exactly 2 Lido rows (no accidental duplication)", () => {
+    const lidoRows = KNOWN_SPENDERS_ETHEREUM.filter((r) => r.label.startsWith("Lido "));
+    expect(lidoRows.length).toBe(2);
   });
 });
 
