@@ -847,13 +847,21 @@ Plans:
   5. `prepare_lido_unwrap({ wstethAmount })` produces an unsigned `WstETH.unwrap(amount)` call
   6. Lido contracts (stETH + WstETH + WithdrawalQueue) sourced from `src/config/contracts.ts` Ethereum slots; canonical-dispatch allowlist Lido arm wiring
 
-**Plans**: 3 plans (estimate)
+**Plans**: 3 plans
 
 Plans:
 
-- [ ] 30-01: `src/config/contracts.ts` Lido slot extension (stETH + WstETH + WithdrawalQueue); canonical-dispatch allowlist Lido arm wiring
-- [ ] 30-02: `get_lido_positions` + `src/chains/lido.ts` (multi-chain balance reader — Ethereum + Arbitrum bridged variants)
-- [ ] 30-03: `prepare_lido_stake/_unstake/_wrap/_unwrap` + `src/protocols/lido.ts`; Fixtures V/W/X for each shape
+**Wave 1**
+
+- [ ] 30-01-PLAN.md — Lido SOT extension (`LidoContracts` + 3 getters + 2 KNOWN_SPENDERS rows) + canonical-dispatch Lido arm (Ethereum chainId=1; Arbitrum sentinels filtered) + `src/protocols/lido.ts` (4 ABI fragments + 4 verified selectors + 4 encoders + `_lidoProtocol` indirection) + `src/signing/blocks.ts` (4 PREPARE-RECEIPT templates + `NFT_RECEIPT_EXPECTED_TEMPLATE` append-only) + Fixtures V/W/X/Y hardcoded literals + T-LIDO-SPENDER-DRIFT-1 cross-view assertion
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 30-02-PLAN.md — `get_lido_positions` (Ethereum + Arbitrum reads; Arbitrum branch cross-chain L1 read for `stEthPerToken` per Pitfall 5; `approx: true` flag load-bearing per D-09) + `src/chains/lido.ts` multi-chain read service + `src/signing/lido-rebase.ts` pure-bigint math + register-all read import
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 30-03-PLAN.md — 4 `prepare_lido_*` tools (stake / unstake / wrap / unwrap; D-03 chain gate + D-05 allowance pre-flight on unstake + wrap + T-LIDO-WITHDRAWAL-AMOUNT-BOUNDS on unstake + `[NFT RECEIPT EXPECTED]` block per D-04) + `preview_send` DECODED ARGS dispatch for 4 Lido selectors (NO LEDGER NOTICE per D-12) + 4 register-all imports + full stake → unstake → wrap → unwrap persona-cycle integration test
 
 #### Phase 31: EigenLayer + Rocket Pool
 
