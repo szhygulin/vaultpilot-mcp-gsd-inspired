@@ -154,6 +154,43 @@ describe("callBitcoinCoreRpc", () => {
     }
   });
 
+  // ─── WR-03 anchors: malformed JSON-RPC error envelope → network-error ──────
+  // Tighten body.error gate to require object-shape: a non-null non-object
+  // value (string, number, boolean, array) is a malformed envelope from a
+  // misbehaving upstream proxy, NOT a legitimate Core rpc-error. Route to
+  // network-error so the agent can distinguish "RPC method failed" from
+  // "response shape is malformed".
+
+  it("routes 2xx body.error: 'string' to network-error (WR-03 — malformed envelope, not rpc-error)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      makeJsonFetch(200, { result: null, error: "broken", id: "vaultpilot" }),
+    );
+
+    const result = await callBitcoinCoreRpc(CORE_URL, USER, PASS, "getblockchaininfo", []);
+
+    expect(result.kind).toBe("network-error");
+    if (result.kind === "network-error") {
+      expect(result.message).toMatch(/Malformed JSON-RPC envelope/);
+      expect(result.message).toContain("string");
+    }
+  });
+
+  it("routes HTTP 500 body.error: 42 to network-error (WR-03 — malformed envelope on the 500 path too)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      makeJsonFetch(500, { result: null, error: 42, id: "vaultpilot" }),
+    );
+
+    const result = await callBitcoinCoreRpc(CORE_URL, USER, PASS, "getblockchaininfo", []);
+
+    expect(result.kind).toBe("network-error");
+    if (result.kind === "network-error") {
+      expect(result.message).toMatch(/Malformed JSON-RPC envelope/);
+      expect(result.message).toContain("number");
+    }
+  });
+
   // ─── Test 6: HTTP 429 → rate-limited ───────────────────────────────────────
 
   it("returns rate-limited on HTTP 429", async () => {

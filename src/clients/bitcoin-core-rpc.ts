@@ -129,14 +129,36 @@ export async function callBitcoinCoreRpc<T>(
       } catch {
         /* ignore parse error — use status code fallback below */
       }
-      const rpcCode =
-        typeof body?.error?.code === "number" ? body.error.code : resp.status;
-      const rpcMsg =
-        typeof body?.error?.message === "string"
-          ? body.error.message
-          : `HTTP ${resp.status}`;
-      result = { kind: "rpc-error", code: rpcCode, message: rpcMsg };
-      log("warn", `Bitcoin Core RPC error (HTTP ${resp.status}): method=${method} code=${rpcCode} msg=${rpcMsg}`);
+      // WR-03: require error to be an object-shaped envelope before reading
+      // .code/.message. A malformed proxy injecting `error: "string"` or
+      // `error: 42` previously coerced to {code: resp.status, message: "HTTP N"}
+      // — indistinguishable from a real Core rpc-error. Tighten to object-only.
+      const errVal500 = body?.error;
+      const isWellFormedError500 =
+        errVal500 !== undefined &&
+        errVal500 !== null &&
+        typeof errVal500 === "object" &&
+        !Array.isArray(errVal500);
+      if (errVal500 != null && !isWellFormedError500) {
+        // Non-null non-object error envelope — route to network-error so a
+        // malformed upstream proxy doesn't masquerade as a Core rpc-error.
+        result = {
+          kind: "network-error",
+          message: `Malformed JSON-RPC envelope: error field has unexpected type ${typeof errVal500}`,
+        };
+        log("warn", `Bitcoin Core RPC malformed error envelope (HTTP ${resp.status}): method=${method} errorType=${typeof errVal500}`);
+      } else {
+        const rpcCode =
+          isWellFormedError500 && typeof (errVal500 as { code?: unknown }).code === "number"
+            ? (errVal500 as { code: number }).code
+            : resp.status;
+        const rpcMsg =
+          isWellFormedError500 && typeof (errVal500 as { message?: unknown }).message === "string"
+            ? (errVal500 as { message: string }).message
+            : `HTTP ${resp.status}`;
+        result = { kind: "rpc-error", code: rpcCode, message: rpcMsg };
+        log("warn", `Bitcoin Core RPC error (HTTP ${resp.status}): method=${method} code=${rpcCode} msg=${rpcMsg}`);
+      }
     } else {
       // 2xx response — parse the JSON-RPC body.
       let body: RpcResponseBody<T>;
@@ -149,16 +171,36 @@ export async function callBitcoinCoreRpc<T>(
         return result; // early exit before finally; clearTimeout in finally still runs
       }
 
-      if (body.error != null) {
-        // 2xx response but JSON-RPC error field is non-null.
+      // WR-03: require error to be an object-shaped envelope before treating
+      // it as rpc-error. A non-null non-object value (e.g. `error: "string"`
+      // or `error: 42`) is a malformed envelope, not a legitimate RPC error;
+      // route to network-error so the agent can distinguish "RPC method failed"
+      // from "response shape is malformed".
+      const errVal = body.error;
+      const isWellFormedError =
+        errVal !== undefined &&
+        errVal !== null &&
+        typeof errVal === "object" &&
+        !Array.isArray(errVal);
+      if (isWellFormedError) {
+        // 2xx response but JSON-RPC error field is a well-formed object.
         const code =
-          typeof body.error.code === "number" ? body.error.code : -1;
+          typeof (errVal as { code?: unknown }).code === "number"
+            ? (errVal as { code: number }).code
+            : -1;
         const message =
-          typeof body.error.message === "string"
-            ? body.error.message
+          typeof (errVal as { message?: unknown }).message === "string"
+            ? (errVal as { message: string }).message
             : "unknown RPC error";
         result = { kind: "rpc-error", code, message };
         log("warn", `Bitcoin Core RPC 2xx with error body: method=${method} code=${code} msg=${message}`);
+      } else if (errVal != null) {
+        // Malformed JSON-RPC envelope — parse-level failure.
+        result = {
+          kind: "network-error",
+          message: `Malformed JSON-RPC envelope: error field has unexpected type ${typeof errVal}`,
+        };
+        log("warn", `Bitcoin Core RPC malformed error envelope (2xx): method=${method} errorType=${typeof errVal}`);
       } else {
         result = { kind: "ok", result: body.result as T };
         log("debug", `Bitcoin Core RPC ok: method=${method}`);
