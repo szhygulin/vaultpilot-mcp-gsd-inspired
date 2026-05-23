@@ -22,6 +22,8 @@ import {
   ERC20_PREPARE_RECEIPT_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
   LEDGER_NOTICE_COMPOUND_TEMPLATE,
+  LEDGER_NOTICE_EIGENLAYER_DEPOSIT_TEMPLATE,
+  LEDGER_NOTICE_UNISWAP_V3_TEMPLATE,
   MORPHO_BORROW_PREPARE_RECEIPT_TEMPLATE,
   MORPHO_REPAY_PREPARE_RECEIPT_TEMPLATE,
   MORPHO_SUPPLY_COLLATERAL_PREPARE_RECEIPT_TEMPLATE,
@@ -29,6 +31,7 @@ import {
   MORPHO_WITHDRAW_COLLATERAL_PREPARE_RECEIPT_TEMPLATE,
   MORPHO_WITHDRAW_PREPARE_RECEIPT_TEMPLATE,
   PREPARE_RECEIPT_TEMPLATE,
+  SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
   WETH_UNWRAP_PREPARE_RECEIPT_TEMPLATE,
   build4byteBlock,
@@ -36,6 +39,7 @@ import {
   buildMorphoDecodedArgsBlock,
   chunkHex,
 } from "../src/signing/blocks.js";
+import { SANDWICH_MEV_REFUSAL_TRON_TEMPLATE } from "../src/signing/blocks-tron.js";
 import type { FourbyteResult } from "../src/clients/fourbyte.js";
 
 describe("PREPARE_RECEIPT_TEMPLATE — verbatim substitution (PREP-02, T-PREP-RCPT-1)", () => {
@@ -760,5 +764,65 @@ describe("Phase 29 Plan 29-03 — buildMorphoDecodedArgsBlock dispatch", () => {
     );
     expect(out).toContain("(unknown loanToken — no registry match)");
     expect(out).toContain("(unknown collateralToken — no registry match)");
+  });
+});
+
+// =============================================================================
+// Phase 32 Plan 32-01 — Uniswap V3 LEDGER NOTICE + Sandwich-MEV refusal templates
+// =============================================================================
+//
+// Light-touch byte-identity + key-phrase coverage on the two APPEND-ONLY
+// constants added to src/signing/blocks.ts at Phase 32. Full per-line
+// assertions live in the future Plan 32-03 prepare-tool test (this block
+// guards the constants exist + carry their load-bearing phrases).
+
+describe("src/signing/blocks.ts — Phase 32 additive templates", () => {
+  it("LEDGER_NOTICE_UNISWAP_V3_TEMPLATE contains key phrases (multicall + BLIND-SIGN + Settings)", () => {
+    // Use \s+ between words per ~/.claude/CLAUDE.md String-Template Test Pitfalls
+    // rule when matching across potential line breaks.
+    expect(LEDGER_NOTICE_UNISWAP_V3_TEMPLATE).toMatch(/LEDGER\s+NOTICE/);
+    expect(LEDGER_NOTICE_UNISWAP_V3_TEMPLATE).toMatch(/BLIND-SIGN/);
+    expect(LEDGER_NOTICE_UNISWAP_V3_TEMPLATE).toMatch(/multicall/);
+    expect(LEDGER_NOTICE_UNISWAP_V3_TEMPLATE).toMatch(/Blind\s+signing/);
+    expect(LEDGER_NOTICE_UNISWAP_V3_TEMPLATE).toMatch(/Settings/);
+    expect(LEDGER_NOTICE_UNISWAP_V3_TEMPLATE).toMatch(
+      /on-device\s+match\s+is\s+the\s+cryptographic\s+anchor/,
+    );
+  });
+
+  it("SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE contains key phrases and placeholders", () => {
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE).toMatch(/SANDWICH-MEV\s+DEFENSE/);
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE).toMatch(/Uniswap\s+V3/);
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE).toMatch(/Ethereum\s+mainnet/);
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE).toMatch(/MEV/);
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE).toMatch(/get_uniswap_quote/);
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE).toMatch(/prepare_uniswap_swap/);
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE).toMatch(/\{PRICE_IMPACT_BPS\}/);
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE).toMatch(/\{THRESHOLD_BPS\}/);
+  });
+
+  it("SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE does NOT contain TRON-specific phrases", () => {
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE).not.toMatch(/TRON/);
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE).not.toMatch(/get_sunswap_quote/);
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE).not.toMatch(/prepare_sunswap_swap/);
+  });
+
+  it("Both Phase 32 templates are non-empty strings (substantive content)", () => {
+    expect(LEDGER_NOTICE_UNISWAP_V3_TEMPLATE.length).toBeGreaterThan(100);
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE.length).toBeGreaterThan(100);
+  });
+
+  it("APPEND-ONLY discipline — pre-existing templates remain accessible by name", () => {
+    // Regression catches accidental deletion / symbol rename. Import 3
+    // pre-existing constants — one Phase 28, one Phase 31, one cross-chain
+    // (Phase 20 TRON template — the SANDWICH_MEV_REFUSAL_TRON_TEMPLATE the
+    // Phase 32 Ethereum template clones from).
+    expect(LEDGER_NOTICE_COMPOUND_TEMPLATE.length).toBeGreaterThan(50);
+    expect(LEDGER_NOTICE_EIGENLAYER_DEPOSIT_TEMPLATE.length).toBeGreaterThan(50);
+    expect(SANDWICH_MEV_REFUSAL_TRON_TEMPLATE.length).toBeGreaterThan(50);
+    // Cross-template byte-identity sanity: the Ethereum clone preserves the
+    // structural layout (header line + indented body) but the copy is distinct
+    // — they must NOT be the exact same string.
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE).not.toBe(SANDWICH_MEV_REFUSAL_TRON_TEMPLATE);
   });
 });

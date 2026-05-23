@@ -2047,3 +2047,93 @@ export function buildRocketPoolDecodedArgsBlock(decoded: RocketPoolDecoded): str
         .replace("{AMOUNT_WEI}", decoded.amountWei.toString());
   }
 }
+
+// =============================================================================
+// Phase 32 — Plan 32-01 additive extensions (APPEND-ONLY).
+// =============================================================================
+//
+// `LEDGER_NOTICE_UNISWAP_V3_TEMPLATE` is UNCONDITIONAL for every Phase 32 swap
+// per D-11 + RESEARCH § Topic 7 (2026-05-23). The outer multicall(uint256,bytes[])
+// selector (0x5ae401dc) is NOT covered by the Ledger Ethereum app's ERC-7730
+// clear-sign registry — the device always blind-signs the outer selector.
+// Sibling of `LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE` (line 389),
+// `LEDGER_NOTICE_EIGENLAYER_DEPOSIT_TEMPLATE` (line ~1801), and
+// `LEDGER_NOTICE_ROCKETPOOL_TEMPLATE` (line ~1926).
+//
+// `SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE` is the Ethereum-flavored clone of
+// `SANDWICH_MEV_REFUSAL_TRON_TEMPLATE` (src/signing/blocks-tron.ts:629) per D-08
+// — emitted at PREPARE time by Plan 32-03's sandwich-MEV gate when
+// `priceImpactBps > 200` AND `slippageBps` not explicitly supplied.
+
+/**
+ * LEDGER NOTICE template emitted UNCONDITIONALLY by `prepare_uniswap_swap`
+ * (D-11) — every Phase 32 swap wraps in `multicall(uint256 deadline, bytes[])`
+ * (D-10) whose outer selector `0x5ae401dc` is NOT in the Ledger Ethereum app's
+ * ERC-7730 clear-sign plugin registry. The device sees the outer wrapper at
+ * signing time and falls through to BLIND-SIGN (raw 32-byte hash display,
+ * no decoded args).
+ *
+ * Users on factory-default devices will hit a "Blind signing is not enabled"
+ * refusal; the template surfaces the exact navigation path BEFORE the user
+ * attempts to sign. T-32-BLIND-SIGN-UX (residual risk; documented in
+ * SECURITY.md §6 v2.4 addendum landing in Plan 32-03).
+ *
+ * Verbatim per RESEARCH § Topic 7 — the body MUST stay byte-identical to the
+ * test/signing-blocks.test.ts assertion. Phase 32 Plan 32-01.
+ */
+export const LEDGER_NOTICE_UNISWAP_V3_TEMPLATE: string = [
+  "LEDGER NOTICE",
+  "  Uniswap V3 swaps are submitted as a multicall(uint256 deadline, bytes[]) wrapper.",
+  "  The OUTER multicall selector (0x5ae401dc) is NOT covered by the Ledger Ethereum app's",
+  "  ERC-7730 clear-sign plugin registry; the inner exactInputSingle / exactInput sub-calls",
+  "  are covered, but the device only sees the outer wrapper at signing time.",
+  "  Your device will BLIND-SIGN this transaction (display a raw hash, no decoded args).",
+  "",
+  "  If your device refuses with \"Blind signing is not enabled\":",
+  "    1. Open the Ethereum app on your device",
+  "    2. Settings → Blind signing → Enabled",
+  "    3. Retry send_transaction",
+  "",
+  "  After send_transaction fires, compare the PREDICTED hash below to the",
+  "  value your hardware device displays — character-for-character. This",
+  "  on-device match is the cryptographic anchor.",
+].join("\n");
+
+/**
+ * SANDWICH-MEV DEFENSE template (Uniswap V3 — Ethereum mainnet) — prepare-time
+ * refusal envelope for D-08 gate. Rendered ONLY in the `prepare_uniswap_swap`
+ * refusal path when `priceImpactBps > 200` AND the agent did NOT explicitly
+ * supply `slippageBps` (per D-08).
+ *
+ * Two slots:
+ *   - `{PRICE_IMPACT_BPS}` — detected price impact in basis points (e.g. "350" = 3.5%).
+ *   - `{THRESHOLD_BPS}`    — hardcoded gate threshold (always "200" = 2%).
+ *
+ * Structured envelope: `INVALID_INPUT + hintTool: "get_uniswap_quote"`.
+ * The 21-code error union in `src/signing/error-codes.ts` stays FROZEN (D-08
+ * reuses `INVALID_INPUT` with `hintTool` per the Phase 14 Jupiter + Phase 20
+ * SunSwap precedents).
+ *
+ * Clone of `SANDWICH_MEV_REFUSAL_TRON_TEMPLATE` (src/signing/blocks-tron.ts:629)
+ * with Ethereum-flavored copy: "TRON" → "Uniswap V3 — Ethereum mainnet",
+ * `get_sunswap_quote` → `get_uniswap_quote`,
+ * `prepare_sunswap_swap` → `prepare_uniswap_swap`,
+ * "front-running" expanded to "front-running by MEV bots that bracket the
+ * transaction with buys/sells timed to extract value".
+ *
+ * Phase 32 Plan 32-01. Consumed at PREPARE time by Plan 32-03.
+ */
+export const SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE: string = [
+  "⚠ SANDWICH-MEV DEFENSE (Uniswap V3 — Ethereum mainnet)",
+  "  priceImpactBps: {PRICE_IMPACT_BPS}",
+  "  threshold:      {THRESHOLD_BPS} (2% — sandwich extraction threshold per D-08)",
+  "",
+  "  The swap's estimated price impact ({PRICE_IMPACT_BPS} bps) exceeds the {THRESHOLD_BPS} bps",
+  "  sandwich-MEV defense threshold. This swap may be vulnerable to front-running by MEV",
+  "  bots that bracket the transaction with buys/sells timed to extract value from the price",
+  "  movement your swap creates.",
+  "",
+  "  To proceed: call get_uniswap_quote to review the route and expected output,",
+  "  then call prepare_uniswap_swap again with slippageBps set explicitly (any value).",
+  "  Explicitly supplying slippageBps signals that you acknowledge the high price impact.",
+].join("\n");
