@@ -1159,3 +1159,397 @@ export function buildCompoundDecodedArgsBlock(
     .replace("{AMOUNT_WEI}", decoded.amount.toString())
     .replace("{INTENT_LABEL}", intentLabel);
 }
+
+// -----------------------------------------------------------------------------
+// Phase 29 — Plan 29-03 additive extensions (APPEND-ONLY). All Phase 4 / 6 / 7 /
+// 8 / 9 / 28-* templates above stay byte-identical (FROZEN). Twelve new
+// templates back the 6 prepare_morpho_* tools + the preview_send Morpho
+// dispatch arms:
+//
+//   - MORPHO_SUPPLY_PREPARE_RECEIPT_TEMPLATE            — supply (lender position)
+//   - MORPHO_WITHDRAW_PREPARE_RECEIPT_TEMPLATE          — withdraw (lender close)
+//   - MORPHO_SUPPLY_COLLATERAL_PREPARE_RECEIPT_TEMPLATE — supplyCollateral (post collateral)
+//   - MORPHO_WITHDRAW_COLLATERAL_PREPARE_RECEIPT_TEMPLATE — withdrawCollateral (collateral release)
+//   - MORPHO_BORROW_PREPARE_RECEIPT_TEMPLATE            — borrow (debt position)
+//   - MORPHO_REPAY_PREPARE_RECEIPT_TEMPLATE             — repay (debt close)
+//   - DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY               — preview DECODED ARGS for supply
+//   - DECODED_ARGS_TEMPLATE_MORPHO_WITHDRAW             — preview DECODED ARGS for withdraw
+//   - DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY_COLLATERAL    — preview DECODED ARGS for supplyCollateral
+//   - DECODED_ARGS_TEMPLATE_MORPHO_WITHDRAW_COLLATERAL  — preview DECODED ARGS for withdrawCollateral
+//   - DECODED_ARGS_TEMPLATE_MORPHO_BORROW               — preview DECODED ARGS for borrow
+//   - DECODED_ARGS_TEMPLATE_MORPHO_REPAY                — preview DECODED ARGS for repay
+//
+// NO `LEDGER_NOTICE_MORPHO_TEMPLATE` — research § Topic 8: Morpho Blue IS in
+// the LedgerHQ ERC-7730 clear-signing registry (`calldata-MorphoBlue.json`).
+// The device clear-signs the decoded MarketParams + amount/shares + onBehalf
+// + receiver/data fields; no blind-sign warning needed. Opposite of Phase 28
+// Compound.
+//
+// PREPARE RECEIPT slot conventions:
+//   - `{AMOUNT}` carries the VERBATIM agent string (CLAUDE.md Conventions —
+//     "verbatim args... Never elide"). For `prepare_morpho_repay`, when the
+//     agent passes `"max"`, the RECEIPT renders `amount: max` (NOT the
+//     resolved borrowShares). The DECODED ARGS block at preview time surfaces
+//     the resolved shares value for cross-check.
+//   - `{MARKET_ID}` is the 32-byte hex marketId verbatim.
+//   - `{MARKET_LABEL}` is the human-readable label from the curated
+//     `morpho-markets-ethereum.json` registry (Plan 29-01) — e.g.
+//     "USDC/wstETH (86% LLTV)". For unlabeled markets, the prepare tools pass
+//     "(unlabeled market)" so the slot is never empty.
+//   - `{ASSET}` annotation reminds the user which side (loanToken vs
+//     collateralToken) the asset must be — the asset-match gate already
+//     refuses on mismatch, but the receipt re-states the discipline.
+//   - `{RECEIVER}` only present on withdraw / withdrawCollateral / borrow —
+//     defaults to onBehalf in the prepare tools.
+// -----------------------------------------------------------------------------
+
+/**
+ * Morpho Blue supply PREPARE RECEIPT — lender position into the loanToken
+ * pool. Substituted by `prepare_morpho_supply.ts`. Format-fanout-sentinel:
+ * one block, one home.
+ */
+export const MORPHO_SUPPLY_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Morpho Blue supply (lender position)",
+  "  chain:        {CHAIN}",
+  "  marketId:     {MARKET_ID}",
+  "  marketLabel:  {MARKET_LABEL}",
+  "  asset:        {ASSET} (must be loanToken)",
+  "  amount:       {AMOUNT}",
+  "  onBehalf:     {ONBEHALF}",
+].join("\n");
+
+/**
+ * Morpho Blue withdraw PREPARE RECEIPT — lender position close (or partial
+ * exit). `{AMOUNT}` slot carries `"max"` verbatim when the agent triggers the
+ * full-position-close path (server-side resolution via toAssetsDown on
+ * supplyShares); the resolved value surfaces in DECODED ARGS at preview time.
+ */
+export const MORPHO_WITHDRAW_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Morpho Blue withdraw (lender position close)",
+  "  chain:        {CHAIN}",
+  "  marketId:     {MARKET_ID}",
+  "  marketLabel:  {MARKET_LABEL}",
+  "  asset:        {ASSET} (must be loanToken)",
+  "  amount:       {AMOUNT}",
+  "  onBehalf:     {ONBEHALF}",
+  "  receiver:     {RECEIVER}",
+].join("\n");
+
+/**
+ * Morpho Blue supplyCollateral PREPARE RECEIPT — post collateral to enable
+ * borrowing. Collateral writes are asset-only (no shares); the `{ASSET}` slot
+ * is annotated `(must be collateralToken)` to distinguish from supply.
+ */
+export const MORPHO_SUPPLY_COLLATERAL_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Morpho Blue supplyCollateral (post collateral to enable borrowing)",
+  "  chain:        {CHAIN}",
+  "  marketId:     {MARKET_ID}",
+  "  marketLabel:  {MARKET_LABEL}",
+  "  asset:        {ASSET} (must be collateralToken)",
+  "  amount:       {AMOUNT}",
+  "  onBehalf:     {ONBEHALF}",
+].join("\n");
+
+/**
+ * Morpho Blue withdrawCollateral PREPARE RECEIPT — collateral release.
+ * Caution surface: withdrawing collateral while debt is outstanding may push
+ * to liquidation; the on-chain call reverts if so. No server-side
+ * health-factor preview in Phase 29 (deferred to v2.3.x get_morpho_market_info).
+ */
+export const MORPHO_WITHDRAW_COLLATERAL_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Morpho Blue withdrawCollateral (collateral release)",
+  "  chain:        {CHAIN}",
+  "  marketId:     {MARKET_ID}",
+  "  marketLabel:  {MARKET_LABEL}",
+  "  asset:        {ASSET} (must be collateralToken)",
+  "  amount:       {AMOUNT}",
+  "  onBehalf:     {ONBEHALF}",
+  "  receiver:     {RECEIVER}",
+].join("\n");
+
+/**
+ * Morpho Blue borrow PREPARE RECEIPT — debt position against posted collateral.
+ * The collateral-present check (research § Pattern 2) refuses pre-encode if
+ * position.collateral === 0n; the RECEIPT is only emitted after that gate
+ * passes.
+ */
+export const MORPHO_BORROW_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Morpho Blue borrow (debt position)",
+  "  chain:        {CHAIN}",
+  "  marketId:     {MARKET_ID}",
+  "  marketLabel:  {MARKET_LABEL}",
+  "  asset:        {ASSET} (must be loanToken)",
+  "  amount:       {AMOUNT}",
+  "  onBehalf:     {ONBEHALF}",
+  "  receiver:     {RECEIVER}",
+].join("\n");
+
+/**
+ * Morpho Blue repay PREPARE RECEIPT — debt close.
+ *
+ * `{AMOUNT}` discipline: when the agent passes `"max"`, the RECEIPT renders
+ * `amount: max` VERBATIM (per CLAUDE.md "PREPARE RECEIPT block — verbatim
+ * args; never elide"). The server resolves `position.borrowShares` at prepare
+ * time and encodes `repay(params, 0n, borrowShares, onBehalf, "0x")` — NOT
+ * MAX_UINT256 (research § Pitfall 3 — Morpho does not honor the Compound-style
+ * sentinel). The CHECKS PERFORMED block surfaces the resolved borrowShares;
+ * the DECODED ARGS block at preview time surfaces the encoded shares value.
+ */
+export const MORPHO_REPAY_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Morpho Blue repay",
+  "  chain:        {CHAIN}",
+  "  marketId:     {MARKET_ID}",
+  "  marketLabel:  {MARKET_LABEL}",
+  "  asset:        {ASSET} (must be loanToken)",
+  "  amount:       {AMOUNT}",
+  "  onBehalf:     {ONBEHALF}",
+].join("\n");
+
+/**
+ * DECODED ARGS — Morpho Blue `supply(marketParams, assets, shares, onBehalf,
+ * data)`. `{ASSETS}` / `{SHARES}` carry the exactlyOneZero-encoded values
+ * (one is 0n; the other carries the actual quantum). The `{IS_SHARE_BASED}`
+ * slot surfaces `share-based` or `asset-based` so the user reads the
+ * encoding mode explicitly.
+ */
+export const DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY: string = [
+  "DECODED ARGS",
+  "  function:     supply",
+  "  marketId:     {MARKET_ID}",
+  "  loanToken:    {LOAN_TOKEN} {LOAN_TOKEN_LABEL}",
+  "  collateralToken: {COLLATERAL_TOKEN} {COLLATERAL_TOKEN_LABEL}",
+  "  lltv:         {LLTV}",
+  "  assets:       {ASSETS}",
+  "  shares:       {SHARES}",
+  "  encoding:     {IS_SHARE_BASED}",
+  "  onBehalf:     {ONBEHALF}",
+].join("\n");
+
+/**
+ * DECODED ARGS — Morpho Blue `withdraw(marketParams, assets, shares, onBehalf,
+ * receiver)`. Adds a `receiver:` line (only present on
+ * withdraw/withdrawCollateral/borrow).
+ */
+export const DECODED_ARGS_TEMPLATE_MORPHO_WITHDRAW: string = [
+  "DECODED ARGS",
+  "  function:     withdraw",
+  "  marketId:     {MARKET_ID}",
+  "  loanToken:    {LOAN_TOKEN} {LOAN_TOKEN_LABEL}",
+  "  collateralToken: {COLLATERAL_TOKEN} {COLLATERAL_TOKEN_LABEL}",
+  "  lltv:         {LLTV}",
+  "  assets:       {ASSETS}",
+  "  shares:       {SHARES}",
+  "  encoding:     {IS_SHARE_BASED}",
+  "  onBehalf:     {ONBEHALF}",
+  "  receiver:     {RECEIVER}",
+].join("\n");
+
+/**
+ * DECODED ARGS — Morpho Blue `supplyCollateral(marketParams, assets, onBehalf,
+ * data)`. Asset-only (no shares field — Morpho's collateral slot is a raw
+ * uint128, not a shares-receipt). No `encoding:` line.
+ */
+export const DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY_COLLATERAL: string = [
+  "DECODED ARGS",
+  "  function:     supplyCollateral",
+  "  marketId:     {MARKET_ID}",
+  "  loanToken:    {LOAN_TOKEN} {LOAN_TOKEN_LABEL}",
+  "  collateralToken: {COLLATERAL_TOKEN} {COLLATERAL_TOKEN_LABEL}",
+  "  lltv:         {LLTV}",
+  "  assets:       {ASSETS}",
+  "  onBehalf:     {ONBEHALF}",
+].join("\n");
+
+/**
+ * DECODED ARGS — Morpho Blue `withdrawCollateral(marketParams, assets,
+ * onBehalf, receiver)`. Asset-only; carries receiver.
+ */
+export const DECODED_ARGS_TEMPLATE_MORPHO_WITHDRAW_COLLATERAL: string = [
+  "DECODED ARGS",
+  "  function:     withdrawCollateral",
+  "  marketId:     {MARKET_ID}",
+  "  loanToken:    {LOAN_TOKEN} {LOAN_TOKEN_LABEL}",
+  "  collateralToken: {COLLATERAL_TOKEN} {COLLATERAL_TOKEN_LABEL}",
+  "  lltv:         {LLTV}",
+  "  assets:       {ASSETS}",
+  "  onBehalf:     {ONBEHALF}",
+  "  receiver:     {RECEIVER}",
+].join("\n");
+
+/**
+ * DECODED ARGS — Morpho Blue `borrow(marketParams, assets, shares, onBehalf,
+ * receiver)`. Same shape as supply but with a receiver line.
+ */
+export const DECODED_ARGS_TEMPLATE_MORPHO_BORROW: string = [
+  "DECODED ARGS",
+  "  function:     borrow",
+  "  marketId:     {MARKET_ID}",
+  "  loanToken:    {LOAN_TOKEN} {LOAN_TOKEN_LABEL}",
+  "  collateralToken: {COLLATERAL_TOKEN} {COLLATERAL_TOKEN_LABEL}",
+  "  lltv:         {LLTV}",
+  "  assets:       {ASSETS}",
+  "  shares:       {SHARES}",
+  "  encoding:     {IS_SHARE_BASED}",
+  "  onBehalf:     {ONBEHALF}",
+  "  receiver:     {RECEIVER}",
+].join("\n");
+
+/**
+ * DECODED ARGS — Morpho Blue `repay(marketParams, assets, shares, onBehalf,
+ * data)`. The repay-max idiom shows up here as `encoding: share-based` with
+ * the encoded shares value matching position.borrowShares from the
+ * prepare-time read.
+ */
+export const DECODED_ARGS_TEMPLATE_MORPHO_REPAY: string = [
+  "DECODED ARGS",
+  "  function:     repay",
+  "  marketId:     {MARKET_ID}",
+  "  loanToken:    {LOAN_TOKEN} {LOAN_TOKEN_LABEL}",
+  "  collateralToken: {COLLATERAL_TOKEN} {COLLATERAL_TOKEN_LABEL}",
+  "  lltv:         {LLTV}",
+  "  assets:       {ASSETS}",
+  "  shares:       {SHARES}",
+  "  encoding:     {IS_SHARE_BASED}",
+  "  onBehalf:     {ONBEHALF}",
+].join("\n");
+
+/**
+ * Render the DECODED ARGS block for a Morpho Blue decoded call. Parallel
+ * helper to `buildAaveDecodedArgsBlock` + `buildCompoundDecodedArgsBlock`.
+ * Selects the appropriate template based on the discriminated-union `kind`.
+ *
+ * `loanTokenContext` / `collateralTokenContext` are supplied by preview_send
+ * from registry lookups against `decoded.marketParams.loanToken` /
+ * `decoded.marketParams.collateralToken`. Off-list tokens surface a null
+ * context and the helper emits a fallback label.
+ */
+export function buildMorphoDecodedArgsBlock(
+  decoded:
+    | {
+        kind: "morpho-supply" | "morpho-withdraw" | "morpho-borrow" | "morpho-repay";
+        marketId: Hex;
+        marketParams: { loanToken: Address; collateralToken: Address; lltv: bigint };
+        assets: bigint;
+        shares: bigint;
+        onBehalf: Address;
+        receiver?: Address;
+        isShareBased: boolean;
+      }
+    | {
+        kind: "morpho-supply-collateral" | "morpho-withdraw-collateral";
+        marketId: Hex;
+        marketParams: { loanToken: Address; collateralToken: Address; lltv: bigint };
+        assets: bigint;
+        onBehalf: Address;
+        receiver?: Address;
+      },
+  loanTokenContext: { symbol: string; decimals: number } | null,
+  collateralTokenContext: { symbol: string; decimals: number } | null,
+): string {
+  const loanTokenLabel = loanTokenContext
+    ? `(${loanTokenContext.symbol})`
+    : "(unknown loanToken — no registry match)";
+  const collateralTokenLabel = collateralTokenContext
+    ? `(${collateralTokenContext.symbol})`
+    : "(unknown collateralToken — no registry match)";
+  const lltvStr = decoded.marketParams.lltv.toString();
+  const assetsStr = decoded.assets.toString();
+
+  if (decoded.kind === "morpho-supply-collateral") {
+    return DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY_COLLATERAL
+      .replace("{MARKET_ID}", decoded.marketId)
+      .replace("{LOAN_TOKEN}", decoded.marketParams.loanToken)
+      .replace("{LOAN_TOKEN_LABEL}", loanTokenLabel)
+      .replace("{COLLATERAL_TOKEN}", decoded.marketParams.collateralToken)
+      .replace("{COLLATERAL_TOKEN_LABEL}", collateralTokenLabel)
+      .replace("{LLTV}", lltvStr)
+      .replace("{ASSETS}", assetsStr)
+      .replace("{ONBEHALF}", decoded.onBehalf);
+  }
+  if (decoded.kind === "morpho-withdraw-collateral") {
+    return DECODED_ARGS_TEMPLATE_MORPHO_WITHDRAW_COLLATERAL
+      .replace("{MARKET_ID}", decoded.marketId)
+      .replace("{LOAN_TOKEN}", decoded.marketParams.loanToken)
+      .replace("{LOAN_TOKEN_LABEL}", loanTokenLabel)
+      .replace("{COLLATERAL_TOKEN}", decoded.marketParams.collateralToken)
+      .replace("{COLLATERAL_TOKEN_LABEL}", collateralTokenLabel)
+      .replace("{LLTV}", lltvStr)
+      .replace("{ASSETS}", assetsStr)
+      .replace("{ONBEHALF}", decoded.onBehalf)
+      .replace("{RECEIVER}", decoded.receiver ?? decoded.onBehalf);
+  }
+
+  // After the two collateral arms above are handled, `decoded` is one of the
+  // share-bearing kinds (supply / withdraw / borrow / repay). TS does not
+  // narrow the union by `kind` because the two arms differ structurally (the
+  // collateral arm lacks `shares` + `isShareBased`); narrow explicitly via a
+  // local binding with the share-bearing union type.
+  const shareBased = decoded as Extract<
+    typeof decoded,
+    {
+      kind: "morpho-supply" | "morpho-withdraw" | "morpho-borrow" | "morpho-repay";
+    }
+  >;
+  const sharesStr = shareBased.shares.toString();
+  const encodingStr = shareBased.isShareBased ? "share-based" : "asset-based";
+
+  if (shareBased.kind === "morpho-supply") {
+    return DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY
+      .replace("{MARKET_ID}", shareBased.marketId)
+      .replace("{LOAN_TOKEN}", shareBased.marketParams.loanToken)
+      .replace("{LOAN_TOKEN_LABEL}", loanTokenLabel)
+      .replace("{COLLATERAL_TOKEN}", shareBased.marketParams.collateralToken)
+      .replace("{COLLATERAL_TOKEN_LABEL}", collateralTokenLabel)
+      .replace("{LLTV}", lltvStr)
+      .replace("{ASSETS}", assetsStr)
+      .replace("{SHARES}", sharesStr)
+      .replace("{IS_SHARE_BASED}", encodingStr)
+      .replace("{ONBEHALF}", shareBased.onBehalf);
+  }
+  if (shareBased.kind === "morpho-withdraw") {
+    return DECODED_ARGS_TEMPLATE_MORPHO_WITHDRAW
+      .replace("{MARKET_ID}", shareBased.marketId)
+      .replace("{LOAN_TOKEN}", shareBased.marketParams.loanToken)
+      .replace("{LOAN_TOKEN_LABEL}", loanTokenLabel)
+      .replace("{COLLATERAL_TOKEN}", shareBased.marketParams.collateralToken)
+      .replace("{COLLATERAL_TOKEN_LABEL}", collateralTokenLabel)
+      .replace("{LLTV}", lltvStr)
+      .replace("{ASSETS}", assetsStr)
+      .replace("{SHARES}", sharesStr)
+      .replace("{IS_SHARE_BASED}", encodingStr)
+      .replace("{ONBEHALF}", shareBased.onBehalf)
+      .replace("{RECEIVER}", shareBased.receiver ?? shareBased.onBehalf);
+  }
+  if (shareBased.kind === "morpho-borrow") {
+    return DECODED_ARGS_TEMPLATE_MORPHO_BORROW
+      .replace("{MARKET_ID}", shareBased.marketId)
+      .replace("{LOAN_TOKEN}", shareBased.marketParams.loanToken)
+      .replace("{LOAN_TOKEN_LABEL}", loanTokenLabel)
+      .replace("{COLLATERAL_TOKEN}", shareBased.marketParams.collateralToken)
+      .replace("{COLLATERAL_TOKEN_LABEL}", collateralTokenLabel)
+      .replace("{LLTV}", lltvStr)
+      .replace("{ASSETS}", assetsStr)
+      .replace("{SHARES}", sharesStr)
+      .replace("{IS_SHARE_BASED}", encodingStr)
+      .replace("{ONBEHALF}", shareBased.onBehalf)
+      .replace("{RECEIVER}", shareBased.receiver ?? shareBased.onBehalf);
+  }
+  // morpho-repay
+  return DECODED_ARGS_TEMPLATE_MORPHO_REPAY
+    .replace("{MARKET_ID}", shareBased.marketId)
+    .replace("{LOAN_TOKEN}", shareBased.marketParams.loanToken)
+    .replace("{LOAN_TOKEN_LABEL}", loanTokenLabel)
+    .replace("{COLLATERAL_TOKEN}", shareBased.marketParams.collateralToken)
+    .replace("{COLLATERAL_TOKEN_LABEL}", collateralTokenLabel)
+    .replace("{LLTV}", lltvStr)
+    .replace("{ASSETS}", assetsStr)
+    .replace("{SHARES}", sharesStr)
+    .replace("{IS_SHARE_BASED}", encodingStr)
+    .replace("{ONBEHALF}", shareBased.onBehalf);
+}
