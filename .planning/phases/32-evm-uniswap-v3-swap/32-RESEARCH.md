@@ -1534,29 +1534,29 @@ Framework install: NONE — vitest already in project at v1.x.
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED 2026-05-23 — folded into CONTEXT.md commit `2b52eee` + plan structure)
 
-1. **UNI-B fixture `tokenOut` — `WETH` (recommended) vs `USDC` (CONTEXT.md verbatim)?**
+1. **UNI-B fixture `tokenOut` — `WETH` (recommended) vs `USDC` (CONTEXT.md verbatim)?** — **RESOLVED:** `tokenOut: WETH`. CONTEXT.md D-15 updated (commit `2b52eee`); router holds WETH between inner exactInputSingle + unwrapWETH9 sub-calls.
    - What we know: CONTEXT.md D-15 reads `tokenOut: USDC, fee: 500, ... unwrapWETH9(amountOutMin, <persona>)`. But `unwrapWETH9` only makes sense if the inner swap output is WETH (so the router has WETH to unwrap).
    - What's unclear: whether the CONTEXT.md text contains a typo, or whether the user intends a 3-step multicall (swap to USDC + sell USDC for WETH + unwrap — vastly more complex and atypical).
    - Recommendation: planner should confirm with user at Plan 32-01 fixture-design step. Default recommendation: change `USDC` → `WETH` to match the canonical token→ETH receipt pattern documented in Uniswap docs.
 
-2. **Should the `LEDGER_NOTICE_UNISWAP_V3_TEMPLATE` block (NEW) be conditional or unconditional?**
+2. **Should the `LEDGER_NOTICE_UNISWAP_V3_TEMPLATE` block (NEW) be conditional or unconditional?** — **RESOLVED:** unconditional for v2.4. CONTEXT.md D-11 updated (commit `2b52eee`); Plan 32-03 emits LEDGER NOTICE block on every `prepare_uniswap_swap` response.
    - What we know: ALL Phase 32 transactions wrap in `multicall(deadline, [...])` per D-10; the outer selector `0x5ae401dc` is NOT in the ERC-7730 registry → all transactions blind-sign.
    - What's unclear: whether the planner should emit the NOTICE unconditionally (simpler — every prepare_uniswap_swap response gets it) or conditionally (more complex — guard against a future ERC-7730 multicall coverage extension).
    - Recommendation: emit unconditionally for v2.4. If future ERC-7730 coverage extends to `multicall(uint256,bytes[])`, a follow-up phase narrows the condition. Phase 6 WETH9.withdraw precedent did unconditional NOTICE.
 
-3. **Should the price-impact-tiny-amount Quoter call run in the same `Promise.allSettled` batch as the main quote, or sequentially?**
+3. **Should the price-impact-tiny-amount Quoter call run in the same `Promise.allSettled` batch as the main quote, or sequentially?** — **RESOLVED:** parallel `Promise.allSettled` batch. Plan 32-02 Task 2 step 7c implements; back-off strategy deferred to follow-up phase if rate-limit issues surface in user reports.
    - What we know: both calls have the same RPC cost; parallel saves a round-trip.
    - What's unclear: whether RPC providers throttle "burst" calls more than spaced calls (degrading subsequent calls in the batch).
    - Recommendation: parallel `Promise.allSettled` batch for v2.4 simplicity; if rate-limit issues surface in user reports, follow-up phase introduces a back-off strategy. The Pitfall 6 mitigation (Promise.allSettled, null-on-rate-limit) covers the worst case.
 
-4. **Should `prepare_uniswap_swap` support `tokenIn = "ETH" AND tokenOut = "ETH"` with explicit `same-token-swap-refused` refusal, or should it return `INVALID_INPUT` without an explicit refusal cause?**
+4. **Should `prepare_uniswap_swap` support `tokenIn = "ETH" AND tokenOut = "ETH"` with explicit `same-token-swap-refused` refusal, or should it return `INVALID_INPUT` without an explicit refusal cause?** — **RESOLVED:** short human-readable cause string `same-token-swap-refused` per Phase 20 SunSwap practice. Plan 32-03 Task 2 step 4 implements.
    - What we know: D-05 says "refused at quote time".
    - What's unclear: whether the refusal cause string should literally be `same-token-swap-refused` (machine-readable) or just `INVALID_INPUT: 'ETH' input and 'ETH' output are the same token; no-op swap`.
    - Recommendation: short human-readable string in the `cause` field. Aligns with existing Phase 20 SunSwap practice.
 
-5. **Should Phase 32 use the canonical NonfungiblePositionManager address from VERIFIED sources, or wait for Phase 33's research to confirm?**
+5. **Should Phase 32 use the canonical NonfungiblePositionManager address from VERIFIED sources, or wait for Phase 33's research to confirm?** — **RESOLVED:** Phase 32 pre-populates `0xC36442b4a4522E871399CD717aBDD847Ab11FE88`. CONTEXT.md D-01 updated (commit `2b52eee`); Plan 32-01 Task 1 includes a one-line verification step against Etherscan.
    - What we know: `0xC36442b4a4522E871399CD717aBDD847Ab11FE88` is the canonical Ethereum mainnet address — referenced in dozens of Uniswap docs / Etherscan / verified contracts.
    - What's unclear: whether Phase 32 pre-populating the SOT slot is acceptable scope creep, vs. leaving it null and having Phase 33 add it.
    - Recommendation: Phase 32 pre-populates (lower friction for Phase 33; one-line addition). Plan 32-01 task includes a brief verification step against Etherscan.
