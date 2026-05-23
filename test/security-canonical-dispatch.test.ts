@@ -26,6 +26,8 @@ import {
   getMorphoBlueAddress,
   getRocketPoolDepositPoolAddress,
   getRocketPoolRethAddress,
+  getUniswapV3QuoterV2Address,
+  getUniswapV3SwapRouter02Address,
   getWethAddress,
   type ChainId,
 } from "../src/config/contracts.js";
@@ -338,7 +340,7 @@ describe("Phase 29 Plan 29-03 — Morpho Blue in Ethereum-arm allowlist", () => 
     }
   });
 
-  it("Ethereum-arm allowlist size grew 29 → 38 after Plan 31-01 EigenLayer + Rocket Pool extension (+9 net: rETH de-duped via BRIDGED_VARIANTS)", () => {
+  it("Ethereum-arm allowlist size grew 29 → 39 after Plans 31-01 + 32-01 (Phase 31 +9 + Phase 32 +1 Uniswap V3 SwapRouter02)", () => {
     // Hard-pinned count assertion — drift in this number indicates either a
     // missing extension or an unintended addition elsewhere. Updates require
     // an explicit plan commit.
@@ -353,7 +355,10 @@ describe("Phase 29 Plan 29-03 — Morpho Blue in Ethereum-arm allowlist", () => 
     // de-dupes it — matching the Phase 30 wstETH precedent. Cross-view byte-
     // identity is preserved either way because the SOT getter and the
     // BRIDGED_VARIANTS row carry the same address.
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(38);
+    // Phase 32 Plan 32-01: 38 → 39 (+1 net SwapRouter02). Quoter V2 NOT added
+    // (read-only per D-13a). NonfungiblePositionManager NOT added (Phase 33 LP-verb
+    // dispatch target — pre-populated in SOT but no dispatch arm at Phase 32).
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(39);
   });
 
   it("Refused tx.to on Ethereum surfaces the Morpho Blue address in allowlist (verbatim)", () => {
@@ -448,7 +453,10 @@ describe("CANONICAL_DISPATCH_TARGETS — Phase 31 EigenLayer + Rocket Pool entri
     // 30 wstETH de-dupe precedent. Cross-view byte-identity is preserved by
     // construction (both the SOT getter and the BRIDGED_VARIANTS row resolve
     // to the same EIP-55-checksummed address).
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(38);
+    // Phase 32 Plan 32-01: 38 → 39 (+1 net SwapRouter02). Quoter V2 NOT added
+    // (read-only per D-13a). NonfungiblePositionManager NOT added (Phase 33 LP-verb
+    // dispatch target — pre-populated in SOT but no dispatch arm at Phase 32).
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(39);
   });
 
   it("Refused tx.to on Ethereum surfaces the EigenLayer + Rocket Pool addresses in allowlist (verbatim)", () => {
@@ -462,5 +470,63 @@ describe("CANONICAL_DISPATCH_TARGETS — Phase 31 EigenLayer + Rocket Pool entri
     for (const { strategy } of getAllEigenLayerStrategiesForChain(1)) {
       expect(result.allowlist).toContain(strategy);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 32 Plan 32-01 — Uniswap V3 SwapRouter02 entry in Ethereum-arm allowlist.
+// Net +1 (SwapRouter02 only). Quoter V2 explicitly NOT in (read-only per D-13a).
+// Non-Ethereum chains stay byte-identical to pre-Phase-32 membership.
+// ---------------------------------------------------------------------------
+
+describe("CANONICAL_DISPATCH_TARGETS — Phase 32 Uniswap V3 SwapRouter02 entry (Ethereum)", () => {
+  it("Ethereum (1) Set includes Uniswap V3 SwapRouter02", () => {
+    const sr = getUniswapV3SwapRouter02Address(1);
+    expect(sr).not.toBeNull();
+    expect(CANONICAL_DISPATCH_TARGETS[1].has(sr!)).toBe(true);
+  });
+
+  it("Ethereum (1) Set does NOT include Uniswap V3 Quoter V2 (read-only per D-13a)", () => {
+    // Quoter V2 is a read-only contract; canonical-dispatch gates send-path
+    // only. Adding it would widen the attack surface by allowing read-only-
+    // contract dispatches to bypass downstream selector checks.
+    const qv2 = getUniswapV3QuoterV2Address(1);
+    expect(qv2).not.toBeNull();
+    expect(CANONICAL_DISPATCH_TARGETS[1].has(qv2!)).toBe(false);
+  });
+
+  it("checkDispatchTarget returns { kind: \"ok\" } for SwapRouter02 on Ethereum", () => {
+    const sr = getUniswapV3SwapRouter02Address(1);
+    expect(sr).not.toBeNull();
+    expect(checkDispatchTarget(1, sr!)).toEqual({ kind: "ok" });
+  });
+
+  it("Non-Ethereum chains do NOT include Uniswap V3 SwapRouter02 (Phase 32 Ethereum-only — D-03)", () => {
+    const sr = getUniswapV3SwapRouter02Address(1)!;
+    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
+    for (const chainId of otherChains) {
+      expect(CANONICAL_DISPATCH_TARGETS[chainId].has(sr)).toBe(false);
+      // Defense-in-depth — the per-chain SOT getter itself returns null on
+      // non-Ethereum chains, so the dispatch arm filter omits the entry.
+      expect(getUniswapV3SwapRouter02Address(chainId)).toBeNull();
+    }
+  });
+
+  it("Phase 32 membership delta is exactly +1 net over the Phase 31 baseline (38 → 39)", () => {
+    // Hard-pinned count anchor. The 1 candidate addition lands: SwapRouter02.
+    // The SwapRouter02 address 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45 is
+    // NOT in BRIDGED_VARIANTS (it's a router, not a token), so no de-dupe
+    // — net +1.
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(39);
+  });
+
+  it("Refused tx.to on Ethereum surfaces the Uniswap V3 SwapRouter02 address in allowlist (verbatim)", () => {
+    const eoa = getAddress("0x0000000000000000000000000000000000000001");
+    const result = checkDispatchTarget(1, eoa);
+    expect(result.kind).toBe("refused");
+    if (result.kind !== "refused") return;
+    expect(result.allowlist).toContain(getUniswapV3SwapRouter02Address(1)!);
+    // Quoter V2 must NOT appear (read-only per D-13a).
+    expect(result.allowlist).not.toContain(getUniswapV3QuoterV2Address(1)!);
   });
 });

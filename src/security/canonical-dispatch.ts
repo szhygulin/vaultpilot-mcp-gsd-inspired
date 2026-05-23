@@ -68,6 +68,7 @@ import {
   getMorphoBlueAddress,
   getRocketPoolDepositPoolAddress,
   getRocketPoolRethAddress,
+  getUniswapV3SwapRouter02Address,
   getWethAddress,
   type ChainId,
 } from "../config/contracts.js";
@@ -171,6 +172,16 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
   const rocketEntries: Address[] = [rocketDepositPool, rocketReth].filter(
     (a): a is Address => !!a && a !== "0x0000000000000000000000000000000000000000",
   );
+  // Phase 32 — SwapRouter02 dispatch allowlist arm. Quoter V2 NOT added
+  // (read-only per D-13; canonical-dispatch gates send-path only).
+  // Non-Ethereum chains: getUniswapV3SwapRouter02Address returns null per D-03
+  // → outer ternary yields [] → spread adds nothing.
+  const uniswapV3SwapRouter02 = getUniswapV3SwapRouter02Address(chainId);
+  const uniswapEntries: Address[] = uniswapV3SwapRouter02
+    ? [uniswapV3SwapRouter02].filter(
+        (a): a is Address => !!a && a !== "0x0000000000000000000000000000000000000000",
+      )
+    : [];
   return new Set<Address>([
     getAaveV3PoolAddress(chainId),
     getWethAddress(chainId),
@@ -182,6 +193,7 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
     ...lidoEntries,
     ...eigenEntries,
     ...rocketEntries,
+    ...uniswapEntries,
   ]);
 }
 
@@ -191,14 +203,14 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
  * new chain extends this Record alongside the `ChainId` union in
  * `src/config/contracts.ts`.
  *
- * Membership counts per chain (execute-time, 2026-05-23 — Phase 30 Plan 30-01
- * Ethereum-arm extended by 3 Lido contracts; wstETH de-duped via BRIDGED_VARIANTS):
- *   - Ethereum (1):  29 entries (27 pre-Phase-30 + stETH proxy + WithdrawalQueue;
- *                    wstETH 0x7f39C581… already in BRIDGED_VARIANTS → Set de-dupe → net +2)
- *   - Arbitrum (42161): 22 entries (4 + 18 — 1 WETH overlap; Lido wstETH bridged + Compound + Morpho v2.3.x)
- *   - Polygon (137):    22 entries (4 + 19 — 1 WETH overlap; Compound + Morpho v2.3.x)
- *   - Base (8453):       8 entries (4 + 5 — 1 WETH overlap; Compound + Morpho v2.3.x)
- *   - Optimism (10):    17 entries (4 + 14 — 1 WETH overlap; Compound + Morpho v2.3.x)
+ * Membership counts per chain (execute-time, 2026-05-23 — Phase 32 Plan 32-01
+ * Ethereum-arm extended by 1 Uniswap V3 SwapRouter02; Quoter V2 NOT added
+ * per D-13a read-only):
+ *   - Ethereum (1):     39 entries (38 post-Phase-31 + Uniswap V3 SwapRouter02; net +1)
+ *   - Arbitrum (42161): 21 entries (unchanged — Phase 32 is Ethereum-only per D-03)
+ *   - Polygon (137):    22 entries (unchanged)
+ *   - Base (8453):       8 entries (unchanged)
+ *   - Optimism (10):    17 entries (unchanged)
  */
 export const CANONICAL_DISPATCH_TARGETS: Readonly<
   Record<ChainId, ReadonlySet<Address>>
