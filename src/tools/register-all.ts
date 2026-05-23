@@ -83,6 +83,10 @@ import "./prepare_compound_supply.js";   // Phase 28 Plan 28-02 (CMP-03) — Com
 import "./prepare_compound_withdraw.js"; // Phase 28 Plan 28-02 (CMP-04) — Compound V3 withdraw
 import "./prepare_compound_borrow.js";   // Phase 28 Plan 28-03 (CMP-05) — Compound V3 borrow (reverse-intent sibling of withdraw)
 import "./prepare_compound_repay.js";    // Phase 28 Plan 28-03 (CMP-05) — Compound V3 repay (reverse-intent sibling of supply; MAX_UINT256 sentinel)
+import "./prepare_morpho_supply.js";              // Phase 29 Plan 29-03 (MOR-02) — Morpho Blue supply (lender position)
+import "./prepare_morpho_supply_collateral.js";   // Phase 29 Plan 29-03 (MOR-03) — Morpho Blue supplyCollateral
+import "./prepare_morpho_withdraw.js";            // Phase 29 Plan 29-03 (MOR-03) — Morpho Blue withdraw (toAssetsDown for "max")
+import "./prepare_morpho_withdraw_collateral.js"; // Phase 29 Plan 29-03 (MOR-03) — Morpho Blue withdrawCollateral
 import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";
