@@ -43,6 +43,9 @@ import {
   getRocketPoolDepositPoolAddress,
   getRocketPoolDepositSettingsAddress,
   getRocketPoolRethAddress,
+  getUniswapV3NonfungiblePositionManagerAddress,
+  getUniswapV3QuoterV2Address,
+  getUniswapV3SwapRouter02Address,
   getWethAddress,
   lookupSpender,
   type ChainId,
@@ -1005,5 +1008,93 @@ describe("src/config/contracts.ts — Rocket Pool SOT (Phase 31 Plan 31-01)", ()
     const rocketRows = KNOWN_SPENDERS_ETHEREUM.filter((r) => r.label.startsWith("Rocket Pool "));
     expect(eigenRows.length).toBe(1);
     expect(rocketRows.length).toBe(2);
+  });
+});
+
+// =============================================================================
+// Phase 32 — Plan 32-01: Uniswap V3 SOT (T-UNISWAP-V3-SPENDER-DRIFT-1)
+// =============================================================================
+//
+// T-UNISWAP-V3-SPENDER-DRIFT-1: KNOWN_SPENDERS_ETHEREUM "Uniswap V3 SwapRouter02"
+// row must be byte-identical to getUniswapV3SwapRouter02Address(1). The row was
+// promoted from an inline literal at Phase 6 (lines 864-868) to a SOT-getter
+// delegate at Phase 32 per D-13a — this drift-test enforces the cross-view
+// byte-identity that prevents the two sources from silently diverging.
+//
+// Quoter V2 is intentionally NOT in KNOWN_SPENDERS_ETHEREUM (read-only contract
+// per D-13a; spender labels are for approval-target UX, not read-only callees).
+// NonfungiblePositionManager is pre-populated in UNISWAP_V3_RAW per D-01 but
+// Phase 32 does not consume it; Phase 33 LP verbs read the existing SOT slot.
+
+describe("src/config/contracts.ts — Uniswap V3 SOT (Phase 32 Plan 32-01)", () => {
+  // T-UNISWAP-V3-SPENDER-DRIFT-1: SwapRouter02 row ↔ getter cross-view byte-identity.
+  it("T-UNISWAP-V3-SPENDER-DRIFT-1 — KNOWN_SPENDERS_ETHEREUM 'Uniswap V3 SwapRouter02' row address matches getUniswapV3SwapRouter02Address(1)", () => {
+    // 3-assertion regression block mirroring Phase 31 T-EIGENLAYER-SPENDER-DRIFT-1:
+    // (1) SOT getter non-null on chainId=1.
+    const sotAddr = getUniswapV3SwapRouter02Address(1);
+    expect(sotAddr).not.toBeNull();
+    // (2) The KNOWN_SPENDERS row's address equals the SOT getter return.
+    const row = KNOWN_SPENDERS_ETHEREUM.find(
+      (r) => r.label === "Uniswap V3 SwapRouter02",
+    );
+    expect(row).toBeDefined();
+    expect(row?.address).toBe(sotAddr);
+    // (3) Defense-in-depth — SOT getter returns the verified canonical literal.
+    expect(sotAddr).toBe(getAddress("0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45"));
+  });
+
+  it("Ethereum literal anchor — getUniswapV3QuoterV2Address(1) === verified Quoter V2 literal (0x61fFE014...)", () => {
+    expect(getUniswapV3QuoterV2Address(1)).toBe(
+      getAddress("0x61fFE014bA17989E743c5F6cB21bF9697530B21e"),
+    );
+  });
+
+  it("Ethereum literal anchor — getUniswapV3NonfungiblePositionManagerAddress(1) === verified NPM literal (0xC36442b4...)", () => {
+    // RESERVED for Phase 33 LP verbs per D-01; pre-populated at Phase 32 so
+    // Phase 33 reads the existing slot without re-extending the SOT.
+    expect(getUniswapV3NonfungiblePositionManagerAddress(1)).toBe(
+      getAddress("0xC36442b4a4522E871399CD717aBDD847Ab11FE88"),
+    );
+  });
+
+  // chainId pruning — Phase 32 is Ethereum-only (D-03).
+  it("all 3 Uniswap V3 getters return null on non-Ethereum chains (D-03)", () => {
+    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
+    for (const chainId of otherChains) {
+      expect(getUniswapV3SwapRouter02Address(chainId)).toBeNull();
+      expect(getUniswapV3QuoterV2Address(chainId)).toBeNull();
+      expect(getUniswapV3NonfungiblePositionManagerAddress(chainId)).toBeNull();
+    }
+  });
+
+  // EIP-55 round-trip — corrupted-snapshot guard.
+  it("all Uniswap V3 Ethereum getters return EIP-55 checksummed addresses", () => {
+    const sr = getUniswapV3SwapRouter02Address(1);
+    const qv2 = getUniswapV3QuoterV2Address(1);
+    const npm = getUniswapV3NonfungiblePositionManagerAddress(1);
+    expect(sr).not.toBeNull();
+    expect(qv2).not.toBeNull();
+    expect(npm).not.toBeNull();
+    expect(sr).toBe(getAddress(sr!));
+    expect(qv2).toBe(getAddress(qv2!));
+    expect(npm).toBe(getAddress(npm!));
+  });
+
+  // KNOWN_SPENDERS row position preserved — D-13a promotion is IN-PLACE EDIT,
+  // not a delete+re-add. The row's array index stays at 21 (matches pre-Phase-32
+  // position recorded at planning time; drift here means the row was reordered
+  // and the surrounding KNOWN_SPENDERS entries shifted unexpectedly).
+  it("KNOWN_SPENDERS row position preserved — 'Uniswap V3 SwapRouter02' at index 21", () => {
+    const idx = KNOWN_SPENDERS_ETHEREUM.findIndex(
+      (r) => r.label === "Uniswap V3 SwapRouter02",
+    );
+    expect(idx).toBe(21);
+  });
+
+  // Quoter V2 NOT in KNOWN_SPENDERS_ETHEREUM (read-only contract per D-13a).
+  it("KNOWN_SPENDERS_ETHEREUM does NOT include Quoter V2 (read-only per D-13a)", () => {
+    const qv2 = getUniswapV3QuoterV2Address(1)!;
+    const row = KNOWN_SPENDERS_ETHEREUM.find((r) => r.address === qv2);
+    expect(row).toBeUndefined();
   });
 });
