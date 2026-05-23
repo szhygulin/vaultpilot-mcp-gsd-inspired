@@ -76,6 +76,7 @@ import {
   type CompoundV3Decoded,
 } from "../protocols/compound-v3.js";
 import { _protocols, type Erc20Decoded } from "../protocols/erc20.js";
+import { _morphoBlue, type MorphoBlueDecoded } from "../protocols/morpho-blue.js";
 import { _solanaSpl } from "../protocols/solana-spl.js";
 import { _solanaSystem } from "../protocols/solana-system.js";
 import { _tronStake } from "../protocols/tron-stake.js";
@@ -95,6 +96,7 @@ import {
   buildAaveDecodedArgsBlock,
   buildCompoundDecodedArgsBlock,
   buildDecodedArgsBlock,
+  buildMorphoDecodedArgsBlock,
   buildSimulationBlock,
   chunkHex,
 } from "../signing/blocks.js";
@@ -186,6 +188,50 @@ function errEnvelope(
   cause?: string,
 ): Record<string, unknown> {
   return makeStructuredError(code, message, cause) as unknown as Record<string, unknown> & StructuredError;
+}
+
+/**
+ * Serialize a Morpho Blue decoded call for structuredContent.decodedArgs.
+ * Phase 29 Plan 29-03. Bigints → strings for JSON safety; the discriminated
+ * union preserves the kind tag so the agent can branch on it. `isShareBased`
+ * surfaces from the share-bearing arms (supply/withdraw/borrow/repay);
+ * collateral arms (supplyCollateral/withdrawCollateral) omit it.
+ */
+function buildMorphoDecodedArgsJson(
+  d: Exclude<MorphoBlueDecoded, { kind: "unknown" }>,
+): Record<string, unknown> {
+  const base = {
+    kind: d.kind,
+    marketId: d.marketId,
+    marketParams: {
+      loanToken: d.marketParams.loanToken,
+      collateralToken: d.marketParams.collateralToken,
+      oracle: d.marketParams.oracle,
+      irm: d.marketParams.irm,
+      lltv: d.marketParams.lltv.toString(),
+    },
+    assets: d.assets.toString(),
+    onBehalf: d.onBehalf,
+  };
+  if (d.kind === "morpho-supply-collateral" || d.kind === "morpho-withdraw-collateral") {
+    return {
+      ...base,
+      ...(d.kind === "morpho-withdraw-collateral" ? { receiver: d.receiver } : { data: d.data }),
+    };
+  }
+  // share-bearing arms
+  const result: Record<string, unknown> = {
+    ...base,
+    shares: d.shares.toString(),
+    isShareBased: d.isShareBased,
+  };
+  if (d.kind === "morpho-withdraw" || d.kind === "morpho-borrow") {
+    result.receiver = d.receiver;
+  } else {
+    // morpho-supply or morpho-repay — carries `data` instead.
+    result.data = d.data;
+  }
+  return result;
 }
 
 const DESCRIPTION = [
@@ -538,21 +584,26 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // the agent). _protocols indirection for ESM spy-affordance.
     const decodedArgs: Erc20Decoded = _protocols.decodeErc20Call(record.tx.data);
 
-    // Phase 7 — Plan 07-03 + Phase 28 — Plan 28-04: THREE-tier selector
-    // dispatch. If the ERC-20 decoder returned `kind: "unknown"`, try the Aave
-    // V3 decoder; if Aave also returns unknown, try the Compound V3 decoder.
-    // ERC-20 selectors (transfer / approve / WETH9.withdraw) take precedence
-    // — the ABI dispatch tables are disjoint, so a clean fall-through is
-    // sufficient.
+    // Phase 7 / 28 / 29: FOUR-tier selector dispatch. If the ERC-20 decoder
+    // returned `kind: "unknown"`, try Aave → Compound → Morpho. ERC-20
+    // selectors (transfer / approve / WETH9.withdraw) take precedence; the
+    // ABI dispatch tables are disjoint so a clean fall-through is sufficient.
     let aaveDecoded: AaveV3Decoded | null = null;
     let compoundDecoded: Exclude<CompoundV3Decoded, { kind: "unknown" }> | null = null;
+    let morphoDecoded: Exclude<MorphoBlueDecoded, { kind: "unknown" }> | null = null;
     if (decodedArgs.kind === "unknown") {
       const aave = _aaveProtocols.decodeAaveV3Call(record.tx.data);
       if (aave.kind !== "unknown") {
         aaveDecoded = aave;
       } else {
         const compound = _compoundProtocols.decodeCompoundV3Call(record.tx.data);
-        if (compound.kind !== "unknown") compoundDecoded = compound;
+        if (compound.kind !== "unknown") {
+          compoundDecoded = compound;
+        } else {
+          // Phase 29 Plan 29-03 four-tier extension — Morpho Blue.
+          const morpho = _morphoBlue.decodeMorphoBlueCall(record.tx.data);
+          if (morpho.kind !== "unknown") morphoDecoded = morpho;
+        }
       }
     }
 
@@ -627,6 +678,69 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
         : null;
     }
 
+    // Phase 29 Plan 29-03 — Morpho Blue dual-token context. Unlike Aave +
+    // Compound (one asset per call), Morpho calls carry BOTH the loanToken
+    // AND the collateralToken in the decoded MarketParams. Resolve each
+    // independently; the DECODED ARGS block renders both labels. T-COMPOUND-
+    // TX-TO-CONFUSION-1 mitigation extension: tokenContext from
+    // decoded.marketParams, NEVER record.tx.to (which is always the Morpho
+    // Blue singleton contract).
+    let morphoLoanTokenContext: { symbol: string; decimals: number } | null = null;
+    let morphoCollateralTokenContext: { symbol: string; decimals: number } | null = null;
+    if (morphoDecoded !== null) {
+      const registry = loadTokenRegistry(record.tx.chainId as ChainId);
+      const loanEntry = registry.find(
+        (e) => e.address === morphoDecoded!.marketParams.loanToken,
+      );
+      morphoLoanTokenContext = loanEntry
+        ? { symbol: loanEntry.symbol, decimals: loanEntry.decimals }
+        : null;
+      if (morphoLoanTokenContext === null) {
+        try {
+          const [d, sym] = await Promise.all([
+            client.readContract({
+              address: morphoDecoded.marketParams.loanToken,
+              abi: erc20Abi,
+              functionName: "decimals",
+            }),
+            client.readContract({
+              address: morphoDecoded.marketParams.loanToken,
+              abi: erc20Abi,
+              functionName: "symbol",
+            }),
+          ]);
+          morphoLoanTokenContext = { decimals: Number(d), symbol: String(sym) };
+        } catch {
+          // Best-effort. Stays null; block emits fallback label.
+        }
+      }
+      const collateralEntry = registry.find(
+        (e) => e.address === morphoDecoded!.marketParams.collateralToken,
+      );
+      morphoCollateralTokenContext = collateralEntry
+        ? { symbol: collateralEntry.symbol, decimals: collateralEntry.decimals }
+        : null;
+      if (morphoCollateralTokenContext === null) {
+        try {
+          const [d, sym] = await Promise.all([
+            client.readContract({
+              address: morphoDecoded.marketParams.collateralToken,
+              abi: erc20Abi,
+              functionName: "decimals",
+            }),
+            client.readContract({
+              address: morphoDecoded.marketParams.collateralToken,
+              abi: erc20Abi,
+              functionName: "symbol",
+            }),
+          ]);
+          morphoCollateralTokenContext = { decimals: Number(d), symbol: String(sym) };
+        } catch {
+          // Best-effort. Stays null.
+        }
+      }
+    }
+
     // Phase 28 Plan 28-04 — preview-time intent re-derivation (defense-in-
     // depth). The same `deriveIntent` helper Plans 28-02 + 28-03 consume at
     // prepare time runs again at preview time. If the on-chain state has
@@ -660,8 +774,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     }
 
     // Decoded-args block selection — the Aave path uses a parallel helper, the
-    // Compound path uses ITS parallel helper (separate from ERC-20 + Aave to
-    // keep all three byte-frozen against template drift).
+    // Compound path uses ITS parallel helper, and the Morpho path uses ITS
+    // parallel helper (separate from the others to keep all byte-frozen
+    // against template drift).
     const decodedArgsBlock =
       aaveDecoded !== null
         ? buildAaveDecodedArgsBlock(
@@ -676,7 +791,13 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
               record.tx.to,
               compoundIntentLabel,
             )
-          : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
+          : morphoDecoded !== null
+            ? buildMorphoDecodedArgsBlock(
+                morphoDecoded,
+                morphoLoanTokenContext,
+                morphoCollateralTokenContext,
+              )
+            : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
 
     // Phase 6 — Plan 06-02: wide eth_call simulation. DF-1 LOCKED. Runs for
     // ALL tx shapes including native sends (defense-in-depth uniform per
@@ -807,18 +928,20 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                 isMax: compoundDecoded.isMax,
                 intent: compoundIntentLabel,
               }
-          : decodedArgs.kind === "transfer"
-            ? { kind: "transfer" as const, to: decodedArgs.to, amount: decodedArgs.amount.toString() }
-            : decodedArgs.kind === "approve"
-              ? {
-                  kind: "approve" as const,
-                  spender: decodedArgs.spender,
-                  amount: decodedArgs.amount.toString(),
-                  isUnlimited: decodedArgs.isUnlimited,
-                }
-              : decodedArgs.kind === "withdraw"
-                ? { kind: "withdraw" as const, amount: decodedArgs.amount.toString() }
-                : { kind: "unknown" as const, selector: decodedArgs.selector };
+          : morphoDecoded !== null
+            ? buildMorphoDecodedArgsJson(morphoDecoded)
+            : decodedArgs.kind === "transfer"
+              ? { kind: "transfer" as const, to: decodedArgs.to, amount: decodedArgs.amount.toString() }
+              : decodedArgs.kind === "approve"
+                ? {
+                    kind: "approve" as const,
+                    spender: decodedArgs.spender,
+                    amount: decodedArgs.amount.toString(),
+                    isUnlimited: decodedArgs.isUnlimited,
+                  }
+                : decodedArgs.kind === "withdraw"
+                  ? { kind: "withdraw" as const, amount: decodedArgs.amount.toString() }
+                  : { kind: "unknown" as const, selector: decodedArgs.selector };
 
     return {
       content: [{ type: "text", text }],
