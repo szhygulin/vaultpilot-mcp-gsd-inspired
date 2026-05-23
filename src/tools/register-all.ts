@@ -94,6 +94,8 @@ import "./prepare_lido_stake.js";         // Phase 30 Plan 30-03 (LIDO-02) — E
 import "./prepare_lido_unstake.js";       // Phase 30 Plan 30-03 (LIDO-03) — stETH withdrawal queue (NFT receipt)
 import "./prepare_lido_wrap.js";          // Phase 30 Plan 30-03 (LIDO-04) — stETH → wstETH (WstETH.wrap)
 import "./prepare_lido_unwrap.js";        // Phase 30 Plan 30-03 (LIDO-04) — wstETH → stETH (WstETH.unwrap)
+import "./get_eigenlayer_positions.js";   // Phase 31 Plan 31-02 (EIG-01) — EigenLayer strategy-level deposits + queued withdrawals
+import "./prepare_eigenlayer_deposit.js"; // Phase 31 Plan 31-02 (EIG-02) — StrategyManager.depositIntoStrategy (3-arg ERC-20 + LEDGER NOTICE)
 import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";
