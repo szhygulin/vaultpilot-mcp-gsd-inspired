@@ -914,12 +914,13 @@ Plans:
   4. Multi-hop routing supported when single-hop has worse price; CHECKS PERFORMED surfaces the route path
   5. Uniswap V3 SwapRouter02 + Quoter V2 addresses sourced from `src/config/contracts.ts` per-chain table; canonical-dispatch allowlist Uniswap arm
 
-**Plans**: 2 plans (estimate)
+**Plans**: 3 plans
 
 Plans:
 
-- [ ] 32-01: `src/config/contracts.ts` Uniswap V3 SwapRouter02 + Quoter V2 per-chain slots; `src/chains/uniswap-v3.ts` (Quoter integration + auto-fee-tier selector); canonical-dispatch allowlist wiring
-- [ ] 32-02: `get_uniswap_quote` + `prepare_uniswap_swap` + `src/protocols/uniswap-v3.ts`; sandwich-MEV >2% refusal gate (mirrors Phase 14 Jupiter); Fixture Y (Uniswap V3 single-hop swap) literal anchor
+- [ ] 32-01-PLAN.md — SOT + decoder + path encoder + fixture pins: `src/config/contracts.ts` UniswapV3Contracts SOT (SwapRouter02 + Quoter V2 + NonfungiblePositionManager) + KNOWN_SPENDERS SwapRouter02 row promotion to SOT-getter; canonical-dispatch allowlist Ethereum-arm extension (SwapRouter02 in; Quoter V2 NOT in — read-only); `src/protocols/uniswap-v3.ts` (3 parseAbi fragments + 6 selectors + 4 encoders + composeMulticallWithUnwrap); `src/signing/uniswap-path.ts` (encodeV3Path via viem.encodePacked); `src/signing/blocks.ts` LEDGER_NOTICE_UNISWAP_V3_TEMPLATE + SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE; Fixtures UNI-A/B/C hardcoded payloadFingerprint literals
+- [ ] 32-02-PLAN.md — `get_uniswap_quote` tool: `src/chains/uniswap-v3.ts` Quoter V2 wrapper with Promise.allSettled 4-tier iteration + CANONICAL_FEE_TIERS 7-pair mapping for multi-hop candidates; `src/signing/uniswap-price-impact.ts` Quoter-midpoint math; `src/tools/get_uniswap_quote.ts` MCP tool with auto-fee-tier + multi-hop selection (0.5% threshold) + no-liquidity refusal (D-04a) + ETH-in/out sentinel + sandwich-MEV warning at >2% impact
+- [ ] 32-03-PLAN.md — `prepare_uniswap_swap` tool + sandwich-MEV gate + ETH-in/out: `src/tools/prepare_uniswap_swap.ts` with pre-Zod slippageWasExplicit + quote re-fetch + sandwich-MEV refusal (D-08) + token-approval pre-flight (D-07) + 4-path calldata composition + multicall(deadline,[...]) wrapper (D-10) + unconditional LEDGER NOTICE (D-11); `src/tools/preview_send.ts` (to,selector) tuple dispatch extension for 4 Uniswap V3 selectors + multicall recursive sub-call decoder; `src/signing/blocks.ts` UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE + 4 DECODED ARGS templates + buildUniswapV3DecodedArgsBlock; integration test 3 fixtures × 3 personas = 9 byte-identity assertions; SECURITY.md §6 v2.4 addendum (D-04b + D-08 + D-03 + D-11)
 
 #### Phase 33: Uniswap V3 full LP verb set + `get_lp_positions` with IL estimate
 
