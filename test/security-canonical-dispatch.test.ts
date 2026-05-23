@@ -21,7 +21,11 @@ import { getAddress, type Address } from "viem";
 import {
   getAaveV3PoolAddress,
   getAllCompoundCometsForChain,
+  getAllEigenLayerStrategiesForChain,
+  getEigenLayerStrategyManagerAddress,
   getMorphoBlueAddress,
+  getRocketPoolDepositPoolAddress,
+  getRocketPoolRethAddress,
   getWethAddress,
   type ChainId,
 } from "../src/config/contracts.js";
@@ -334,7 +338,7 @@ describe("Phase 29 Plan 29-03 — Morpho Blue in Ethereum-arm allowlist", () => 
     }
   });
 
-  it("Ethereum-arm allowlist size grew 27 → 29 after Plan 30-01 Lido extension (+2 net: stETH + WithdrawalQueue; wstETH de-duped via BRIDGED_VARIANTS)", () => {
+  it("Ethereum-arm allowlist size grew 29 → 38 after Plan 31-01 EigenLayer + Rocket Pool extension (+9 net: rETH de-duped via BRIDGED_VARIANTS)", () => {
     // Hard-pinned count assertion — drift in this number indicates either a
     // missing extension or an unintended addition elsewhere. Updates require
     // an explicit plan commit.
@@ -342,7 +346,14 @@ describe("Phase 29 Plan 29-03 — Morpho Blue in Ethereum-arm allowlist", () => 
     // Phase 30 Plan 30-01: 27 → 29 (+2 net Lido entries; wstETH 0x7f39C581…
     // is already in BRIDGED_VARIANTS as a token contract on Ethereum, so the
     // Set de-dupes it — only stETH proxy + WithdrawalQueue are net-new).
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(29);
+    // Phase 31 Plan 31-01: 29 → 38 (+9 net; the 10 candidate additions are
+    // EigenLayer StrategyManager + 7 curated per-strategy proxies + Rocket
+    // Pool RocketDepositPool + rETH, but rETH 0xae78736C… is ALREADY in
+    // BRIDGED_VARIANTS as a token contract on Ethereum mainnet, so the Set
+    // de-dupes it — matching the Phase 30 wstETH precedent. Cross-view byte-
+    // identity is preserved either way because the SOT getter and the
+    // BRIDGED_VARIANTS row carry the same address.
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(38);
   });
 
   it("Refused tx.to on Ethereum surfaces the Morpho Blue address in allowlist (verbatim)", () => {
@@ -353,5 +364,103 @@ describe("Phase 29 Plan 29-03 — Morpho Blue in Ethereum-arm allowlist", () => 
     const morpho = getMorphoBlueAddress(1);
     expect(morpho).not.toBeNull();
     expect(result.allowlist).toContain(morpho!);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 31 Plan 31-01 — EigenLayer + Rocket Pool entries in Ethereum-arm
+// allowlist. Net +10 entries (StrategyManager + 7 strategies + RocketDepositPool
+// + rETH). Non-Ethereum chains stay byte-identical to pre-Phase-31 membership.
+// ---------------------------------------------------------------------------
+
+describe("CANONICAL_DISPATCH_TARGETS — Phase 31 EigenLayer + Rocket Pool entries (Ethereum)", () => {
+  it("Ethereum (1) Set includes EigenLayer StrategyManager", () => {
+    const sm = getEigenLayerStrategyManagerAddress(1);
+    expect(sm).not.toBeNull();
+    expect(CANONICAL_DISPATCH_TARGETS[1].has(sm!)).toBe(true);
+  });
+
+  it("Ethereum (1) Set includes all 7 curated EigenLayer strategy proxies", () => {
+    const rows = getAllEigenLayerStrategiesForChain(1);
+    expect(rows.length).toBe(7);
+    for (const { strategy } of rows) {
+      expect(CANONICAL_DISPATCH_TARGETS[1].has(strategy)).toBe(true);
+    }
+  });
+
+  it("Ethereum (1) Set includes Rocket Pool RocketDepositPool", () => {
+    const dp = getRocketPoolDepositPoolAddress(1);
+    expect(dp).not.toBeNull();
+    expect(CANONICAL_DISPATCH_TARGETS[1].has(dp!)).toBe(true);
+  });
+
+  it("Ethereum (1) Set includes Rocket Pool rETH", () => {
+    const reth = getRocketPoolRethAddress(1);
+    expect(reth).not.toBeNull();
+    expect(CANONICAL_DISPATCH_TARGETS[1].has(reth!)).toBe(true);
+  });
+
+  it("checkDispatchTarget returns { kind: \"ok\" } for StrategyManager + every curated strategy on Ethereum (8 assertions)", () => {
+    const sm = getEigenLayerStrategyManagerAddress(1);
+    expect(sm).not.toBeNull();
+    expect(checkDispatchTarget(1, sm!)).toEqual({ kind: "ok" });
+    for (const { strategy } of getAllEigenLayerStrategiesForChain(1)) {
+      expect(checkDispatchTarget(1, strategy)).toEqual({ kind: "ok" });
+    }
+  });
+
+  it("checkDispatchTarget returns { kind: \"ok\" } for RocketDepositPool + rETH on Ethereum", () => {
+    const dp = getRocketPoolDepositPoolAddress(1);
+    const reth = getRocketPoolRethAddress(1);
+    expect(dp).not.toBeNull();
+    expect(reth).not.toBeNull();
+    expect(checkDispatchTarget(1, dp!)).toEqual({ kind: "ok" });
+    expect(checkDispatchTarget(1, reth!)).toEqual({ kind: "ok" });
+  });
+
+  it("Non-Ethereum chains do NOT include EigenLayer + Rocket Pool entries (Phase 31 Ethereum-only — D-03)", () => {
+    // The SOT getters return null/[] on non-Ethereum chains → the filter
+    // removes them at construction-time. Re-assert each address (sourced from
+    // chainId=1) is NOT a member of the non-Ethereum Sets.
+    const sm = getEigenLayerStrategyManagerAddress(1)!;
+    const dp = getRocketPoolDepositPoolAddress(1)!;
+    const reth = getRocketPoolRethAddress(1)!;
+    const strategies = getAllEigenLayerStrategiesForChain(1).map((r) => r.strategy);
+    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
+    for (const chainId of otherChains) {
+      expect(CANONICAL_DISPATCH_TARGETS[chainId].has(sm)).toBe(false);
+      expect(CANONICAL_DISPATCH_TARGETS[chainId].has(dp)).toBe(false);
+      expect(CANONICAL_DISPATCH_TARGETS[chainId].has(reth)).toBe(false);
+      for (const s of strategies) {
+        expect(CANONICAL_DISPATCH_TARGETS[chainId].has(s)).toBe(false);
+      }
+    }
+  });
+
+  it("Phase 31 membership delta is +9 net over the Phase 30 baseline (29 → 38; rETH de-duped via BRIDGED_VARIANTS)", () => {
+    // Direct count anchor. Drift fires the test before downstream allow-pattern
+    // regressions surface elsewhere. 10 candidate additions land:
+    //   1× StrategyManager + 7× curated per-strategy proxies +
+    //   1× RocketDepositPool + 1× rETH = 10.
+    // But the rETH address 0xae78736C… is ALREADY a BRIDGED_VARIANTS row on
+    // Ethereum mainnet (canonicalSymbol = "rETH" / native Rocket Pool
+    // deployment), so the Set de-dupes it → net +9. Same shape as the Phase
+    // 30 wstETH de-dupe precedent. Cross-view byte-identity is preserved by
+    // construction (both the SOT getter and the BRIDGED_VARIANTS row resolve
+    // to the same EIP-55-checksummed address).
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(38);
+  });
+
+  it("Refused tx.to on Ethereum surfaces the EigenLayer + Rocket Pool addresses in allowlist (verbatim)", () => {
+    const eoa = getAddress("0x0000000000000000000000000000000000000001");
+    const result = checkDispatchTarget(1, eoa);
+    expect(result.kind).toBe("refused");
+    if (result.kind !== "refused") return;
+    expect(result.allowlist).toContain(getEigenLayerStrategyManagerAddress(1)!);
+    expect(result.allowlist).toContain(getRocketPoolDepositPoolAddress(1)!);
+    expect(result.allowlist).toContain(getRocketPoolRethAddress(1)!);
+    for (const { strategy } of getAllEigenLayerStrategiesForChain(1)) {
+      expect(result.allowlist).toContain(strategy);
+    }
   });
 });
