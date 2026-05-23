@@ -129,7 +129,7 @@ interface ProbeResult {
 
 interface Probe {
   chain: SupportedChain;
-  run: (signal: AbortSignal) => Promise<ProbeResult>;
+  run: () => Promise<ProbeResult>;
 }
 
 // ─── Tool registration ────────────────────────────────────────────────────────
@@ -246,16 +246,17 @@ registerTool("build_incident_report", DESCRIPTION, INPUT_SCHEMA, async (args) =>
  * Race the probe against an AbortController 10s timeout. Mirrors
  * `readChainPortfolioWithTimeout` in src/tools/get_portfolio_summary.ts:438–457.
  *
- * The AbortController is threaded into the probe so individual callBitcoinCoreRpc
- * calls can opt in if they wire a signal — but the race is the load-bearing
- * mechanism (Bitcoin Core RPC's own 10s timeout is independent and per-call).
+ * The outer 10s Promise.race wins on aggregate probe latency; the inner
+ * callBitcoinCoreRpc has its own BITCOIN_CORE_RPC_TIMEOUT_MS so in-flight
+ * fetches are cancelled independently. No external signal is threaded —
+ * explicit by design.
  */
 async function runProbeWithTimeout(probe: Probe, timeoutMs: number): Promise<ProbeResult> {
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), timeoutMs);
   try {
     return await Promise.race<ProbeResult>([
-      probe.run(abort.signal),
+      probe.run(),
       new Promise<ProbeResult>((_, reject) => {
         abort.signal.addEventListener("abort", () => {
           reject(new Error(`timeout after ${timeoutMs}ms`));
@@ -269,7 +270,7 @@ async function runProbeWithTimeout(probe: Probe, timeoutMs: number): Promise<Pro
 
 // ─── BTC probe ───────────────────────────────────────────────────────────────
 
-async function runBtcProbe(_signal: AbortSignal): Promise<ProbeResult> {
+async function runBtcProbe(): Promise<ProbeResult> {
   const url = getBitcoinCoreRpcUrl();
   if (url === null) {
     return { status: "core-not-configured", anomalies: [] };
@@ -346,7 +347,7 @@ async function runBtcProbe(_signal: AbortSignal): Promise<ProbeResult> {
 
 // ─── LTC probe ───────────────────────────────────────────────────────────────
 
-async function runLtcProbe(_signal: AbortSignal): Promise<ProbeResult> {
+async function runLtcProbe(): Promise<ProbeResult> {
   const url = getLitecoinCoreRpcUrl();
   if (url === null) {
     return { status: "core-not-configured", anomalies: [] };
