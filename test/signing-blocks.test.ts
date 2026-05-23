@@ -13,6 +13,12 @@ import {
   COMPOUND_WITHDRAW_PREPARE_RECEIPT_TEMPLATE,
   DECODED_ARGS_TEMPLATE_COMPOUND_SUPPLY,
   DECODED_ARGS_TEMPLATE_COMPOUND_WITHDRAW,
+  DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT,
+  DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE,
+  DECODED_ARGS_TEMPLATE_UNISWAP_MULTICALL,
+  DECODED_ARGS_TEMPLATE_UNISWAP_UNWRAP_WETH9,
+  UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE,
+  buildUniswapV3DecodedArgsBlock,
   DECODED_ARGS_TEMPLATE_MORPHO_BORROW,
   DECODED_ARGS_TEMPLATE_MORPHO_REPAY,
   DECODED_ARGS_TEMPLATE_MORPHO_SUPPLY,
@@ -824,5 +830,164 @@ describe("src/signing/blocks.ts — Phase 32 additive templates", () => {
     // structural layout (header line + indented body) but the copy is distinct
     // — they must NOT be the exact same string.
     expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE).not.toBe(SANDWICH_MEV_REFUSAL_TRON_TEMPLATE);
+  });
+});
+
+// =============================================================================
+// Phase 32 Plan 32-03 — Uniswap V3 PREPARE RECEIPT + 4 DECODED ARGS templates
+// =============================================================================
+//
+// APPEND-ONLY additive surface for the `prepare_uniswap_swap` (Plan 32-03)
+// tool's PREPARE RECEIPT block + the `preview_send` (to, selector) tuple-
+// dispatch DECODED ARGS arms. The 5 new constants + 1 new helper:
+//   - UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE (10 placeholder slots — D-09)
+//   - DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE (7 slots)
+//   - DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT (4 slots)
+//   - DECODED_ARGS_TEMPLATE_UNISWAP_MULTICALL (3 slots — outer wrapper)
+//   - DECODED_ARGS_TEMPLATE_UNISWAP_UNWRAP_WETH9 (2 slots)
+//   - buildUniswapV3DecodedArgsBlock(decoded: UniswapV3Decoded) — 4-arm switch
+//     with recursive multicall sub-call rendering.
+
+describe("src/signing/blocks.ts — Phase 32 Plan 32-03 additive templates", () => {
+  it("UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE contains all 10 placeholder slots", () => {
+    expect(UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE).toMatch(/\{CHAIN\}/);
+    expect(UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE).toMatch(/\{SWAP_ROUTER\}/);
+    expect(UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE).toMatch(/\{TOKEN_IN\}/);
+    expect(UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE).toMatch(/\{TOKEN_OUT\}/);
+    expect(UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE).toMatch(/\{AMOUNT_IN\}/);
+    expect(UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE).toMatch(/\{AMOUNT_OUT_MIN\}/);
+    expect(UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE).toMatch(/\{FEE_TIER_OR_PATH\}/);
+    expect(UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE).toMatch(/\{PRICE_IMPACT_BPS\}/);
+    expect(UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE).toMatch(/\{SLIPPAGE_BPS\}/);
+    expect(UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE).toMatch(/\{DEADLINE\}/);
+    expect(UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE).toMatch(
+      /PREPARE\s+RECEIPT\s+—\s+Uniswap\s+V3\s+swap/,
+    );
+  });
+
+  it("DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE contains 7 slots", () => {
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE).toMatch(/\{TOKEN_IN\}/);
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE).toMatch(/\{TOKEN_OUT\}/);
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE).toMatch(/\{FEE\}/);
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE).toMatch(/\{RECIPIENT\}/);
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE).toMatch(/\{AMOUNT_IN\}/);
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE).toMatch(/\{AMOUNT_OUT_MIN\}/);
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE).toMatch(/\{SQRT_PRICE_LIMIT\}/);
+  });
+
+  it("DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT contains 4 slots", () => {
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT).toMatch(/\{PATH_DECODED\}/);
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT).toMatch(/\{RECIPIENT\}/);
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT).toMatch(/\{AMOUNT_IN\}/);
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT).toMatch(/\{AMOUNT_OUT_MIN\}/);
+  });
+
+  it("DECODED_ARGS_TEMPLATE_UNISWAP_MULTICALL contains 3 slots", () => {
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_MULTICALL).toMatch(/\{DEADLINE_ISO\}/);
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_MULTICALL).toMatch(/\{SUB_CALL_COUNT\}/);
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_MULTICALL).toMatch(/\{SUB_CALLS_RENDERED\}/);
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_MULTICALL).toMatch(/multicall/);
+  });
+
+  it("DECODED_ARGS_TEMPLATE_UNISWAP_UNWRAP_WETH9 contains 2 slots", () => {
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_UNWRAP_WETH9).toMatch(/\{AMOUNT_MINIMUM\}/);
+    expect(DECODED_ARGS_TEMPLATE_UNISWAP_UNWRAP_WETH9).toMatch(/\{RECIPIENT\}/);
+  });
+
+  it("buildUniswapV3DecodedArgsBlock — exactInputSingle case renders all 7 fields", () => {
+    const out = buildUniswapV3DecodedArgsBlock({
+      kind: "exactInputSingle",
+      tokenIn: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as Address,
+      tokenOut: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" as Address,
+      fee: 500,
+      recipient: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as Address,
+      amountIn: 100_000000n,
+      amountOutMinimum: 48_100_000_000_000_000n,
+      sqrtPriceLimitX96: 0n,
+    });
+    // All 7 fields render — no raw {PLACEHOLDER} remains.
+    expect(out).not.toMatch(/\{[A-Z_]+\}/);
+    expect(out).toContain("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    expect(out).toContain("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    expect(out).toContain("500");
+    expect(out).toContain("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+    expect(out).toContain("100000000");
+    expect(out).toContain("48100000000000000");
+    expect(out).toMatch(/sqrtPriceLimitX96:\s+0/);
+  });
+
+  it("buildUniswapV3DecodedArgsBlock — exactInput case renders pre-formatted path", () => {
+    const out = buildUniswapV3DecodedArgsBlock({
+      kind: "exactInput",
+      pathDecoded: "USDC → 0.30% → WETH → 0.30% → WBTC",
+      recipient: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as Address,
+      amountIn: 100_000000n,
+      amountOutMinimum: 1n,
+    });
+    expect(out).not.toMatch(/\{[A-Z_]+\}/);
+    expect(out).toContain("USDC → 0.30% → WETH → 0.30% → WBTC");
+    expect(out).toContain("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+  });
+
+  it("buildUniswapV3DecodedArgsBlock — multicall case recurses sub-calls with 2-space indent", () => {
+    const out = buildUniswapV3DecodedArgsBlock({
+      kind: "multicall",
+      deadline: 1748707200n,
+      subCalls: [
+        {
+          kind: "exactInputSingle",
+          tokenIn: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as Address,
+          tokenOut: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2" as Address,
+          fee: 500,
+          recipient: "0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45" as Address,
+          amountIn: 100_000000n,
+          amountOutMinimum: 48_100_000_000_000_000n,
+          sqrtPriceLimitX96: 0n,
+        },
+        {
+          kind: "unwrapWETH9",
+          amountMinimum: 48_100_000_000_000_000n,
+          recipient: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as Address,
+        },
+      ],
+    });
+    // Outer wrapper rendered + both sub-call blocks present.
+    expect(out).toContain("multicall");
+    expect(out).toContain("exactInputSingle");
+    expect(out).toContain("unwrapWETH9");
+    // 2-space indent prefixes the inner sub-call lines (separate from the
+    // outer template's "  amountIn:" prefix — inner blocks compose to 4-space
+    // when nested under outer's "  inner calls:" header).
+    expect(out).toMatch(/\n {2}DECODED ARGS — exactInputSingle/);
+    expect(out).toMatch(/\n {2}DECODED ARGS — unwrapWETH9/);
+    // sub-call count surfaces.
+    expect(out).toMatch(/sub-call count:\s+2/);
+  });
+
+  it("buildUniswapV3DecodedArgsBlock — multicall renders deadline as ISO timestamp", () => {
+    const out = buildUniswapV3DecodedArgsBlock({
+      kind: "multicall",
+      deadline: 1748707200n,
+      subCalls: [],
+    });
+    // 1748707200 * 1000 = 1748707200000ms; ISO = 2025-05-31T16:00:00.000Z
+    // (Plan 32-01 fixture comment said "12:00 UTC" — off-by-4-hours from actual UTC).
+    expect(out).toContain("2025-05-31T16:00:00.000Z");
+  });
+
+  it("buildUniswapV3DecodedArgsBlock — unwrapWETH9 case renders amountMinimum + recipient", () => {
+    const out = buildUniswapV3DecodedArgsBlock({
+      kind: "unwrapWETH9",
+      amountMinimum: 48_100_000_000_000_000n,
+      recipient: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as Address,
+    });
+    expect(out).not.toMatch(/\{[A-Z_]+\}/);
+    expect(out).toContain("48100000000000000");
+    expect(out).toContain("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+  });
+
+  it("APPEND-ONLY discipline — Plan 32-01 templates remain accessible by name", () => {
+    expect(LEDGER_NOTICE_UNISWAP_V3_TEMPLATE.length).toBeGreaterThan(100);
+    expect(SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE.length).toBeGreaterThan(100);
   });
 });

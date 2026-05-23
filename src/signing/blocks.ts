@@ -2137,3 +2137,215 @@ export const SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE: string = [
   "  then call prepare_uniswap_swap again with slippageBps set explicitly (any value).",
   "  Explicitly supplying slippageBps signals that you acknowledge the high price impact.",
 ].join("\n");
+
+// =============================================================================
+// Phase 32 — Plan 32-03 additive extensions (APPEND-ONLY).
+// =============================================================================
+//
+// All Plan 32-01 templates above (LEDGER_NOTICE_UNISWAP_V3_TEMPLATE +
+// SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE) stay BYTE-IDENTICAL — this section
+// is strictly additive. The five constants + one helper below back the
+// `prepare_uniswap_swap` (Plan 32-03) tool's PREPARE RECEIPT block and the
+// `preview_send` (to, selector) tuple-dispatch DECODED ARGS arms for the
+// 4 Uniswap V3 selectors (exactInputSingle / exactInput / multicall /
+// unwrapWETH9).
+//
+// D-09: PREPARE RECEIPT carries 10 verbatim slots covering chain / router /
+// tokens / amounts / route / impact / slippage / deadline. D-11: LEDGER
+// NOTICE is unconditional for every swap (multicall outer selector 0x5ae401dc
+// NOT in ERC-7730 registry). The DECODED ARGS multicall arm recursively
+// renders its inner sub-calls — defense against the agent missing inner-
+// selector context.
+
+/**
+ * PREPARE RECEIPT template for `prepare_uniswap_swap` (Uniswap V3 swap via
+ * SwapRouter02 multicall+deadline outer wrapper). Slots:
+ *   `{CHAIN}`, `{SWAP_ROUTER}`, `{TOKEN_IN}`, `{TOKEN_OUT}`, `{AMOUNT_IN}`,
+ *   `{AMOUNT_OUT_MIN}`, `{FEE_TIER_OR_PATH}`, `{PRICE_IMPACT_BPS}`,
+ *   `{SLIPPAGE_BPS}`, `{DEADLINE}`.
+ * Consumed by Plan 32-03 `prepare_uniswap_swap.ts` via `.replace(...)` calls.
+ * Mirrors the Phase 31 `EIGENLAYER_DEPOSIT_PREPARE_RECEIPT_TEMPLATE` shape.
+ */
+export const UNISWAP_SWAP_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT — Uniswap V3 swap (SwapRouter02)",
+  "  chain:              {CHAIN}",
+  "  router:             {SWAP_ROUTER}",
+  "  tokenIn:            {TOKEN_IN}",
+  "  tokenOut:           {TOKEN_OUT}",
+  "  amountIn:           {AMOUNT_IN}",
+  "  amountOutMinimum:   {AMOUNT_OUT_MIN}",
+  "  route:              {FEE_TIER_OR_PATH}",
+  "  priceImpactBps:     {PRICE_IMPACT_BPS}",
+  "  slippageBps:        {SLIPPAGE_BPS}",
+  "  deadline:           {DEADLINE}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `SwapRouter02.exactInputSingle(params)`.
+ * Slots: `{TOKEN_IN}`, `{TOKEN_OUT}`, `{FEE}`, `{RECIPIENT}`, `{AMOUNT_IN}`,
+ *        `{AMOUNT_OUT_MIN}`, `{SQRT_PRICE_LIMIT}`.
+ * Consumed by `buildUniswapV3DecodedArgsBlock` for `preview_send` selector
+ * dispatch (Plan 32-03).
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE: string = [
+  "DECODED ARGS — exactInputSingle (Uniswap V3 SwapRouter02)",
+  "  tokenIn:             {TOKEN_IN}",
+  "  tokenOut:            {TOKEN_OUT}",
+  "  fee:                 {FEE}",
+  "  recipient:           {RECIPIENT}",
+  "  amountIn:            {AMOUNT_IN}",
+  "  amountOutMinimum:    {AMOUNT_OUT_MIN}",
+  "  sqrtPriceLimitX96:   {SQRT_PRICE_LIMIT}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `SwapRouter02.exactInput(params)` (multi-hop).
+ * Slots: `{PATH_DECODED}`, `{RECIPIENT}`, `{AMOUNT_IN}`, `{AMOUNT_OUT_MIN}`.
+ * `{PATH_DECODED}` is the human-readable arrow-separated route (e.g.
+ * `"USDC → 0.30% → WETH → 0.30% → WBTC"`) formatted by the caller.
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT: string = [
+  "DECODED ARGS — exactInput (Uniswap V3 SwapRouter02, multi-hop)",
+  "  path:                {PATH_DECODED}",
+  "  recipient:           {RECIPIENT}",
+  "  amountIn:            {AMOUNT_IN}",
+  "  amountOutMinimum:    {AMOUNT_OUT_MIN}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for the OUTER multicall(uint256 deadline, bytes[]).
+ * Slots: `{DEADLINE_ISO}`, `{SUB_CALL_COUNT}`, `{SUB_CALLS_RENDERED}`.
+ * `{SUB_CALLS_RENDERED}` is the recursively-rendered inner sub-call DECODED
+ * ARGS blocks, each indented 2 spaces and separated by a blank line — built
+ * by `buildUniswapV3DecodedArgsBlock` (multicall arm).
+ *
+ * D-11 trust-anchor reduction: the outer selector 0x5ae401dc is NOT in the
+ * Ledger ERC-7730 clear-sign registry — every Phase 32 swap blind-signs at
+ * the device; this DECODED ARGS arm is the agent-side decoder surface for
+ * the inner sub-calls (defense-in-depth against the device's missing
+ * coverage).
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_MULTICALL: string = [
+  "DECODED ARGS — multicall(uint256 deadline, bytes[] data) (Uniswap V3 outer wrapper)",
+  "  deadline:            {DEADLINE_ISO}",
+  "  sub-call count:      {SUB_CALL_COUNT}",
+  "  inner calls:",
+  "{SUB_CALLS_RENDERED}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `SwapRouter02.unwrapWETH9(amountMinimum, recipient)`.
+ * Slots: `{AMOUNT_MINIMUM}`, `{RECIPIENT}`. Consumed by the ETH-out
+ * multicall sub-call decoder (Plan 32-03).
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_UNWRAP_WETH9: string = [
+  "DECODED ARGS — unwrapWETH9 (Uniswap V3 SwapRouter02)",
+  "  amountMinimum:       {AMOUNT_MINIMUM}",
+  "  recipient:           {RECIPIENT}",
+].join("\n");
+
+/**
+ * Uniswap V3 decoded-args discriminated union for `preview_send`
+ * (tx.to, selector) tuple-dispatch arms. Four variants — one per the 4
+ * Uniswap V3 selectors `preview_send` routes:
+ *   - `exactInputSingle`: single-hop swap params (struct fields)
+ *   - `exactInput`:       multi-hop swap with pre-formatted human-readable path
+ *   - `multicall`:        outer wrapper carrying inner sub-call array
+ *   - `unwrapWETH9`:      ETH-out helper unwrapping the router's WETH balance
+ *
+ * The multicall arm carries `subCalls: readonly UniswapV3Decoded[]` —
+ * recursive shape; `buildUniswapV3DecodedArgsBlock` walks the array and
+ * renders each inner sub-call with 2-space indent and blank-line separation.
+ */
+export type UniswapV3Decoded =
+  | {
+      kind: "exactInputSingle";
+      tokenIn: Address;
+      tokenOut: Address;
+      fee: number;
+      recipient: Address;
+      amountIn: bigint;
+      amountOutMinimum: bigint;
+      sqrtPriceLimitX96: bigint;
+    }
+  | {
+      kind: "exactInput";
+      pathDecoded: string;
+      recipient: Address;
+      amountIn: bigint;
+      amountOutMinimum: bigint;
+    }
+  | {
+      kind: "multicall";
+      deadline: bigint;
+      subCalls: readonly UniswapV3Decoded[];
+    }
+  | {
+      kind: "unwrapWETH9";
+      amountMinimum: bigint;
+      recipient: Address;
+    };
+
+/**
+ * Build the DECODED ARGS block for a Uniswap V3 protocol call.
+ *
+ * Mirrors `buildLidoDecodedArgsBlock` / `buildEigenLayerDecodedArgsBlock` /
+ * `buildRocketPoolDecodedArgsBlock`. Called from `src/tools/preview_send.ts`
+ * after a (tx.to, selector) tuple match against the SwapRouter02 SOT
+ * address + one of the 4 Uniswap V3 selectors.
+ *
+ * Decimals at this layer are unknown in the general case — tokenIn/tokenOut
+ * decimals would require an RPC read or a registry lookup the caller may
+ * not have performed yet. The bigint amount fields render as raw `wei`
+ * strings; the caller (preview_send) is responsible for human-decimal
+ * augmentation if it has the token context.
+ *
+ * The multicall arm recursively renders its `subCalls`: each inner sub-call
+ * block has every line prefixed with 2 spaces and blocks are separated by a
+ * blank line. Deadline renders as ISO-8601 via `new Date(Number(deadline) *
+ * 1000).toISOString()`.
+ *
+ * D-11: NO clear-sign coverage at the device — the OUTER multicall selector
+ * 0x5ae401dc is absent from the Ledger ERC-7730 plugin registry.
+ * `prepare_uniswap_swap` ALREADY emits LEDGER_NOTICE_UNISWAP_V3_TEMPLATE at
+ * prepare time; `preview_send` ALSO surfaces it at preview time so the user
+ * sees the blind-sign warning regardless of which surface they entered via.
+ */
+export function buildUniswapV3DecodedArgsBlock(decoded: UniswapV3Decoded): string {
+  switch (decoded.kind) {
+    case "exactInputSingle":
+      return DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT_SINGLE
+        .replace("{TOKEN_IN}", decoded.tokenIn)
+        .replace("{TOKEN_OUT}", decoded.tokenOut)
+        .replace("{FEE}", `${decoded.fee} (${(decoded.fee / 10000).toFixed(2)}%)`)
+        .replace("{RECIPIENT}", decoded.recipient)
+        .replace("{AMOUNT_IN}", `${decoded.amountIn.toString()} (wei-units)`)
+        .replace("{AMOUNT_OUT_MIN}", `${decoded.amountOutMinimum.toString()} (wei-units)`)
+        .replace("{SQRT_PRICE_LIMIT}", decoded.sqrtPriceLimitX96.toString());
+    case "exactInput":
+      return DECODED_ARGS_TEMPLATE_UNISWAP_EXACT_INPUT
+        .replace("{PATH_DECODED}", decoded.pathDecoded)
+        .replace("{RECIPIENT}", decoded.recipient)
+        .replace("{AMOUNT_IN}", `${decoded.amountIn.toString()} (wei-units)`)
+        .replace("{AMOUNT_OUT_MIN}", `${decoded.amountOutMinimum.toString()} (wei-units)`);
+    case "multicall": {
+      const deadlineIso = new Date(Number(decoded.deadline) * 1000).toISOString();
+      const rendered = decoded.subCalls
+        .map((sub) =>
+          buildUniswapV3DecodedArgsBlock(sub)
+            .split("\n")
+            .map((line) => `  ${line}`)
+            .join("\n"),
+        )
+        .join("\n\n");
+      return DECODED_ARGS_TEMPLATE_UNISWAP_MULTICALL
+        .replace("{DEADLINE_ISO}", deadlineIso)
+        .replace("{SUB_CALL_COUNT}", decoded.subCalls.length.toString())
+        .replace("{SUB_CALLS_RENDERED}", rendered);
+    }
+    case "unwrapWETH9":
+      return DECODED_ARGS_TEMPLATE_UNISWAP_UNWRAP_WETH9
+        .replace("{AMOUNT_MINIMUM}", `${decoded.amountMinimum.toString()} (wei-units)`)
+        .replace("{RECIPIENT}", decoded.recipient);
+  }
+}
