@@ -861,7 +861,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 30-03-PLAN.md — 4 `prepare_lido_*` tools (stake / unstake / wrap / unwrap; D-03 chain gate + D-05 allowance pre-flight on unstake + wrap + T-LIDO-WITHDRAWAL-AMOUNT-BOUNDS on unstake + `[NFT RECEIPT EXPECTED]` block per D-04) + `preview_send` DECODED ARGS dispatch for 4 Lido selectors (NO LEDGER NOTICE per D-12) + 4 register-all imports + full stake → unstake → wrap → unwrap persona-cycle integration test
+- [x] 30-03-PLAN.md — 4 `prepare_lido_*` tools (stake / unstake / wrap / unwrap; D-03 chain gate + D-05 allowance pre-flight on unstake + wrap + T-LIDO-WITHDRAWAL-AMOUNT-BOUNDS on unstake + `[NFT RECEIPT EXPECTED]` block per D-04) + `preview_send` DECODED ARGS dispatch for 4 Lido selectors (NO LEDGER NOTICE per D-12) + 4 register-all imports + full stake → unstake → wrap → unwrap persona-cycle integration test
 
 #### Phase 31: EigenLayer + Rocket Pool
 
@@ -1146,7 +1146,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 27. Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics | v2.2 | 2/3 | In Progress|  |
 | 28. Compound V3 — multi-Comet supply/withdraw/borrow/repay (Ethereum mainnet — 6 Comets) | v2.3 | 4/4 | Complete (verify-phase open); closes #64 | 2026-05-20 |
 | 29. Morpho Blue — supply/withdraw/borrow/repay | v2.3 | 3/3 | Complete   | 2026-05-23 |
-| 30. Lido — stake/unstake/wrap/unwrap (stETH↔wstETH) | v2.3 | 2/3 | In Progress|  |
+| 30. Lido — stake/unstake/wrap/unwrap (stETH↔wstETH) | v2.3 | 3/3 | Complete   | 2026-05-23 |
 | 31. EigenLayer + Rocket Pool | v2.3 | 0/3 | Not started | - |
 | 32. Uniswap V3 swap (auto-fee-tier, same-chain) | v2.4 | 0/2 | Not started | - |
 | 33. Uniswap V3 full LP verb set + `get_lp_positions` with IL estimate | v2.4 | 0/3 | Not started | - |
