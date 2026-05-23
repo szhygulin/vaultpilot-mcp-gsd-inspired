@@ -2,9 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Bitcoin + Litecoin
-status: planning
-last_updated: "2026-05-23T17:13:40.451Z"
-last_activity: 2026-05-23
+current_plan: 32-02 (Plan 32-01 complete; 2 of 3 plans remaining)
+status: executing
+last_updated: "2026-05-23T17:53:24.093Z"
+last_activity: "2026-05-23 — Phase 32 Plan 32-01 (Wave 1 — SOT + decoder foundation) closed code-complete on `feat/32-evm-uniswap-v3-swap`. 6 atomic execute commits (f68b305 → 597a1a1) landed sequentially on the feature branch under autonomous-execution preference; no checkpoint stops. Test trajectory 890 → 1014 (+124 net; per-task deltas in test files spanning config-contracts +7 / canonical-dispatch +6 / signing-uniswap-path +8 / protocols-uniswap-v3 +14 / signing-blocks +5 / signing-fingerprint +4 = 44 new it-blocks, full-suite includes prior fixture pre-existing tests). 4 source files created (`src/protocols/uniswap-v3.ts`, `src/signing/uniswap-path.ts`, `test/protocols-uniswap-v3.test.ts`, `test/signing-uniswap-path.test.ts`) + 3 source modifications (`src/config/contracts.ts` UniswapV3Contracts SOT + KNOWN_SPENDERS row promotion, `src/security/canonical-dispatch.ts` uniswapEntries arm 38→39, `src/signing/blocks.ts` APPEND-ONLY 2 templates). Cryptographic-binding anchors: Fixtures UNI-A `0xc9f4eb06…` / UNI-B `0x5599bb30…` / UNI-C `0x795086fd…` pinned. Quoter V2 explicitly NOT in dispatch allowlist (read-only D-13a). FROZEN-area zero-diff held END-TO-END. 4 minor deviations auto-fixed (1 tsc strict-undefined, 2 plan-spec arithmetic, 1 anti-pattern-comment grep collision — all documented in SUMMARY.md § Deviations). 1 pre-existing flake under full-suite concurrent load (`test/non-evm-store.eager-init.test.ts`) — passes in isolation; NOT caused by Phase 32 changes; documented in `.planning/phases/32-evm-uniswap-v3-swap/deferred-items.md`."
 progress:
   total_phases: 6
   completed_phases: 6
@@ -24,10 +25,11 @@ See: .planning/PROJECT.md (updated 2026-05-12)
 
 ## Current Position
 
-Phase: 32
-Plan: Not started
-Status: Ready to plan
-Last activity: 2026-05-23
+Phase: 32 — evm uniswap v3 swap
+Current Plan: 32-02 (Plan 32-01 complete; 2 of 3 plans remaining)
+Total Plans in Phase: 3
+Status: In progress (32-01 closed; 32-02 + 32-03 remaining)
+Last activity: 2026-05-23 — Phase 32 Plan 32-01 (Wave 1 — SOT + decoder foundation) closed code-complete on `feat/32-evm-uniswap-v3-swap`. 6 atomic execute commits (f68b305 → 597a1a1) landed sequentially on the feature branch under autonomous-execution preference; no checkpoint stops. Test trajectory 890 → 1014 (+124 net; per-task deltas in test files spanning config-contracts +7 / canonical-dispatch +6 / signing-uniswap-path +8 / protocols-uniswap-v3 +14 / signing-blocks +5 / signing-fingerprint +4 = 44 new it-blocks, full-suite includes prior fixture pre-existing tests). 4 source files created (`src/protocols/uniswap-v3.ts`, `src/signing/uniswap-path.ts`, `test/protocols-uniswap-v3.test.ts`, `test/signing-uniswap-path.test.ts`) + 3 source modifications (`src/config/contracts.ts` UniswapV3Contracts SOT + KNOWN_SPENDERS row promotion, `src/security/canonical-dispatch.ts` uniswapEntries arm 38→39, `src/signing/blocks.ts` APPEND-ONLY 2 templates). Cryptographic-binding anchors: Fixtures UNI-A `0xc9f4eb06…` / UNI-B `0x5599bb30…` / UNI-C `0x795086fd…` pinned. Quoter V2 explicitly NOT in dispatch allowlist (read-only D-13a). FROZEN-area zero-diff held END-TO-END. 4 minor deviations auto-fixed (1 tsc strict-undefined, 2 plan-spec arithmetic, 1 anti-pattern-comment grep collision — all documented in SUMMARY.md § Deviations). 1 pre-existing flake under full-suite concurrent load (`test/non-evm-store.eager-init.test.ts`) — passes in isolation; NOT caused by Phase 32 changes; documented in `.planning/phases/32-evm-uniswap-v3-swap/deferred-items.md`.
 
 Prior activity: 2026-05-18 — Phase 9 (Hardening — v1.3 skill + verification tools + dispatch allowlist) closed code-complete. 5 atomic execute PRs landed sequentially under auto-mode in wave order 09-01 → 09-02 → 09-03 → 09-04 → 09-05: PR #48 (09-01 sister repo `szhygulin/vaultpilot-preflight-skill` bootstrap via `gh repo create --private`; BUSL-1.1 license mirrored from main repo; SKILL.md + Step 0 self-check + invariants #1/#2/#2.5/#5/#11/#14 encoded; v1.3.0 tag deferred to coordinated 09-02 step per plan-checker W-1; CI workflow `.github/workflows/ci.yml` deferred because gh OAuth lacks `workflow` scope; 789 → 789 +0), PR #49 (09-02 `src/security/skill-integrity.ts` SHA-256 lazy probe via Node `crypto` + personal + project scope; `VAULTPILOT_NOTICE_TEMPLATE` missing + tampered variants in `blocks.ts` APPEND-ONLY; dispatcher-wrap NOTICE prepend at `server.ts` with `skillNoticeEmitted` dedup flag set BEFORE return for race-defense; 789 → 810 +21), PR #50 (09-03 `get_verification_artifact` tool + sparse JSON structuredContent + `pasteableBlock` byte-stable 32-line template; 810 → 828 +18), PR #51 (09-04 `src/security/canonical-dispatch.ts` parallel `CANONICAL_DISPATCH_TARGETS` per-chain table; Layer 0.5 wiring; `DISPATCH_TARGET_REFUSED` errorCode; 828 → 858 +30), PR #52 (09-05 `verify_tx_decode` 3-arm discriminated union + `get_tx_verification` v1.3 additive fields + register-all consolidation; 858 → 890 +32). Test trajectory 789 → 890 (+101 net across 5 plans). FROZEN-area zero-diff held END-TO-END. Sister repo `szhygulin/vaultpilot-preflight-skill` live at v1.3.0.
 
@@ -82,6 +84,7 @@ Progress: [██████████] 100%
 | Phase 25-btc-psbt-multisig-flow P03 | 38 | 3 tasks | 11 files |
 | Phase 26-ltc-scaffolding-lifi-btc-bridging P01 | 70 | 3 tasks | 17 files |
 | Phase 26 P26-03 | 180 | 3 tasks | 15 files |
+| Phase 32 P01 | 1743 | 6 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -115,6 +118,11 @@ Recent decisions affecting current work:
 - [Phase ?]: LTC_NETWORK defined locally (bitcoinjs-lib has no built-in networks.litecoin)
 - [Phase ?]: fetchFeeEstimates calls /v1/fees/recommended not /fee-estimates (litecoinspace.org Pitfall 1)
 - [Phase ?]: ASSUMED A1: getAppConfiguration().name === Litecoin — verify against real device
+- [Phase ?]: Phase 32 Plan 32-01: UniswapV3Contracts SOT shape with 3 slots — D-01
+- [Phase ?]: Phase 32 Plan 32-01: SwapRouter02 KNOWN_SPENDERS row IN-PLACE promotion (D-13a) — preserves array index 21 + label byte-identity
+- [Phase ?]: Phase 32 Plan 32-01: Quoter V2 explicitly NOT in canonical-dispatch allowlist (D-13 read-only)
+- [Phase ?]: Phase 32 Plan 32-01: composeMulticallWithUnwrap helper centralizes Pitfall 3 mitigation (D-15 fixture UNI-B correction — inner recipient = router-address)
+- [Phase ?]: Phase 32 Plan 32-01: encodeV3Path via viem.encodePacked (NOT encodeAbiParameters) — Pitfall 2 anti-pattern guard enforced via grep on src/signing/uniswap-path.ts
 
 ### Pending Todos
 
@@ -314,6 +322,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-23T17:13:40.438Z
-Stopped at: Phase 32 planning complete (3 plans, plan-checker PASS WITH CONCERNS, all concerns addressed)
-Resume file: .planning/phases/32-evm-uniswap-v3-swap/32-01-PLAN.md
+Last session: 2026-05-23T17:53:24.081Z
+Stopped at: Plan 32-01 complete — 32-02 + 32-03 remaining in Phase 32
+Resume file: None
