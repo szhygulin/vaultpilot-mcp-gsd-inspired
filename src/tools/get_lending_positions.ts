@@ -156,6 +156,12 @@ interface MorphoLendingPositionRow {
   borrowAssetsExpected: string;
   collateral: string;
   isUnlabeled: boolean;
+  // Phase 29 Plan 29-03 — Stale-market annotation (WR-01 parity with
+  // get_morpho_positions.ts:157). The supplyAssetsExpected /
+  // borrowAssetsExpected fields are off-chain SharesMathLib simulations
+  // against the stale market state; on-chain accrueInterest at tx time
+  // produces a slightly different figure.
+  displayValue: string;
 }
 
 type LendingPositionRow =
@@ -512,6 +518,8 @@ async function readMorphoPositionsForWallet(
           borrowAssetsExpected: borrowAssetsExpected.toString(),
           collateral: pos.collateral.toString(),
           isUnlabeled,
+          displayValue:
+            "approx (stale market state; on-chain accrueInterest happens at tx time)",
         };
         return row;
       } catch {

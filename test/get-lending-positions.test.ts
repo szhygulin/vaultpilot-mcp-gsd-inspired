@@ -673,12 +673,21 @@ describe("Phase 29 Plan 29-03 — Morpho Blue branch (three-protocol discriminat
     const result = await callTool({ wallet: WALLET });
     expect(result.isError).toBeUndefined();
     const out = result.structuredContent as {
-      positions: Array<{ protocol: string; marketId?: string }>;
+      positions: Array<{
+        protocol: string;
+        marketId?: string;
+        displayValue?: string;
+      }>;
       sources: { morpho: { marketsActive: number } };
     };
     expect(out.positions).toHaveLength(1);
     expect(out.positions[0]?.protocol).toBe("morpho-blue");
     expect(out.positions[0]?.marketId).toBe(MORPHO_MARKET_ID);
+    // Phase 29 — WR-01: Morpho row carries the stale-market annotation
+    // mirroring get_morpho_positions.ts:157 verbatim.
+    expect(out.positions[0]?.displayValue).toBe(
+      "approx (stale market state; on-chain accrueInterest happens at tx time)",
+    );
     expect(out.sources.morpho.marketsActive).toBe(1);
   });
 
