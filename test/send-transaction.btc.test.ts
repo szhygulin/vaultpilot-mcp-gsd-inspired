@@ -157,6 +157,13 @@ function buildBtcSegwitHandle(): {
 beforeEach(() => {
   _resetHandleStoreForTesting();
   _resetActivePersonaForTesting();
+  // Pin to real-mode deterministically. Absent VAULTPILOT_DEMO, the
+  // resolver falls through readConfigFile() → `auto-demo` if no
+  // ~/.vaultpilot-mcp/config.json exists, which trips the BTC send-tx
+  // demo guard. Per-test demo cases flip this to "true" and restore
+  // via `process.env["VAULTPILOT_DEMO"] = "false"` (not delete) so the
+  // next test starts in the pinned real-mode.
+  process.env["VAULTPILOT_DEMO"] = "false";
   _resetDemoModeForTesting?.();
   // Default: paired BTC account exists.
   listAccountsSpy.mockReturnValue([
@@ -258,7 +265,8 @@ describe("send_transaction BTC branch — demo mode (D-04 mempool-replay envelop
     expect((result.structuredContent as Record<string, unknown>)?.txType).toBe("btc");
     expect((result.structuredContent as Record<string, unknown>)?.envelopeShape).toBe("psbt-mempool-replay");
 
-    delete process.env["VAULTPILOT_DEMO"];
+    // Restore pinned real-mode (matches file-wide beforeEach).
+    process.env["VAULTPILOT_DEMO"] = "false";
     _resetDemoModeForTesting?.();
   });
 
@@ -274,7 +282,8 @@ describe("send_transaction BTC branch — demo mode (D-04 mempool-replay envelop
     expect(result.isError).toBe(true);
     expect((result.structuredContent as Record<string, unknown>)?.errorCode).toBe("WRONG_MODE");
 
-    delete process.env["VAULTPILOT_DEMO"];
+    // Restore pinned real-mode (matches file-wide beforeEach).
+    process.env["VAULTPILOT_DEMO"] = "false";
     _resetDemoModeForTesting?.();
   });
 });
