@@ -155,6 +155,11 @@ function seedWallet(withHmac: boolean) {
 describe("sign_btc_multisig_psbt", () => {
   beforeEach(() => {
     _resetBtcMultisigStoreForTesting();
+    // Pin to real-mode deterministically. Absent VAULTPILOT_DEMO, the
+    // resolver falls through readConfigFile() → `auto-demo` if no
+    // ~/.vaultpilot-mcp/config.json exists, which causes the multisig
+    // demo-mode guard to refuse with WRONG_MODE.
+    process.env["VAULTPILOT_DEMO"] = "false";
     _resetDemoModeForTesting();
   });
 

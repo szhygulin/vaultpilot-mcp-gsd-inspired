@@ -110,7 +110,12 @@ const STUB_SIGN_RESULT = {
 
 beforeEach(() => {
   savedDemo = process.env[DEMO_KEY];
-  delete process.env[DEMO_KEY];
+  // Pin to real-mode deterministically. `delete` alone is insufficient
+  // because the resolver falls through to readConfigFile() and, if no
+  // ~/.vaultpilot-mcp/config.json exists, lands in `auto-demo` →
+  // isDemoMode() returns true and the sign_message_ltc guard refuses.
+  // Tests that need demo mode flip this to "true" + _resetDemoModeForTesting.
+  process.env[DEMO_KEY] = "false";
   _resetDemoModeForTesting();
   listAccountsSpy.mockReset();
   vi.restoreAllMocks();

@@ -78,7 +78,13 @@ const KNOWN_FIRST_ADDRESS = "bc1q89z49nyykvr86hpyw3h34097336s095suwa2hflyvelsmnv
 describe("register_btc_multisig_wallet", () => {
   beforeEach(() => {
     _resetBtcMultisigStoreForTesting();
-    delete process.env["VAULTPILOT_DEMO"];
+    // Pin to real-mode deterministically. `delete` alone is insufficient
+    // because the resolver falls through to readConfigFile() and, if no
+    // ~/.vaultpilot-mcp/config.json exists, lands in `auto-demo` →
+    // isDemoMode() returns true and the demo-mode guards refuse.
+    // Tests that need demo mode flip this to "true" + _resetDemoModeForTesting.
+    process.env["VAULTPILOT_DEMO"] = "false";
+    _resetDemoModeForTesting();
   });
 
   it("valid registration returns 5 addresses and persists HMAC-less record", async () => {
@@ -194,7 +200,8 @@ describe("register_btc_multisig_wallet", () => {
       const sc = result.structuredContent as Record<string, unknown>;
       expect(sc.errorCode).toBe("DEMO_MODE_REFUSED");
     } finally {
-      delete process.env["VAULTPILOT_DEMO"];
+      // Restore pinned real-mode (the file-wide beforeEach sets "false").
+      process.env["VAULTPILOT_DEMO"] = "false";
       _resetDemoModeForTesting(); // restore for subsequent tests
     }
   });
@@ -222,7 +229,13 @@ describe("register_btc_multisig_wallet", () => {
 describe("register_btc_multisig_wallet — on-device registration (Plan 25-03)", () => {
   beforeEach(() => {
     _resetBtcMultisigStoreForTesting();
-    delete process.env["VAULTPILOT_DEMO"];
+    // Pin to real-mode deterministically. `delete` alone is insufficient
+    // because the resolver falls through to readConfigFile() and, if no
+    // ~/.vaultpilot-mcp/config.json exists, lands in `auto-demo` →
+    // isDemoMode() returns true and the demo-mode guards refuse.
+    // Tests that need demo mode flip this to "true" + _resetDemoModeForTesting.
+    process.env["VAULTPILOT_DEMO"] = "false";
+    _resetDemoModeForTesting();
   });
 
   it("device-present path: stores walletHmac when registerBtcMultisigWallet succeeds", async () => {
@@ -312,7 +325,13 @@ describe("register_btc_multisig_wallet — on-device registration (Plan 25-03)",
 describe("get_btc_multisig_balance", () => {
   beforeEach(() => {
     _resetBtcMultisigStoreForTesting();
-    delete process.env["VAULTPILOT_DEMO"];
+    // Pin to real-mode deterministically. `delete` alone is insufficient
+    // because the resolver falls through to readConfigFile() and, if no
+    // ~/.vaultpilot-mcp/config.json exists, lands in `auto-demo` →
+    // isDemoMode() returns true and the demo-mode guards refuse.
+    // Tests that need demo mode flip this to "true" + _resetDemoModeForTesting.
+    process.env["VAULTPILOT_DEMO"] = "false";
+    _resetDemoModeForTesting();
   });
 
   it("MULTISIG_WALLET_NOT_FOUND for unregistered walletName", async () => {
@@ -384,7 +403,13 @@ describe("get_btc_multisig_balance", () => {
 describe("get_btc_multisig_utxos", () => {
   beforeEach(() => {
     _resetBtcMultisigStoreForTesting();
-    delete process.env["VAULTPILOT_DEMO"];
+    // Pin to real-mode deterministically. `delete` alone is insufficient
+    // because the resolver falls through to readConfigFile() and, if no
+    // ~/.vaultpilot-mcp/config.json exists, lands in `auto-demo` →
+    // isDemoMode() returns true and the demo-mode guards refuse.
+    // Tests that need demo mode flip this to "true" + _resetDemoModeForTesting.
+    process.env["VAULTPILOT_DEMO"] = "false";
+    _resetDemoModeForTesting();
   });
 
   it("MULTISIG_WALLET_NOT_FOUND for unregistered walletName", async () => {
