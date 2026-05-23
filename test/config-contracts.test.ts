@@ -30,6 +30,7 @@ import {
   getAaveV3UiPoolDataProvider,
   getAllCompoundCometsForChain,
   getCompoundCometAddress,
+  getMorphoBlueAddress,
   getWethAddress,
   lookupSpender,
   type ChainId,
@@ -482,5 +483,163 @@ describe("src/config/contracts.ts — Compound V3 Comet SOT (Phase 28 Plan 28-01
       expect(addr).not.toBeNull();
       expect(addr).toBe(getAddress(addr!));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Morpho Blue SOT (Phase 29 Plan 29-01) — singleton-per-chain contract address
+// + KNOWN_SPENDERS_ETHEREUM cross-view consistency + morpho-markets-ethereum.json
+// shape. Provenance: docs.morpho.org/addresses + LedgerHQ ERC-7730
+// calldata-MorphoBlue.json (research § Topic 1, research date 2026-05-21).
+// ---------------------------------------------------------------------------
+
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
+describe("src/config/contracts.ts — Morpho Blue SOT (Phase 29 Plan 29-01)", () => {
+  // T1 — getMorphoBlueAddress(1) byte-identity against the canonical literal.
+  // The address is a CREATE2-vanity deployment present on all 40+ supported
+  // chains; Phase 29 ships chainId 1 ONLY.
+  it("Test 1 — getMorphoBlueAddress(1) returns 0xBBBB…FFCb byte-identical (research § Topic 1)", () => {
+    expect(getMorphoBlueAddress(1)).toBe(
+      getAddress("0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"),
+    );
+  });
+
+  // T2 — chain narrowing: non-1 ChainId values return null (Phase 29
+  // mainnet-only scope). 8453 (Base) and 137 (Polygon) compile because both
+  // are valid ChainId members per Phase 8; runtime returns null (the row is
+  // absent from MORPHO_BLUE_RAW). v2.3.x will populate these rows; the test
+  // documents the current scope.
+  it("Test 2a — getMorphoBlueAddress(8453) (Base — valid ChainId, no Morpho row yet) returns null", () => {
+    expect(getMorphoBlueAddress(8453)).toBeNull();
+  });
+
+  it("Test 2b — getMorphoBlueAddress(137) (Polygon — valid ChainId, no Morpho row yet) returns null", () => {
+    expect(getMorphoBlueAddress(137)).toBeNull();
+  });
+
+  it("Test 2c — getMorphoBlueAddress(42161) + getMorphoBlueAddress(10) return null (Arbitrum + Optimism)", () => {
+    expect(getMorphoBlueAddress(42161)).toBeNull();
+    expect(getMorphoBlueAddress(10)).toBeNull();
+  });
+
+  // T3 — Cross-view consistency: KNOWN_SPENDERS_ETHEREUM Morpho row matches
+  // getMorphoBlueAddress(1) byte-identical. Drift = T-29-01-T-FROZEN signal.
+  it("Test 3 — KNOWN_SPENDERS_ETHEREUM 'Morpho Blue' row ↔ getMorphoBlueAddress(1) byte-identical", () => {
+    const morphoRow = KNOWN_SPENDERS_ETHEREUM.find((r) => r.label === "Morpho Blue");
+    expect(morphoRow).toBeDefined();
+    expect(morphoRow?.address).toBe(getMorphoBlueAddress(1));
+  });
+
+  // T3b — KNOWN_SPENDERS_ETHEREUM still grows by exactly 1 row (Plan 29-01
+  // delta) from the Phase 28 baseline. Anchor count >= 11 (Phase 6 + Phase 28
+  // baseline) keeps the test future-proof against further additions.
+  it("Test 3b — KNOWN_SPENDERS_ETHEREUM length anchor >= 11 still holds (Phase 29 adds exactly 1 row)", () => {
+    expect(KNOWN_SPENDERS_ETHEREUM.length).toBeGreaterThanOrEqual(11);
+    // Confirms there is exactly one "Morpho Blue" row (no accidental dupes).
+    const morphoRows = KNOWN_SPENDERS_ETHEREUM.filter((r) => r.label === "Morpho Blue");
+    expect(morphoRows.length).toBe(1);
+  });
+
+  // Bonus — getMorphoBlueAddress(1) is EIP-55 checksummed (corrupted-snapshot
+  // guard fires at module load via `getAddress`).
+  it("Bonus — getMorphoBlueAddress(1) is EIP-55 round-trip (corrupted-snapshot guard)", () => {
+    const addr = getMorphoBlueAddress(1);
+    expect(addr).not.toBeNull();
+    expect(addr).toBe(getAddress(addr!));
+  });
+});
+
+// T4 — morpho-markets-ethereum.json shape validation. The registry is a
+// labeling surface (NOT a trust gate); the test asserts the JSON snapshot
+// is well-formed so a future contributor refreshing the registry catches
+// typos / missing fields at PR-review time.
+describe("src/tokens/morpho-markets-ethereum.json — 25-entry registry shape (Phase 29 Plan 29-01)", () => {
+  // Resolve the JSON via its absolute file path so the test stays decoupled
+  // from the build output's `dist/` layout.
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const REGISTRY_PATH = resolve(__dirname, "../src/tokens/morpho-markets-ethereum.json");
+
+  interface MorphoMarketEntry {
+    marketId: string;
+    loanToken: { address: string; symbol: string; decimals: number };
+    collateralToken: { address: string; symbol: string; decimals: number };
+    oracle: string;
+    irm: string;
+    lltv: string;
+    label: string;
+  }
+
+  const registry: MorphoMarketEntry[] = JSON.parse(readFileSync(REGISTRY_PATH, "utf-8"));
+
+  it("Test 4 — registry has exactly 25 entries (top-by-TVL snapshot at planning time)", () => {
+    expect(registry.length).toBe(25);
+  });
+
+  it("Test 4a — every marketId is a 0x-prefixed 66-char hex string (32-byte keccak256 output)", () => {
+    for (const entry of registry) {
+      expect(entry.marketId).toMatch(/^0x[0-9a-f]{64}$/i);
+      expect(entry.marketId.length).toBe(66);
+    }
+  });
+
+  it("Test 4b — every loanToken/collateralToken address is EIP-55 checksummed (round-trip via getAddress)", () => {
+    for (const entry of registry) {
+      expect(entry.loanToken.address).toBe(getAddress(entry.loanToken.address));
+      expect(entry.collateralToken.address).toBe(getAddress(entry.collateralToken.address));
+      expect(entry.loanToken.address.length).toBe(42);
+      expect(entry.collateralToken.address.length).toBe(42);
+    }
+  });
+
+  it("Test 4c — every loanToken/collateralToken decimals is a non-negative integer", () => {
+    for (const entry of registry) {
+      expect(Number.isInteger(entry.loanToken.decimals)).toBe(true);
+      expect(entry.loanToken.decimals).toBeGreaterThanOrEqual(0);
+      expect(Number.isInteger(entry.collateralToken.decimals)).toBe(true);
+      expect(entry.collateralToken.decimals).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("Test 4d — every oracle/irm address is EIP-55 checksummed (round-trip via getAddress)", () => {
+    for (const entry of registry) {
+      expect(entry.oracle).toBe(getAddress(entry.oracle));
+      expect(entry.irm).toBe(getAddress(entry.irm));
+      expect(entry.oracle.length).toBe(42);
+      expect(entry.irm.length).toBe(42);
+    }
+  });
+
+  it("Test 4e — every lltv is a decimal-string parseable as bigint with 0 < lltv < 1e18", () => {
+    for (const entry of registry) {
+      expect(typeof entry.lltv).toBe("string");
+      // Must be all digits (decimal string, no `0x` prefix, no negative).
+      expect(entry.lltv).toMatch(/^\d+$/);
+      const lltvBig = BigInt(entry.lltv);
+      expect(lltvBig).toBeGreaterThan(0n);
+      // 1e18 = full LLTV (100%) — Morpho whitelisted markets are strictly below.
+      expect(lltvBig).toBeLessThan(10n ** 18n);
+    }
+  });
+
+  it("Test 4f — every label is a non-empty string", () => {
+    for (const entry of registry) {
+      expect(typeof entry.label).toBe("string");
+      expect(entry.label.length).toBeGreaterThan(0);
+    }
+  });
+
+  // Anchor — the wstETH/USDC market (the deriveMarketId regression literal)
+  // is present in the snapshot. Re-anchors the cross-link between this
+  // registry and test/protocols-morpho-blue.test.ts T2.
+  it("Test 4g — wstETH/USDC market literal 0xb323495f...c86cc is present in the snapshot", () => {
+    const wstethUsdc = registry.find(
+      (e) => e.marketId === "0xb323495f7e4148be5643a4ea4a8221eef163e4bccfdedc2a6f4696baacbc86cc",
+    );
+    expect(wstethUsdc).toBeDefined();
+    expect(wstethUsdc?.loanToken.symbol).toBe("USDC");
+    expect(wstethUsdc?.collateralToken.symbol).toBe("wstETH");
   });
 });

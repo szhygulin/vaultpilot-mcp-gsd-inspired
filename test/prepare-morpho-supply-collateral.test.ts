@@ -1,0 +1,180 @@
+// prepare_morpho_supply_collateral tests — Phase 29 Plan 29-03 (MOR-03).
+//
+// Cases: T1 happy path (asset === collateralToken); T2 asset-match refusal
+// (asset === loanToken → hintTool: prepare_morpho_supply); T3 Fixture Y
+// byte-identity (Plan 29-01 cross-link); T4 intent-vs-reality refusal;
+// T5 WC-session not paired.
+
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { getStatusSpy, createHandleSpy } = vi.hoisted(() => ({
+  getStatusSpy: vi.fn(),
+  createHandleSpy: vi.fn<typeof import("../src/signing/handle-store.js").createHandle>(),
+}));
+
+vi.mock("../src/wallet/session-manager.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/wallet/session-manager.js")>(
+    "../src/wallet/session-manager.js",
+  );
+  return {
+    ...actual,
+    getStatus: (...args: Parameters<typeof actual.getStatus>) => getStatusSpy(...args),
+    pair: vi.fn(async () => { throw new Error("pair should not be called"); }),
+    disconnect: vi.fn(async () => undefined),
+  };
+});
+
+vi.mock("../src/signing/handle-store.js", async () => {
+  const actual = await vi.importActual<typeof import("../src/signing/handle-store.js")>(
+    "../src/signing/handle-store.js",
+  );
+  createHandleSpy.mockImplementation(actual.createHandle);
+  return {
+    ...actual,
+    createHandle: (...args: Parameters<typeof actual.createHandle>) => createHandleSpy(...args),
+  };
+});
+
+import { _morphoChains } from "../src/chains/morpho-blue.js";
+import { getMorphoBlueAddress } from "../src/config/contracts.js";
+import { _resetDemoModeForTesting } from "../src/config/env.js";
+import { _resetActivePersonaForTesting } from "../src/demo/state.js";
+import { MORPHO_BLUE_SELECTORS } from "../src/protocols/morpho-blue.js";
+import {
+  _peekHandleForTesting,
+  _resetHandleStoreForTesting,
+} from "../src/signing/handle-store.js";
+import { getRegisteredTool, type ToolHandlerResult } from "../src/tools/index.js";
+
+await import("../src/tools/register-all.js");
+
+async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResult> {
+  const tool = getRegisteredTool("prepare_morpho_supply_collateral");
+  if (!tool) throw new Error("prepare_morpho_supply_collateral not registered");
+  return tool.handler({ chain: "ethereum", ...args });
+}
+
+const DEMO_KEY = "VAULTPILOT_DEMO";
+let savedDemo: string | undefined;
+
+const USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as `0x${string}`;
+const WSTETH = "0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0" as `0x${string}`;
+const ORACLE = "0x48F7E36EB6B826B2dF4B2E630B62Cd25e89E40e2" as `0x${string}`;
+const IRM = "0x870aC11D48B15DB9a138Cf899d20F13F79Ba00BC" as `0x${string}`;
+const LLTV = 860000000000000000n;
+const ZERO = "0x0000000000000000000000000000000000000000" as `0x${string}`;
+const MARKET_ID =
+  "0xb323495f7e4148be5643a4ea4a8221eef163e4bccfdedc2a6f4696baacbc86cc" as `0x${string}`;
+const ONBEHALF = "0x000000000000000000000000000000000000dEaD" as `0x${string}`;
+const PAIRED_STATUS = {
+  paired: true as const,
+  accounts: [ONBEHALF],
+  activeAccount: ONBEHALF,
+  address: ONBEHALF,
+  chainId: 1,
+  sessionTopicLast8: "deadbeef",
+  accountsByChain: { 1: [ONBEHALF] } as Record<number, `0x${string}`[]>,
+};
+
+// Fixture Y cross-link — supplyCollateral(wstETH, 1e18, ONBEHALF, "0x").
+const FIXTURE_Y_FINGERPRINT =
+  "0x95d629f91d33efb39048fc7f09ef24d4f7452c9a4ee88100f8cfc008ce4c0539";
+
+const ORIGINAL_READ_MARKET_PARAMS = _morphoChains.readMarketParams;
+const readMarketParamsSpy = vi.fn<typeof _morphoChains.readMarketParams>();
+_morphoChains.readMarketParams = readMarketParamsSpy as unknown as typeof _morphoChains.readMarketParams;
+
+afterAll(() => {
+  _morphoChains.readMarketParams = ORIGINAL_READ_MARKET_PARAMS;
+});
+
+beforeEach(() => {
+  getStatusSpy.mockReset();
+  createHandleSpy.mockClear();
+  readMarketParamsSpy.mockReset();
+  _resetHandleStoreForTesting();
+  savedDemo = process.env[DEMO_KEY];
+  process.env[DEMO_KEY] = "false";
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
+});
+
+afterEach(() => {
+  if (savedDemo === undefined) delete process.env[DEMO_KEY];
+  else process.env[DEMO_KEY] = savedDemo;
+  _resetDemoModeForTesting();
+  _resetActivePersonaForTesting();
+});
+
+const okParams = {
+  loanToken: USDC,
+  collateralToken: WSTETH,
+  oracle: ORACLE,
+  irm: IRM,
+  lltv: LLTV,
+};
+
+describe("prepare_morpho_supply_collateral — T1: happy path (asset === collateralToken)", () => {
+  it("wstETH 1.0 → selector === supplyCollateral; handle created", async () => {
+    getStatusSpy.mockResolvedValueOnce(PAIRED_STATUS);
+    readMarketParamsSpy.mockResolvedValueOnce(okParams);
+    const result = await callTool({ marketId: MARKET_ID, asset: WSTETH, amount: "1" });
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { handle: string; amountWei: string };
+    expect(sc.amountWei).toBe("1000000000000000000");
+    const record = _peekHandleForTesting(sc.handle);
+    if (!record) throw new Error("handle missing");
+    expect(record.tx.to).toBe(getMorphoBlueAddress(1));
+    expect(record.tx.data.slice(0, 10).toLowerCase()).toBe(MORPHO_BLUE_SELECTORS.supplyCollateral);
+  });
+});
+
+describe("prepare_morpho_supply_collateral — T2: asset-match refusal (loanToken → hintTool: supply)", () => {
+  it("USDC passed → INVALID_INPUT + hintTool", async () => {
+    getStatusSpy.mockResolvedValueOnce(PAIRED_STATUS);
+    readMarketParamsSpy.mockResolvedValueOnce(okParams);
+    const result = await callTool({ marketId: MARKET_ID, asset: USDC, amount: "100" });
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as { errorCode: string; hintTool: string };
+    expect(sc.errorCode).toBe("INVALID_INPUT");
+    expect(sc.hintTool).toBe("prepare_morpho_supply");
+  });
+});
+
+describe("prepare_morpho_supply_collateral — T3: Fixture Y byte-identity", () => {
+  it("supplyCollateral(wstETH, 1e18, ONBEHALF) → fingerprint matches Fixture Y", async () => {
+    getStatusSpy.mockResolvedValueOnce(PAIRED_STATUS);
+    readMarketParamsSpy.mockResolvedValueOnce(okParams);
+    const result = await callTool({
+      marketId: MARKET_ID, asset: WSTETH, amount: "1", onBehalf: ONBEHALF,
+    });
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { payloadFingerprint: string };
+    expect(sc.payloadFingerprint).toBe(FIXTURE_Y_FINGERPRINT);
+  });
+});
+
+describe("prepare_morpho_supply_collateral — T4: intent-vs-reality refusal", () => {
+  it("non-existent market → INVALID_INPUT", async () => {
+    getStatusSpy.mockResolvedValueOnce(PAIRED_STATUS);
+    readMarketParamsSpy.mockResolvedValueOnce({
+      loanToken: ZERO, collateralToken: ZERO,
+      oracle: ZERO, irm: ZERO, lltv: 0n,
+    });
+    const result = await callTool({ marketId: MARKET_ID, asset: WSTETH, amount: "1" });
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as { errorCode: string; message: string };
+    expect(sc.errorCode).toBe("INVALID_INPUT");
+    expect(sc.message).toMatch(/does not exist/);
+  });
+});
+
+describe("prepare_morpho_supply_collateral — T5: WC-session not paired", () => {
+  it("→ WALLET_NOT_PAIRED", async () => {
+    getStatusSpy.mockResolvedValueOnce(null);
+    const result = await callTool({ marketId: MARKET_ID, asset: WSTETH, amount: "1" });
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as { errorCode: string };
+    expect(sc.errorCode).toBe("WALLET_NOT_PAIRED");
+  });
+});

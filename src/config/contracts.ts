@@ -296,6 +296,58 @@ export function getAllCompoundCometsForChain(chainId: ChainId): Address[] {
 }
 
 // ---------------------------------------------------------------------------
+// Morpho Blue per-chain SOT — Phase 29 Plan 29-01.
+// ---------------------------------------------------------------------------
+//
+// Sibling sub-table (NOT a widening of `ContractsForChain`) per Phase 28 § 3
+// precedent: Morpho Blue ships ONE contract per chain (no per-base inner record
+// — unlike Compound V3 Comets), so the type is the simpler
+// `Partial<Record<ChainId, Address>>`. v2.3.x grows the table to chainId 8453
+// (Base) and chainId 137 (Polygon) by adding rows; the getter signature stays
+// stable.
+//
+// Provenance: Morpho Blue verified at `0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb`
+// on all 40+ supported chains (research § Topic 1 — research date 2026-05-21).
+// Canonical SOT URL: [docs.morpho.org/addresses](https://docs.morpho.org/addresses).
+// Cross-verified against LedgerHQ ERC-7730 [calldata-MorphoBlue.json](https://github.com/LedgerHQ/clear-signing-erc7730-registry/blob/master/registry/morpho/calldata-MorphoBlue.json)
+// contract address coverage (clear-sign metadata is keyed on this exact address).
+//
+// Phase 29 ships chainId 1 ONLY; Base (8453) + Polygon (137) deferred to
+// v2.3.x mirroring Phase 28 Compound deferral pattern.
+//
+// Each literal `getAddress`-wrapped at the literal site so a corrupted snapshot
+// — single hex digit flipped at rest — throws EIP-55 at module load.
+
+/**
+ * Per-chain Morpho Blue singleton contract addresses. The same proxy contract
+ * is deployed at `0xBBBB…FFCb` on every supported chain (Morpho's `CREATE2`
+ * vanity deployment). `Partial<Record<ChainId, Address>>` because v2.3.x grows
+ * the table incrementally without disturbing existing callers.
+ *
+ * Format-fanout-sentinel: the Morpho Blue address literal lives ONLY here.
+ * Plan 29-01 regression test asserts `grep -n "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb" src/ -r`
+ * outside of this file is empty.
+ */
+const MORPHO_BLUE_RAW: Partial<Record<ChainId, Address>> = {
+  1: getAddress("0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"),
+};
+
+/**
+ * Get the canonical Morpho Blue contract address for the given chain. Returns
+ * `null` when Morpho is not enumerated on the given chain (v2.3.x will fill in
+ * Base / Polygon / Arbitrum / Optimism rows). Consumed by:
+ *   - Plan 29-02's `get_morpho_positions` reader (`tx.to` for `eth_call`).
+ *   - Plan 29-03's `prepare_morpho_*` tools (`tx.to` for the prepared tx).
+ *   - Plan 29-03's `canonical-dispatch.ts` Ethereum allowlist arm.
+ * The same address is also seeded in `KNOWN_SPENDERS_ETHEREUM` (Morpho Blue
+ * row below) for approval-label discovery; the regression test asserts cross-
+ * view byte-identity between the two views.
+ */
+export function getMorphoBlueAddress(chainId: ChainId): Address | null {
+  return MORPHO_BLUE_RAW[chainId] ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // Known-spender table — PREP-30 surface for approval-class DECODED ARGS.
 // ---------------------------------------------------------------------------
 
@@ -374,6 +426,17 @@ export const KNOWN_SPENDERS_ETHEREUM: readonly KnownSpender[] = [
     address: getAddress("0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE"),
     label: "Li.Fi Diamond",
     source: "https://etherscan.io/address/0x1231deb6f5749ef6ce6943a275a1d3e7486f4eae",
+  },
+  // Morpho Blue — Phase 29 Plan 29-01. Single singleton contract per chain
+  // (no per-market inner record — unlike Compound V3's 6-Comet table). The
+  // `!` non-null assertion is safe: `MORPHO_BLUE_RAW[1]` is populated at
+  // module load. T-29-01-T-FROZEN cross-view consistency anchor — drift
+  // between this row and `getMorphoBlueAddress(1)` fails the
+  // test/config-contracts.test.ts regression.
+  {
+    address: getMorphoBlueAddress(1)!,
+    label: "Morpho Blue",
+    source: "https://docs.morpho.org/addresses",
   },
   {
     address: getAddress("0x111111125421cA6dc452d289314280a0F8842A65"),

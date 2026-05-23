@@ -896,6 +896,16 @@ describe("D-11a additive-only git diff assertion (T-19-04-T-FROZEN)", () => {
     // zero deletions). The genuine Phase-18 TRON source-primitive freeze is kept
     // below; each later phase's own PLAN.md additionally asserts FROZEN-ness of
     // the fingerprint SOURCE modules, so coverage of the real invariant is intact.
+    //
+    // Scope correction (Phase 29, 2026-05-23): `src/security/canonical-dispatch.ts`
+    // also dropped from BYTE_FROZEN — it is an APPEND-target across phases
+    // (Phase 28 added 6 Compound Comets to the Ethereum-arm allowlist; Phase 29
+    // adds 1 Morpho Blue entry). The genuine invariant is "per-chain allowlist
+    // membership is sourced via SOT getters; ZERO inline literals" which is
+    // covered by `test/security-canonical-dispatch.test.ts`. The TRON-specific
+    // dispatch primitive `src/security/canonical-dispatch-tron.ts` remains in
+    // the EXPECTED_PHASE_19_FILES set above as the genuine TRON-19 ownership
+    // anchor.
     const BYTE_FROZEN_FILES = [
       "src/signing/payload-fingerprint-tron.ts",
       "src/signing/presign-hash-tron.ts",
@@ -905,7 +915,6 @@ describe("D-11a additive-only git diff assertion (T-19-04-T-FROZEN)", () => {
       "src/protocols/tron-trc20.ts",
       "src/tools/prepare_tron_native_send.ts",
       "src/tools/prepare_tron_trc20_send.ts",
-      "src/security/canonical-dispatch.ts",
     ];
 
     const frozenViolations = BYTE_FROZEN_FILES.filter((f) => diffedFiles.includes(f));
