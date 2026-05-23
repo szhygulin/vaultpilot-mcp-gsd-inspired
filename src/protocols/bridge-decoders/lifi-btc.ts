@@ -24,7 +24,7 @@
 //   (quote.action.toAddress === params.toAddress) lives in prepare_btc_lifi_swap.ts,
 //   NOT here. This decoder only extracts vault address, amount, OP_RETURN presence.
 
-import "../../../src/chains/bitcoin/types.js"; // ensure initEccLib(tinySecp256k1) fires
+import "../../chains/bitcoin/types.js"; // ensure initEccLib(tinySecp256k1) fires
 import { Psbt, networks, payments } from "bitcoinjs-lib";
 import { log } from "../../diagnostics/logger.js";
 
