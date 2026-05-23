@@ -89,7 +89,11 @@ import "./prepare_morpho_supply.js";              // Phase 29 Plan 29-03 (MOR-02
 import "./prepare_morpho_supply_collateral.js";   // Phase 29 Plan 29-03 (MOR-03) — Morpho Blue supplyCollateral
 import "./prepare_morpho_withdraw.js";            // Phase 29 Plan 29-03 (MOR-03) — Morpho Blue withdraw (toAssetsDown for "max")
 import "./prepare_morpho_withdraw_collateral.js"; // Phase 29 Plan 29-03 (MOR-03) — Morpho Blue withdrawCollateral
-import "./get_lido_positions.js"; // Phase 30 Plan 30-02 (LIDO-01) — stETH + wstETH positions (Ethereum + Arbitrum)
+import "./get_lido_positions.js";         // Phase 30 Plan 30-02 (LIDO-01) — stETH + wstETH positions (Ethereum + Arbitrum)
+import "./prepare_lido_stake.js";         // Phase 30 Plan 30-03 (LIDO-02) — ETH → stETH (Lido.submit value-bearing)
+import "./prepare_lido_unstake.js";       // Phase 30 Plan 30-03 (LIDO-03) — stETH withdrawal queue (NFT receipt)
+import "./prepare_lido_wrap.js";          // Phase 30 Plan 30-03 (LIDO-04) — stETH → wstETH (WstETH.wrap)
+import "./prepare_lido_unwrap.js";        // Phase 30 Plan 30-03 (LIDO-04) — wstETH → stETH (WstETH.unwrap)
 import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";

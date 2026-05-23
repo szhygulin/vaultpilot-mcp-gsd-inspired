@@ -48,7 +48,7 @@
 // `src/signing/blocks.ts` (Plan 04-05) — NOT inlined here. Format-fanout-
 // sentinel: one helper, one home.
 
-import { erc20Abi, toBytes, type Address, type Hex } from "viem";
+import { decodeFunctionData, erc20Abi, toBytes, type Address, type Hex } from "viem";
 import { estimateFeesPerGas, estimateGas, getTransactionCount } from "viem/actions";
 import { Message, Transaction } from "@solana/web3.js";
 import { Psbt as BtcPsbt, Transaction as BtcTransaction } from "bitcoinjs-lib";
@@ -77,6 +77,16 @@ import {
 } from "../protocols/compound-v3.js";
 import { _protocols, type Erc20Decoded } from "../protocols/erc20.js";
 import { _morphoBlue, type MorphoBlueDecoded } from "../protocols/morpho-blue.js";
+import {
+  LIDO_SELECTORS,
+  LIDO_STETH_SUBMIT_ABI,
+  WQ_REQUEST_ABI,
+  WSTETH_WRAP_ABI,
+  WSTETH_UNWRAP_ABI,
+  getLidoStethAddress as _getLidoStethAddress,
+  getLidoWstethAddress as _getLidoWstethAddress,
+  getLidoWithdrawalQueueAddress as _getLidoWithdrawalQueueAddress,
+} from "../protocols/lido.js";
 import { _solanaSpl } from "../protocols/solana-spl.js";
 import { _solanaSystem } from "../protocols/solana-system.js";
 import { _tronStake } from "../protocols/tron-stake.js";
@@ -96,9 +106,11 @@ import {
   buildAaveDecodedArgsBlock,
   buildCompoundDecodedArgsBlock,
   buildDecodedArgsBlock,
+  buildLidoDecodedArgsBlock,
   buildMorphoDecodedArgsBlock,
   buildSimulationBlock,
   chunkHex,
+  type LidoDecoded,
 } from "../signing/blocks.js";
 import "../chains/bitcoin/types.js"; // ensure initEccLib(tinySecp256k1) fires
 import "../chains/litecoin/types.js"; // ensure initEccLib fires for LTC address derivation
@@ -584,13 +596,14 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // the agent). _protocols indirection for ESM spy-affordance.
     const decodedArgs: Erc20Decoded = _protocols.decodeErc20Call(record.tx.data);
 
-    // Phase 7 / 28 / 29: FOUR-tier selector dispatch. If the ERC-20 decoder
-    // returned `kind: "unknown"`, try Aave → Compound → Morpho. ERC-20
+    // Phase 7 / 28 / 29 / 30: FIVE-tier selector dispatch. If the ERC-20 decoder
+    // returned `kind: "unknown"`, try Aave → Compound → Morpho → Lido. ERC-20
     // selectors (transfer / approve / WETH9.withdraw) take precedence; the
     // ABI dispatch tables are disjoint so a clean fall-through is sufficient.
     let aaveDecoded: AaveV3Decoded | null = null;
     let compoundDecoded: Exclude<CompoundV3Decoded, { kind: "unknown" }> | null = null;
     let morphoDecoded: Exclude<MorphoBlueDecoded, { kind: "unknown" }> | null = null;
+    let lidoDecoded: LidoDecoded | null = null;
     if (decodedArgs.kind === "unknown") {
       const aave = _aaveProtocols.decodeAaveV3Call(record.tx.data);
       if (aave.kind !== "unknown") {
@@ -602,7 +615,77 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
         } else {
           // Phase 29 Plan 29-03 four-tier extension — Morpho Blue.
           const morpho = _morphoBlue.decodeMorphoBlueCall(record.tx.data);
-          if (morpho.kind !== "unknown") morphoDecoded = morpho;
+          if (morpho.kind !== "unknown") {
+            morphoDecoded = morpho;
+          } else {
+            // Phase 30 Plan 30-03 five-tier extension — Lido protocol.
+            // Match by selector prefix first (cheap), then ABI-decode.
+            // D-12: NO LEDGER NOTICE for any Lido selector — ERC-7730 clear-sign confirmed.
+            const sel = record.tx.data.slice(0, 10).toLowerCase() as Hex;
+            if (sel === LIDO_SELECTORS.submit) {
+              try {
+                const { args: [referral] } = decodeFunctionData({
+                  abi: LIDO_STETH_SUBMIT_ABI,
+                  data: record.tx.data,
+                });
+                const stethAddr = _getLidoStethAddress(record.tx.chainId as ChainId);
+                if (stethAddr) {
+                  lidoDecoded = {
+                    kind: "lido-stake",
+                    referral: referral as Address,
+                    valueWei: record.tx.valueWei,
+                    contractAddress: stethAddr,
+                  };
+                }
+              } catch { /* ABI decode error — fall through to unknown */ }
+            } else if (sel === LIDO_SELECTORS.requestWithdrawals) {
+              try {
+                const { args: [amounts, owner] } = decodeFunctionData({
+                  abi: WQ_REQUEST_ABI,
+                  data: record.tx.data,
+                });
+                const wqAddr = _getLidoWithdrawalQueueAddress(record.tx.chainId as ChainId);
+                if (wqAddr) {
+                  lidoDecoded = {
+                    kind: "lido-unstake",
+                    amounts: amounts as readonly bigint[],
+                    owner: owner as Address,
+                    contractAddress: wqAddr,
+                  };
+                }
+              } catch { /* ABI decode error — fall through to unknown */ }
+            } else if (sel === LIDO_SELECTORS.wrap) {
+              try {
+                const { args: [stethAmount] } = decodeFunctionData({
+                  abi: WSTETH_WRAP_ABI,
+                  data: record.tx.data,
+                });
+                const wstethAddr = _getLidoWstethAddress(record.tx.chainId as ChainId);
+                if (wstethAddr) {
+                  lidoDecoded = {
+                    kind: "lido-wrap",
+                    stethAmount: stethAmount as bigint,
+                    contractAddress: wstethAddr,
+                  };
+                }
+              } catch { /* ABI decode error — fall through to unknown */ }
+            } else if (sel === LIDO_SELECTORS.unwrap) {
+              try {
+                const { args: [wstethAmount] } = decodeFunctionData({
+                  abi: WSTETH_UNWRAP_ABI,
+                  data: record.tx.data,
+                });
+                const wstethAddr = _getLidoWstethAddress(record.tx.chainId as ChainId);
+                if (wstethAddr) {
+                  lidoDecoded = {
+                    kind: "lido-unwrap",
+                    wstethAmount: wstethAmount as bigint,
+                    contractAddress: wstethAddr,
+                  };
+                }
+              } catch { /* ABI decode error — fall through to unknown */ }
+            }
+          }
         }
       }
     }
@@ -797,7 +880,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                 morphoLoanTokenContext,
                 morphoCollateralTokenContext,
               )
-            : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
+            : lidoDecoded !== null
+              ? buildLidoDecodedArgsBlock(lidoDecoded)
+              : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
 
     // Phase 6 — Plan 06-02: wide eth_call simulation. DF-1 LOCKED. Runs for
     // ALL tx shapes including native sends (defense-in-depth uniform per
@@ -930,18 +1015,44 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
               }
           : morphoDecoded !== null
             ? buildMorphoDecodedArgsJson(morphoDecoded)
-            : decodedArgs.kind === "transfer"
-              ? { kind: "transfer" as const, to: decodedArgs.to, amount: decodedArgs.amount.toString() }
-              : decodedArgs.kind === "approve"
+            : lidoDecoded !== null
+              ? lidoDecoded.kind === "lido-stake"
                 ? {
-                    kind: "approve" as const,
-                    spender: decodedArgs.spender,
-                    amount: decodedArgs.amount.toString(),
-                    isUnlimited: decodedArgs.isUnlimited,
+                    kind: "lido-stake" as const,
+                    referral: lidoDecoded.referral,
+                    valueWei: lidoDecoded.valueWei.toString(),
+                    contractAddress: lidoDecoded.contractAddress,
                   }
-                : decodedArgs.kind === "withdraw"
-                  ? { kind: "withdraw" as const, amount: decodedArgs.amount.toString() }
-                  : { kind: "unknown" as const, selector: decodedArgs.selector };
+                : lidoDecoded.kind === "lido-unstake"
+                  ? {
+                      kind: "lido-unstake" as const,
+                      amounts: lidoDecoded.amounts.map((a) => a.toString()),
+                      owner: lidoDecoded.owner,
+                      contractAddress: lidoDecoded.contractAddress,
+                    }
+                  : lidoDecoded.kind === "lido-wrap"
+                    ? {
+                        kind: "lido-wrap" as const,
+                        stethAmount: lidoDecoded.stethAmount.toString(),
+                        contractAddress: lidoDecoded.contractAddress,
+                      }
+                    : {
+                        kind: "lido-unwrap" as const,
+                        wstethAmount: lidoDecoded.wstethAmount.toString(),
+                        contractAddress: lidoDecoded.contractAddress,
+                      }
+              : decodedArgs.kind === "transfer"
+                ? { kind: "transfer" as const, to: decodedArgs.to, amount: decodedArgs.amount.toString() }
+                : decodedArgs.kind === "approve"
+                  ? {
+                      kind: "approve" as const,
+                      spender: decodedArgs.spender,
+                      amount: decodedArgs.amount.toString(),
+                      isUnlimited: decodedArgs.isUnlimited,
+                    }
+                  : decodedArgs.kind === "withdraw"
+                    ? { kind: "withdraw" as const, amount: decodedArgs.amount.toString() }
+                    : { kind: "unknown" as const, selector: decodedArgs.selector };
 
     return {
       content: [{ type: "text", text }],
