@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Bitcoin + Litecoin
 status: executing
-last_updated: "2026-05-23T05:43:17.691Z"
-last_activity: 2026-05-22 -- Phase 27 planning complete
+last_updated: "2026-05-23T06:26:21.173Z"
+last_activity: 2026-05-23 -- Phase 30 planning complete
 progress:
   total_phases: 6
   completed_phases: 6
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-05-12)
 Phase: 27
 Plan: Not started
 Status: Ready to execute
-Last activity: 2026-05-22 -- Phase 27 planning complete
+Last activity: 2026-05-23 -- Phase 30 planning complete
 
 Prior activity: 2026-05-18 — Phase 9 (Hardening — v1.3 skill + verification tools + dispatch allowlist) closed code-complete. 5 atomic execute PRs landed sequentially under auto-mode in wave order 09-01 → 09-02 → 09-03 → 09-04 → 09-05: PR #48 (09-01 sister repo `szhygulin/vaultpilot-preflight-skill` bootstrap via `gh repo create --private`; BUSL-1.1 license mirrored from main repo; SKILL.md + Step 0 self-check + invariants #1/#2/#2.5/#5/#11/#14 encoded; v1.3.0 tag deferred to coordinated 09-02 step per plan-checker W-1; CI workflow `.github/workflows/ci.yml` deferred because gh OAuth lacks `workflow` scope; 789 → 789 +0), PR #49 (09-02 `src/security/skill-integrity.ts` SHA-256 lazy probe via Node `crypto` + personal + project scope; `VAULTPILOT_NOTICE_TEMPLATE` missing + tampered variants in `blocks.ts` APPEND-ONLY; dispatcher-wrap NOTICE prepend at `server.ts` with `skillNoticeEmitted` dedup flag set BEFORE return for race-defense; 789 → 810 +21), PR #50 (09-03 `get_verification_artifact` tool + sparse JSON structuredContent + `pasteableBlock` byte-stable 32-line template; 810 → 828 +18), PR #51 (09-04 `src/security/canonical-dispatch.ts` parallel `CANONICAL_DISPATCH_TARGETS` per-chain table; Layer 0.5 wiring; `DISPATCH_TARGET_REFUSED` errorCode; 828 → 858 +30), PR #52 (09-05 `verify_tx_decode` 3-arm discriminated union + `get_tx_verification` v1.3 additive fields + register-all consolidation; 858 → 890 +32). Test trajectory 789 → 890 (+101 net across 5 plans). FROZEN-area zero-diff held END-TO-END. Sister repo `szhygulin/vaultpilot-preflight-skill` live at v1.3.0.
 
