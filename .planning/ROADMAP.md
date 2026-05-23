@@ -883,15 +883,15 @@ Plans:
 
 **Wave 1**
 
-- [ ] 31-01-PLAN.md — SOT extension: EigenLayerContracts + curated 7-LST strategy registry + RocketPoolContracts + 3 KNOWN_SPENDERS rows; canonical-dispatch allowlist arms (+10 addresses); planner-gate resolution of A1/A2/A4 against live mainnet RPC
+- [x] 31-01-PLAN.md — SOT extension: EigenLayerContracts + curated 7-LST strategy registry + RocketPoolContracts + 3 KNOWN_SPENDERS rows; canonical-dispatch allowlist arms (+10 addresses); planner-gate resolution of A1/A2/A4 against live mainnet RPC
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 31-02-PLAN.md — EigenLayer protocol decoder + chain reader + signing-shares pure-math + get_eigenlayer_positions + prepare_eigenlayer_deposit (D-05 LST-approval + D-06 cap-sentinel pre-flights + D-10 slashing line + D-13 LEDGER NOTICE); Fixture Z
+- [x] 31-02-PLAN.md — EigenLayer protocol decoder + chain reader + signing-shares pure-math + get_eigenlayer_positions + prepare_eigenlayer_deposit (D-05 LST-approval + D-06 cap-sentinel pre-flights + D-10 slashing line + D-13 LEDGER NOTICE); Fixture Z
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 31-03-PLAN.md — Rocket Pool protocol decoder + chain reader + signing-rate pure-math + get_rocketpool_positions + prepare_rocketpool_stake (D-07 min-deposit) + prepare_rocketpool_unstake (D-08 pool-liquidity); preview_send (to, selector) tuple dispatch (Pitfall 1/2); Fixtures AA/AB; integration test; SECURITY.md §6 v2.3 close-out (D-15)
+- [x] 31-03-PLAN.md — Rocket Pool protocol decoder + chain reader + signing-rate pure-math + get_rocketpool_positions + prepare_rocketpool_stake (D-07 min-deposit) + prepare_rocketpool_unstake (D-08 pool-liquidity); preview_send (to, selector) tuple dispatch (Pitfall 1/2); Fixtures AA/AB; integration test; SECURITY.md §6 v2.3 close-out (D-15)
 
 **Status**: planning; v2.3 verify-phase requires real-Ledger smoke against mainnet across all four protocols. Could be split into per-protocol verify-phases if scope warrants.
 
@@ -1155,7 +1155,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 28. Compound V3 — multi-Comet supply/withdraw/borrow/repay (Ethereum mainnet — 6 Comets) | v2.3 | 4/4 | Complete (verify-phase open); closes #64 | 2026-05-20 |
 | 29. Morpho Blue — supply/withdraw/borrow/repay | v2.3 | 3/3 | Complete   | 2026-05-23 |
 | 30. Lido — stake/unstake/wrap/unwrap (stETH↔wstETH) | v2.3 | 3/3 | Complete    | 2026-05-23 |
-| 31. EigenLayer + Rocket Pool | v2.3 | 0/3 | Not started | - |
+| 31. EigenLayer + Rocket Pool | v2.3 | 3/3 | Complete    | 2026-05-23 |
 | 32. Uniswap V3 swap (auto-fee-tier, same-chain) | v2.4 | 0/2 | Not started | - |
 | 33. Uniswap V3 full LP verb set + `get_lp_positions` with IL estimate | v2.4 | 0/3 | Not started | - |
 | 34. Curve swap + add liquidity | v2.4 | 0/2 | Not started | - |

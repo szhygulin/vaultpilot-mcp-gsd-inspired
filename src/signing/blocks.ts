@@ -1769,3 +1769,281 @@ export function buildLidoDecodedArgsBlock(decoded: LidoDecoded): string {
         .replace("{AMOUNT_WEI}", decoded.wstethAmount.toString());
   }
 }
+
+// =============================================================================
+// Phase 31 — Plan 31-02 additive extensions (APPEND-ONLY). EigenLayer surface.
+// All Phase 4 / 6 / 7 / 8 / 9 / 28 / 29 / 30 templates above stay byte-identical
+// (FROZEN). Three new constants + one decoder helper back the
+// `prepare_eigenlayer_deposit` tool (D-09 / D-13) and the preview_send EigenLayer
+// selector-dispatch arm.
+//
+// D-13 RESOLVED: `LEDGER_NOTICE_EIGENLAYER_DEPOSIT_TEMPLATE` surfaces the
+// blind-sign warning because StrategyManager.depositIntoStrategy is NOT
+// covered by the Ledger Ethereum app's clear-sign plugins (RESEARCH § Topic 8,
+// 2026-05-23). Sibling of `LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE` (line 389).
+// `Address` is already imported from "viem" at the top of this file (line 21).
+// =============================================================================
+
+/**
+ * LEDGER NOTICE template emitted by `prepare_eigenlayer_deposit` (D-13).
+ *
+ * EigenLayer's `StrategyManager.depositIntoStrategy` selector (0xe7a050aa) is
+ * NOT in the Ledger Ethereum app's ERC-7730 clear-sign plugin registry as of
+ * RESEARCH date 2026-05-23. The device will display a raw 32-byte hash rather
+ * than decoded args; users on factory-default devices will hit a "Blind
+ * signing is not enabled" refusal. This template surfaces the exact navigation
+ * path BEFORE the user attempts to sign. T-LEDGER-NOTICE-EIGENLAYER-1.
+ *
+ * Verbatim per RESEARCH § Topic 8 lines 879-890. The 10-line body (after the
+ * "LEDGER NOTICE" header) MUST stay byte-identical — the prepare-tool test
+ * cross-checks every line.
+ */
+export const LEDGER_NOTICE_EIGENLAYER_DEPOSIT_TEMPLATE: string = [
+  "LEDGER NOTICE",
+  "  EigenLayer depositIntoStrategy is NOT covered by the Ledger Ethereum app's clear-sign plugins.",
+  "  Your device will BLIND-SIGN this transaction (display a raw hash, no decoded args).",
+  "  If your device refuses with \"Blind signing is not enabled\":",
+  "    1. Open the Ethereum app on your device",
+  "    2. Settings → Blind signing → Enabled",
+  "    3. Retry send_transaction",
+  "  After send_transaction fires, compare the PREDICTED hash below to the",
+  "  value your hardware device displays — character-for-character. This",
+  "  on-device match is the cryptographic anchor.",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT template for `prepare_eigenlayer_deposit`
+ * (StrategyManager.depositIntoStrategy — LST → strategy shares).
+ * Slots: `{CHAIN}`, `{STRATEGY_MANAGER}`, `{STRATEGY}`, `{LST_SYMBOL}`,
+ *        `{LST_TOKEN}`, `{AMOUNT}`.
+ * Consumed by Plan 31-02 `prepare_eigenlayer_deposit.ts` via `.replace(...)` calls.
+ * Mirrors the Phase 30 `LIDO_WRAP_PREPARE_RECEIPT_TEMPLATE` shape.
+ */
+export const EIGENLAYER_DEPOSIT_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:        EigenLayer deposit ({LST_SYMBOL} → strategy shares)",
+  "  chain:            {CHAIN}",
+  "  strategyManager:  {STRATEGY_MANAGER}",
+  "  strategy:         {STRATEGY}",
+  "  lstToken:         {LST_TOKEN}",
+  "  amount:           {AMOUNT} {LST_SYMBOL}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `StrategyManager.depositIntoStrategy(strategy, token, amount)`.
+ * Slots: `{STRATEGY_MANAGER}`, `{STRATEGY}`, `{LST_SYMBOL}`, `{LST_TOKEN}`,
+ *        `{AMOUNT_HUMAN}`, `{AMOUNT_WEI}`.
+ * Consumed by `buildEigenLayerDecodedArgsBlock` for `preview_send` selector dispatch.
+ */
+const DECODED_ARGS_TEMPLATE_EIGENLAYER_DEPOSIT: string = [
+  "DECODED ARGS",
+  "  operation:        EigenLayer deposit (LST → strategy shares)",
+  "  strategyManager:  {STRATEGY_MANAGER}",
+  "  strategy:         {STRATEGY}",
+  "  lstSymbol:        {LST_SYMBOL}",
+  "  lstToken:         {LST_TOKEN}",
+  "  amount:           {AMOUNT_HUMAN} {LST_SYMBOL} ({AMOUNT_WEI} wei)",
+].join("\n");
+
+/**
+ * EigenLayer decoded-args type for the selector(s) preview_send routes to the
+ * EigenLayer arm. Phase 31 v1.x ships exactly ONE write — `depositIntoStrategy`.
+ * Future v2.x adds delegateTo / undelegate / claimQueuedWithdrawal under new
+ * discriminants.
+ */
+export interface EigenLayerDecoded {
+  kind: "eigenlayer-deposit";
+  strategyManager: Address;
+  strategy: Address;
+  lstSymbol: string;
+  lstToken: Address;
+  amount: bigint;
+}
+
+/**
+ * Build the DECODED ARGS block for an EigenLayer-protocol call.
+ *
+ * Mirrors `buildLidoDecodedArgsBlock` (line 1743). Called from `preview_send.ts`
+ * after the EigenLayer selector is matched + the destination cross-checks the
+ * StrategyManager SOT address.
+ *
+ * D-13: NO clear-sign coverage — `prepare_eigenlayer_deposit` ALREADY emits the
+ * LEDGER NOTICE at prepare time, and `preview_send` ALSO surfaces it at
+ * preview time so the user sees the blind-sign warning regardless of whether
+ * they entered through the prepare receipt or the preview block.
+ */
+export function buildEigenLayerDecodedArgsBlock(decoded: EigenLayerDecoded): string {
+  // All 7 curated EigenLayer LSTs are 18 decimals (RESEARCH § Topic 1).
+  const LST_DEC = 18;
+  switch (decoded.kind) {
+    case "eigenlayer-deposit":
+      // `{LST_SYMBOL}` appears TWICE in the template (header row + amount row).
+      // String.prototype.replace replaces the FIRST occurrence only with a
+      // string pattern; use a /g regex to replace both occurrences in one pass.
+      return DECODED_ARGS_TEMPLATE_EIGENLAYER_DEPOSIT
+        .replace("{STRATEGY_MANAGER}", decoded.strategyManager)
+        .replace("{STRATEGY}", decoded.strategy)
+        .replace(/\{LST_SYMBOL\}/g, decoded.lstSymbol)
+        .replace("{LST_TOKEN}", decoded.lstToken)
+        .replace("{AMOUNT_HUMAN}", formatUnits(decoded.amount, LST_DEC))
+        .replace("{AMOUNT_WEI}", decoded.amount.toString());
+  }
+}
+
+// =============================================================================
+// Phase 31 — Plan 31-03 additive extensions (APPEND-ONLY). Rocket Pool surface.
+// All Phase 4 / 6 / 7 / 8 / 9 / 28 / 29 / 30 / 31-02 templates above stay
+// byte-identical (FROZEN). Five new template constants + one shared LEDGER
+// NOTICE template + one discriminated-union decoder helper back the
+// `prepare_rocketpool_stake` + `prepare_rocketpool_unstake` tools (D-07 / D-08
+// / D-13) and the `preview_send` (tx.to, selector) tuple-dispatch arms for
+// Pitfall 1 (WETH9.deposit collision) + Pitfall 2 (generic ERC-20 burn).
+//
+// D-13 RESOLVED: `LEDGER_NOTICE_ROCKETPOOL_TEMPLATE` is SHARED between
+// `prepare_rocketpool_stake` AND `prepare_rocketpool_unstake` — symmetric
+// blind-sign UX per CONTEXT.md D-13. Both `RocketDepositPool.deposit()` and
+// `rETH.burn(uint256)` are absent from the Ledger Ethereum app's ERC-7730
+// clear-sign plugin registry as of RESEARCH date 2026-05-23. Sibling of
+// `LEDGER_NOTICE_EIGENLAYER_DEPOSIT_TEMPLATE` (line ~1782) and
+// `LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE` (line ~389).
+// =============================================================================
+
+/**
+ * LEDGER NOTICE template emitted by `prepare_rocketpool_stake`,
+ * `prepare_rocketpool_unstake`, and the corresponding `preview_send` arms
+ * (D-13). SHARED between stake + unstake — symmetric blind-sign UX. The
+ * 10-line body (after the "LEDGER NOTICE" header) MUST stay byte-identical;
+ * the prepare-tool tests cross-check every line.
+ *
+ * Verbatim per .planning/phases/31-evm-eigenlayer-rocket-pool/31-03-PLAN.md
+ * <verified_values> D-13 LEDGER NOTICE template.
+ *
+ * T-LEDGER-NOTICE-ROCKETPOOL-1 mitigation: the cryptographic anchor remains
+ * the on-device blind-sign hash match against the `LEDGER BLIND-SIGN HASH`
+ * block at preview-send time — this template is a UX precondition surface
+ * (defense-in-depth, not a trust gate).
+ */
+export const LEDGER_NOTICE_ROCKETPOOL_TEMPLATE: string = [
+  "LEDGER NOTICE",
+  "  Rocket Pool deposit/burn is NOT covered by the Ledger Ethereum app's clear-sign plugins.",
+  "  Your device will BLIND-SIGN this transaction (display a raw hash, no decoded args).",
+  "  If your device refuses with \"Blind signing is not enabled\":",
+  "    1. Open the Ethereum app on your device",
+  "    2. Settings → Blind signing → Enabled",
+  "    3. Retry send_transaction",
+  "  After send_transaction fires, compare the PREDICTED hash below to the",
+  "  value your hardware device displays — character-for-character. This",
+  "  on-device match is the cryptographic anchor.",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT template for `prepare_rocketpool_stake`
+ * (RocketDepositPool.deposit() — value-bearing ETH → rETH).
+ * Slots: `{CHAIN}`, `{DEPOSIT_POOL}`, `{AMOUNT}`.
+ * Consumed by Plan 31-03 `prepare_rocketpool_stake.ts` via `.replace(...)` calls.
+ * Mirrors the Phase 30 `LIDO_STAKE_PREPARE_RECEIPT_TEMPLATE` shape.
+ */
+export const ROCKETPOOL_STAKE_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Rocket Pool stake (ETH → rETH)",
+  "  chain:        {CHAIN}",
+  "  depositPool:  {DEPOSIT_POOL}",
+  "  amount:       {AMOUNT} ETH",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT template for `prepare_rocketpool_unstake`
+ * (rETH.burn(uint256) — rETH → ETH via burn).
+ * Slots: `{CHAIN}`, `{RETH_CONTRACT}`, `{AMOUNT}`.
+ * Consumed by Plan 31-03 `prepare_rocketpool_unstake.ts` via `.replace(...)` calls.
+ */
+export const ROCKETPOOL_UNSTAKE_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation:    Rocket Pool unstake (rETH → ETH via burn)",
+  "  chain:        {CHAIN}",
+  "  rethContract: {RETH_CONTRACT}",
+  "  rethAmount:   {AMOUNT} rETH",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `RocketDepositPool.deposit()` value-bearing call.
+ * Slots: `{DEPOSIT_POOL}`, `{VALUE_ETH}`.
+ * Consumed by `buildRocketPoolDecodedArgsBlock` for `preview_send`
+ * `(tx.to === RocketDepositPool, selector === 0xd0e30db0)` tuple dispatch.
+ *
+ * NOTE — Pitfall 1: WETH9.deposit() shares the SAME selector (0xd0e30db0).
+ * Preview-send dispatches on (tx.to, selector) so this arm only fires when
+ * tx.to === getRocketPoolDepositPoolAddress(1).
+ */
+const DECODED_ARGS_TEMPLATE_ROCKETPOOL_STAKE: string = [
+  "DECODED ARGS",
+  "  operation:    Rocket Pool stake (value-bearing — ETH → rETH)",
+  "  depositPool:  {DEPOSIT_POOL}",
+  "  ethAmount:    {VALUE_ETH} ETH (msg.value)",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `rETH.burn(uint256)` single-arg burn.
+ * Slots: `{RETH_CONTRACT}`, `{AMOUNT_HUMAN}`, `{AMOUNT_WEI}`.
+ * Consumed by `buildRocketPoolDecodedArgsBlock` for `preview_send`
+ * `(tx.to === rETH, selector === 0x42966c68)` tuple dispatch.
+ *
+ * NOTE — Pitfall 2: `0x42966c68` is the generic OpenZeppelin ERC20Burnable
+ * selector. Preview-send dispatches on (tx.to, selector) so this arm only
+ * fires when tx.to === getRocketPoolRethAddress(1).
+ */
+const DECODED_ARGS_TEMPLATE_ROCKETPOOL_BURN: string = [
+  "DECODED ARGS",
+  "  operation:    Rocket Pool unstake (burn)",
+  "  rethContract: {RETH_CONTRACT}",
+  "  rethAmount:   {AMOUNT_HUMAN} rETH ({AMOUNT_WEI} wei)",
+].join("\n");
+
+/**
+ * Rocket Pool decoded-args discriminated union for the `preview_send`
+ * (tx.to, selector) tuple-dispatch arms.
+ *
+ * Two variants — one per the two write selectors Rocket Pool exposes at v2.3:
+ *   - `rocketpool-stake`: RocketDepositPool.deposit() — value-bearing,
+ *     no calldata args; the load-bearing value is `tx.valueWei`.
+ *   - `rocketpool-burn`:  rETH.burn(uint256 _rethAmount) — single-arg, no value.
+ */
+export type RocketPoolDecoded =
+  | {
+      kind: "rocketpool-stake";
+      contractAddress: Address;
+      valueWei: bigint;
+    }
+  | {
+      kind: "rocketpool-burn";
+      contractAddress: Address;
+      amountWei: bigint;
+    };
+
+/**
+ * Build the DECODED ARGS block for a Rocket Pool protocol call.
+ *
+ * Mirrors `buildLidoDecodedArgsBlock` (line ~1743) +
+ * `buildEigenLayerDecodedArgsBlock` (line ~1875). Called from
+ * `src/tools/preview_send.ts` after a (tx.to, selector) tuple match.
+ *
+ * D-13: NO clear-sign coverage — `prepare_rocketpool_stake` and
+ * `prepare_rocketpool_unstake` ALREADY emit the LEDGER NOTICE at prepare
+ * time, and `preview_send` ALSO surfaces it at preview time so the user
+ * sees the blind-sign warning regardless of which surface they came in via.
+ */
+export function buildRocketPoolDecodedArgsBlock(decoded: RocketPoolDecoded): string {
+  // ETH + rETH both 18 decimals.
+  const ETH_DEC = 18;
+  switch (decoded.kind) {
+    case "rocketpool-stake":
+      return DECODED_ARGS_TEMPLATE_ROCKETPOOL_STAKE
+        .replace("{DEPOSIT_POOL}", decoded.contractAddress)
+        .replace("{VALUE_ETH}", formatUnits(decoded.valueWei, ETH_DEC));
+    case "rocketpool-burn":
+      return DECODED_ARGS_TEMPLATE_ROCKETPOOL_BURN
+        .replace("{RETH_CONTRACT}", decoded.contractAddress)
+        .replace("{AMOUNT_HUMAN}", formatUnits(decoded.amountWei, ETH_DEC))
+        .replace("{AMOUNT_WEI}", decoded.amountWei.toString());
+  }
+}

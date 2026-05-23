@@ -60,10 +60,14 @@ import { getAddress, type Address } from "viem";
 import {
   getAaveV3PoolAddress,
   getAllCompoundCometsForChain,
+  getAllEigenLayerStrategiesForChain,
+  getEigenLayerStrategyManagerAddress,
   getLidoStethAddress,
   getLidoWithdrawalQueueAddress,
   getLidoWstethAddress,
   getMorphoBlueAddress,
+  getRocketPoolDepositPoolAddress,
+  getRocketPoolRethAddress,
   getWethAddress,
   type ChainId,
 } from "../config/contracts.js";
@@ -141,6 +145,32 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
   const lidoEntries: Address[] = [lidoSteth, lidoWsteth, lidoWq].filter(
     (a): a is Address => !!a && a !== "0x0000000000000000000000000000000000000000",
   );
+  // Phase 31 — Plan 31-01. EigenLayer write-side allowlist (Ethereum arm only).
+  // StrategyManager + 7 curated per-strategy proxies (D-04). Each strategy is a
+  // DISTINCT dispatch target because the user-supplied `strategy` arg to
+  // `StrategyManager.depositIntoStrategy(strategy, token, amount)` is itself an
+  // address — a future bug routing a deposit to a non-allowlisted strategy
+  // triggers DISPATCH_TARGET_REFUSED (T-DISPATCH-COLLISION-31). Non-Ethereum
+  // chains return null / [] per D-03 → filter removes them → zero non-Ethereum
+  // EigenLayer entries by construction.
+  const eigenStrategyManager = getEigenLayerStrategyManagerAddress(chainId);
+  const eigenStrategies = getAllEigenLayerStrategiesForChain(chainId).map((s) => s.strategy);
+  const eigenEntries: Address[] = [eigenStrategyManager, ...eigenStrategies].filter(
+    (a): a is Address => !!a && a !== "0x0000000000000000000000000000000000000000",
+  );
+  // Phase 31 — Plan 31-01. Rocket Pool write-side allowlist (Ethereum arm only).
+  // RocketDepositPool is the value-bearing stake target; rETH is the burn target
+  // for unstake. RocketDAOProtocolSettingsDeposit is read-only (no dispatch
+  // entry). Non-Ethereum chains return null per D-03 → filter removes them.
+  // Selector collision note: RocketDepositPool.deposit() shares selector
+  // 0xd0e30db0 with WETH9.deposit() — the allowlist is selector-blind by design;
+  // (to, selector) tuple dispatch lives at the preview_send DECODED ARGS layer
+  // (Plans 31-02 + 31-03).
+  const rocketDepositPool = getRocketPoolDepositPoolAddress(chainId);
+  const rocketReth = getRocketPoolRethAddress(chainId);
+  const rocketEntries: Address[] = [rocketDepositPool, rocketReth].filter(
+    (a): a is Address => !!a && a !== "0x0000000000000000000000000000000000000000",
+  );
   return new Set<Address>([
     getAaveV3PoolAddress(chainId),
     getWethAddress(chainId),
@@ -150,6 +180,8 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
     ...compoundComets,
     ...morphoEntries,
     ...lidoEntries,
+    ...eigenEntries,
+    ...rocketEntries,
   ]);
 }
 

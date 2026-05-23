@@ -21,6 +21,7 @@ import { getAddress, type Address } from "viem";
 
 import {
   KNOWN_SPENDERS_ETHEREUM,
+  ROCKET_POOL_MINIMUM_DEPOSIT_FALLBACK_WEI,
   chainIdFromName,
   chainNameFromId,
   getAaveV3IncentivesController,
@@ -29,16 +30,25 @@ import {
   getAaveV3PoolAddressesProvider,
   getAaveV3UiPoolDataProvider,
   getAllCompoundCometsForChain,
+  getAllEigenLayerStrategiesForChain,
   getCompoundCometAddress,
+  getEigenLayerDelegationManagerAddress,
+  getEigenLayerLstTokenAddress,
+  getEigenLayerStrategyAddress,
+  getEigenLayerStrategyManagerAddress,
   getLidoStethAddress,
   getLidoWstethAddress,
   getLidoWithdrawalQueueAddress,
   getMorphoBlueAddress,
+  getRocketPoolDepositPoolAddress,
+  getRocketPoolDepositSettingsAddress,
+  getRocketPoolRethAddress,
   getWethAddress,
   lookupSpender,
   type ChainId,
   type ChainName,
   type CompoundCometBase,
+  type EigenLayerLst,
 } from "../src/config/contracts.js";
 
 describe("src/config/contracts.ts — getWethAddress(1)", () => {
@@ -733,5 +743,267 @@ describe("src/tokens/morpho-markets-ethereum.json — 25-entry registry shape (P
     expect(wstethUsdc).toBeDefined();
     expect(wstethUsdc?.loanToken.symbol).toBe("USDC");
     expect(wstethUsdc?.collateralToken.symbol).toBe("wstETH");
+  });
+});
+
+// =============================================================================
+// Phase 31 — Plan 31-01: EigenLayer SOT (T-EIGENLAYER-SPENDER-DRIFT-1)
+// =============================================================================
+//
+// T-EIGENLAYER-SPENDER-DRIFT-1: KNOWN_SPENDERS_ETHEREUM "EigenLayer StrategyManager"
+// row must be byte-identical to getEigenLayerStrategyManagerAddress(1). Drift means
+// prepare_token_approve UX labels diverge from the address prepare_eigenlayer_deposit
+// routes to — silent security hole.
+//
+// Addresses verified at planner-gate (2026-05-23) — see
+// .planning/phases/31-evm-eigenlayer-rocket-pool/31-01-PLANNER-GATE-VERIFICATION.md
+// for the audit trail (A1 / A2 / A4 RESOLVED).
+
+describe("src/config/contracts.ts — EigenLayer SOT (Phase 31 Plan 31-01)", () => {
+  // T-EIGENLAYER-SPENDER-DRIFT-1: StrategyManager row ↔ getter cross-view byte-identity.
+  it("T-EIGENLAYER-SPENDER-DRIFT-1 — KNOWN_SPENDERS_ETHEREUM 'EigenLayer StrategyManager' row ↔ getEigenLayerStrategyManagerAddress(1) byte-identical", () => {
+    const row = KNOWN_SPENDERS_ETHEREUM.find((r) => r.label === "EigenLayer StrategyManager");
+    expect(row).toBeDefined();
+    expect(row?.address).toBe(getEigenLayerStrategyManagerAddress(1));
+  });
+
+  // Ethereum literal anchors — StrategyManager + DelegationManager (research § Topic 1).
+  it("getEigenLayerStrategyManagerAddress(1) === verified StrategyManager literal (0x85864637...)", () => {
+    expect(getEigenLayerStrategyManagerAddress(1)).toBe(
+      getAddress("0x858646372CC42E1A627fcE94aa7A7033e7CF075A"),
+    );
+  });
+
+  it("getEigenLayerDelegationManagerAddress(1) === verified DelegationManager literal (0x39053D51...)", () => {
+    expect(getEigenLayerDelegationManagerAddress(1)).toBe(
+      getAddress("0x39053D51B77DC0d36036Fc1fCc8Cb819df8Ef37A"),
+    );
+  });
+
+  // Per-strategy literal anchors (7 entries — research § Topic 1 + eigenlayer-contracts manifest).
+  it("getEigenLayerStrategyAddress(1, 'stETH') === verified stETH-Strategy literal", () => {
+    expect(getEigenLayerStrategyAddress(1, "stETH")).toBe(
+      getAddress("0x93c4b944D05dfe6df7645A86cd2206016c51564D"),
+    );
+  });
+
+  it("getEigenLayerStrategyAddress(1, 'rETH') === verified rETH-Strategy literal", () => {
+    expect(getEigenLayerStrategyAddress(1, "rETH")).toBe(
+      getAddress("0x1BeE69b7dFFfA4E2d53C2a2Df135C388AD25dCD2"),
+    );
+  });
+
+  it("getEigenLayerStrategyAddress(1, 'cbETH') === verified cbETH-Strategy literal", () => {
+    expect(getEigenLayerStrategyAddress(1, "cbETH")).toBe(
+      getAddress("0x54945180dB7943c0ed0FEE7EdaB2Bd24620256bc"),
+    );
+  });
+
+  it("getEigenLayerStrategyAddress(1, 'ETHx') === verified ETHx-Strategy literal", () => {
+    expect(getEigenLayerStrategyAddress(1, "ETHx")).toBe(
+      getAddress("0x9d7eD45EE2E8FC5482fa2428f15C971e6369011d"),
+    );
+  });
+
+  it("getEigenLayerStrategyAddress(1, 'wBETH') === verified wBETH-Strategy literal", () => {
+    expect(getEigenLayerStrategyAddress(1, "wBETH")).toBe(
+      getAddress("0x7CA911E83dabf90C90dD3De5411a10F1A6112184"),
+    );
+  });
+
+  it("getEigenLayerStrategyAddress(1, 'sfrxETH') === verified sfrxETH-Strategy literal", () => {
+    expect(getEigenLayerStrategyAddress(1, "sfrxETH")).toBe(
+      getAddress("0x8CA7A5d6f3acd3A7A8bC468a8CD0FB14B6BD28b6"),
+    );
+  });
+
+  it("getEigenLayerStrategyAddress(1, 'mETH') === verified mETH-Strategy literal", () => {
+    expect(getEigenLayerStrategyAddress(1, "mETH")).toBe(
+      getAddress("0x298aFB19A105D59E74658C4C334Ff360BadE6dd2"),
+    );
+  });
+
+  // Per-LST underlying-token assertions (7 entries; stETH + rETH are cross-SOT byte-identity anchors).
+  it("getEigenLayerLstTokenAddress(1, 'stETH') === getLidoStethAddress(1) (cross-SOT byte-identity vs Phase 30 Lido SOT)", () => {
+    expect(getEigenLayerLstTokenAddress(1, "stETH")).toBe(getLidoStethAddress(1));
+  });
+
+  it("getEigenLayerLstTokenAddress(1, 'rETH') === getRocketPoolRethAddress(1) (cross-SOT byte-identity vs Phase 31 Rocket Pool SOT)", () => {
+    expect(getEigenLayerLstTokenAddress(1, "rETH")).toBe(getRocketPoolRethAddress(1));
+  });
+
+  it("getEigenLayerLstTokenAddress(1, 'cbETH') === verified cbETH literal (planner-gate A2 PASS)", () => {
+    expect(getEigenLayerLstTokenAddress(1, "cbETH")).toBe(
+      getAddress("0xBe9895146f7AF43049ca1c1AE358B0541Ea49704"),
+    );
+  });
+
+  it("getEigenLayerLstTokenAddress(1, 'ETHx') === verified ETHx literal (planner-gate A2 PASS)", () => {
+    expect(getEigenLayerLstTokenAddress(1, "ETHx")).toBe(
+      getAddress("0xA35b1B31Ce002FBF2058D22F30f95D405200A15b"),
+    );
+  });
+
+  it("getEigenLayerLstTokenAddress(1, 'wBETH') === verified wBETH literal (planner-gate A2 PASS)", () => {
+    expect(getEigenLayerLstTokenAddress(1, "wBETH")).toBe(
+      getAddress("0xa2E3356610840701BDf5611a53974510Ae27E2e1"),
+    );
+  });
+
+  it("getEigenLayerLstTokenAddress(1, 'sfrxETH') === verified sfrxETH literal (planner-gate A2 PASS)", () => {
+    expect(getEigenLayerLstTokenAddress(1, "sfrxETH")).toBe(
+      getAddress("0xac3E018457B222d93114458476f3E3416Abbe38F"),
+    );
+  });
+
+  it("getEigenLayerLstTokenAddress(1, 'mETH') === verified mETH literal (planner-gate A2 PASS)", () => {
+    expect(getEigenLayerLstTokenAddress(1, "mETH")).toBe(
+      getAddress("0xd5F7838F5C461fefF7FE49ea5ebaF7728bB0ADfa"),
+    );
+  });
+
+  // Fan-out helper coverage.
+  it("getAllEigenLayerStrategiesForChain(1) returns 7 rows (curated D-04 registry)", () => {
+    const rows = getAllEigenLayerStrategiesForChain(1);
+    expect(rows.length).toBe(7);
+    const lsts = rows.map((r) => r.lst).sort();
+    expect(lsts).toEqual(
+      ["ETHx", "cbETH", "mETH", "rETH", "sfrxETH", "stETH", "wBETH"].sort(),
+    );
+    // Each row carries non-null strategy + lstToken.
+    for (const row of rows) {
+      expect(row.strategy).toMatch(/^0x[0-9a-fA-F]{40}$/);
+      expect(row.lstToken).toMatch(/^0x[0-9a-fA-F]{40}$/);
+    }
+  });
+
+  // chainId pruning — Phase 31 is Ethereum-only (D-03).
+  it("getAllEigenLayerStrategiesForChain returns [] on non-Ethereum chains (D-03 Ethereum-only)", () => {
+    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
+    for (const chainId of otherChains) {
+      expect(getAllEigenLayerStrategiesForChain(chainId)).toEqual([]);
+    }
+  });
+
+  it("getEigenLayerStrategyManagerAddress + getEigenLayerDelegationManagerAddress return null on non-Ethereum chains", () => {
+    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
+    for (const chainId of otherChains) {
+      expect(getEigenLayerStrategyManagerAddress(chainId)).toBeNull();
+      expect(getEigenLayerDelegationManagerAddress(chainId)).toBeNull();
+    }
+  });
+
+  it("getEigenLayerStrategyAddress + getEigenLayerLstTokenAddress return null on non-Ethereum chains", () => {
+    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
+    const lsts: EigenLayerLst[] = ["stETH", "rETH", "cbETH", "ETHx", "wBETH", "sfrxETH", "mETH"];
+    for (const chainId of otherChains) {
+      for (const lst of lsts) {
+        expect(getEigenLayerStrategyAddress(chainId, lst)).toBeNull();
+        expect(getEigenLayerLstTokenAddress(chainId, lst)).toBeNull();
+      }
+    }
+  });
+
+  // EIP-55 round-trip — corrupted-snapshot guard fires at module load.
+  it("all EigenLayer Ethereum getters return EIP-55 checksummed addresses", () => {
+    const sm = getEigenLayerStrategyManagerAddress(1);
+    const dm = getEigenLayerDelegationManagerAddress(1);
+    expect(sm).not.toBeNull();
+    expect(dm).not.toBeNull();
+    expect(sm).toBe(getAddress(sm!));
+    expect(dm).toBe(getAddress(dm!));
+    for (const { strategy, lstToken } of getAllEigenLayerStrategiesForChain(1)) {
+      expect(strategy).toBe(getAddress(strategy));
+      expect(lstToken).toBe(getAddress(lstToken));
+    }
+  });
+});
+
+// =============================================================================
+// Phase 31 — Plan 31-01: Rocket Pool SOT (T-ROCKETPOOL-SPENDER-DRIFT-1)
+// =============================================================================
+//
+// T-ROCKETPOOL-SPENDER-DRIFT-1a: KNOWN_SPENDERS_ETHEREUM "Rocket Pool RocketDepositPool"
+// row must be byte-identical to getRocketPoolDepositPoolAddress(1).
+// T-ROCKETPOOL-SPENDER-DRIFT-1b: KNOWN_SPENDERS_ETHEREUM "Rocket Pool rETH token (burn target)"
+// row must be byte-identical to getRocketPoolRethAddress(1).
+//
+// The settingsDeposit address was resolved at planner-gate 2026-05-23 via
+// RocketStorage.getAddress(keccak256("contract.address", "rocketDAOProtocolSettingsDeposit"));
+// see 31-01-PLANNER-GATE-VERIFICATION.md (A1 RESOLVED).
+
+describe("src/config/contracts.ts — Rocket Pool SOT (Phase 31 Plan 31-01)", () => {
+  // T-ROCKETPOOL-SPENDER-DRIFT-1a: depositPool row ↔ getter cross-view byte-identity.
+  it("T-ROCKETPOOL-SPENDER-DRIFT-1a — KNOWN_SPENDERS_ETHEREUM 'Rocket Pool RocketDepositPool' row ↔ getRocketPoolDepositPoolAddress(1) byte-identical", () => {
+    const row = KNOWN_SPENDERS_ETHEREUM.find(
+      (r) => r.label === "Rocket Pool RocketDepositPool (stake — value-bearing)",
+    );
+    expect(row).toBeDefined();
+    expect(row?.address).toBe(getRocketPoolDepositPoolAddress(1));
+  });
+
+  // T-ROCKETPOOL-SPENDER-DRIFT-1b: rETH row ↔ getter cross-view byte-identity.
+  it("T-ROCKETPOOL-SPENDER-DRIFT-1b — KNOWN_SPENDERS_ETHEREUM 'Rocket Pool rETH token (burn target)' row ↔ getRocketPoolRethAddress(1) byte-identical", () => {
+    const row = KNOWN_SPENDERS_ETHEREUM.find(
+      (r) => r.label === "Rocket Pool rETH token (burn target)",
+    );
+    expect(row).toBeDefined();
+    expect(row?.address).toBe(getRocketPoolRethAddress(1));
+  });
+
+  // Ethereum literal anchors.
+  it("getRocketPoolDepositPoolAddress(1) === verified RocketDepositPool v1.2 literal (0xDD3f50F8...)", () => {
+    expect(getRocketPoolDepositPoolAddress(1)).toBe(
+      getAddress("0xDD3f50F8A6CafbE9b31a427582963f465E745AF8"),
+    );
+  });
+
+  it("getRocketPoolRethAddress(1) === verified rETH literal (0xae78736C...)", () => {
+    expect(getRocketPoolRethAddress(1)).toBe(
+      getAddress("0xae78736Cd615f374D3085123A210448E74Fc6393"),
+    );
+  });
+
+  // settingsDeposit — verified at planner-gate (A1 RESOLVED).
+  it("getRocketPoolDepositSettingsAddress(1) === planner-gate-resolved RocketDAOProtocolSettingsDeposit literal (A1 RESOLVED 2026-05-23)", () => {
+    const settings = getRocketPoolDepositSettingsAddress(1);
+    expect(settings).not.toBeNull();
+    expect(settings).toBe(getAddress("0x227BE8dD01DF8ad9BED0178e4F8cEC2996C5c365"));
+  });
+
+  // D-07 resilience constant.
+  it("ROCKET_POOL_MINIMUM_DEPOSIT_FALLBACK_WEI === 1e16 wei (0.01 ETH; D-07 anchor)", () => {
+    expect(ROCKET_POOL_MINIMUM_DEPOSIT_FALLBACK_WEI).toBe(10_000_000_000_000_000n);
+  });
+
+  // chainId pruning — Phase 31 is Ethereum-only (D-03).
+  it("all 3 Rocket Pool getters return null on non-Ethereum chains (D-03)", () => {
+    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
+    for (const chainId of otherChains) {
+      expect(getRocketPoolDepositPoolAddress(chainId)).toBeNull();
+      expect(getRocketPoolRethAddress(chainId)).toBeNull();
+      expect(getRocketPoolDepositSettingsAddress(chainId)).toBeNull();
+    }
+  });
+
+  // EIP-55 round-trip — corrupted-snapshot guard.
+  it("all Rocket Pool Ethereum getters return EIP-55 checksummed addresses", () => {
+    const dp = getRocketPoolDepositPoolAddress(1);
+    const reth = getRocketPoolRethAddress(1);
+    const settings = getRocketPoolDepositSettingsAddress(1);
+    expect(dp).not.toBeNull();
+    expect(reth).not.toBeNull();
+    expect(settings).not.toBeNull();
+    expect(dp).toBe(getAddress(dp!));
+    expect(reth).toBe(getAddress(reth!));
+    expect(settings).toBe(getAddress(settings!));
+  });
+
+  // KNOWN_SPENDERS_ETHEREUM additive count anchor — Phase 31 adds exactly 3 new rows.
+  it("KNOWN_SPENDERS_ETHEREUM has exactly 1 EigenLayer + 2 Rocket Pool rows (no accidental duplication)", () => {
+    const eigenRows = KNOWN_SPENDERS_ETHEREUM.filter((r) => r.label.startsWith("EigenLayer "));
+    const rocketRows = KNOWN_SPENDERS_ETHEREUM.filter((r) => r.label.startsWith("Rocket Pool "));
+    expect(eigenRows.length).toBe(1);
+    expect(rocketRows.length).toBe(2);
   });
 });

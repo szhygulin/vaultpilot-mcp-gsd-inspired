@@ -35,6 +35,9 @@ import {
   getLidoStethAddress,
   getLidoWstethAddress,
   getLidoWithdrawalQueueAddress,
+  getEigenLayerStrategyManagerAddress,
+  getEigenLayerStrategyAddress,
+  getEigenLayerLstTokenAddress,
 } from "../src/config/contracts.js";
 import {
   encodeLidoSubmit,
@@ -42,6 +45,15 @@ import {
   encodeWstethWrap,
   encodeWstethUnwrap,
 } from "../src/protocols/lido.js";
+import { encodeDepositIntoStrategy } from "../src/protocols/eigenlayer.js";
+import {
+  getRocketPoolDepositPoolAddress,
+  getRocketPoolRethAddress,
+} from "../src/config/contracts.js";
+import {
+  encodeRocketPoolDeposit,
+  encodeRocketPoolBurn,
+} from "../src/protocols/rocketpool.js";
 
 describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
   it("Fixture A — native send → 0x7e1867b2... byte-for-byte", () => {
@@ -407,6 +419,111 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     // Hardcoded literal — computed at write-time (2026-05-23).
     // Cross-linked from test/prepare-lido-unwrap.test.ts (Plan 30-03).
     expect(fp).toBe("0x6d0dff107199edaf752aa542f219edbf26db1319f206aec4dc4027b368476089");
+  });
+
+  it("Fixture Z — StrategyManager.depositIntoStrategy(stETH-Strategy, stETH, 1e18) fingerprint (hardcoded literal anchor, Phase 31 Plan 31-02)", () => {
+    // EigenLayer Phase 31 canonical anchor: stETH-Strategy deposit of 1 stETH.
+    // Inputs resolved via SOT getters (NEVER inlined per CLAUDE.md).
+    const strategyManager = getEigenLayerStrategyManagerAddress(1)!;
+    const strategy = getEigenLayerStrategyAddress(1, "stETH")!;
+    const lstToken = getEigenLayerLstTokenAddress(1, "stETH")!;
+    const amountWei = 1_000_000_000_000_000_000n; // 1 stETH
+
+    const data = encodeDepositIntoStrategy(strategy, lstToken, amountWei);
+    // 100 bytes = 4-byte selector (0xe7a050aa) + 3 × 32-byte words (strategy, token, amount).
+    expect(data.length).toBe(202);
+    expect(data.slice(0, 10).toLowerCase()).toBe("0xe7a050aa");
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: strategyManager,
+      valueWei: 0n, // deposit is NOT payable; LST consumed as ERC-20
+      data,
+    });
+
+    // Hardcoded literal — computed at write-time (2026-05-23) per CLAUDE.md
+    // "NO `beforeAll`-snapshot" rule. Drift in preimage assembly for any of
+    // {STRATEGY_MANAGER, stETH-Strategy, stETH token, 1e18, encodeDepositIntoStrategy
+    // shape, computePayloadFingerprint shape} fails THIS exact assertion.
+    //
+    // Fixture Z cross-link: test/prepare-eigenlayer-deposit.test.ts re-anchors
+    // via this literal; future integration tests will re-anchor across persona
+    // swaps (proves `from`-independence end-to-end, T-BIND-1 anchor).
+    expect(fp).toBe("0x2c36a77f8e39c8d0f8d276f88169608e1a247bb288117da00f90b1f7dd158684");
+  });
+
+  it("Fixture AA-RP — RocketDepositPool.deposit() value-bearing (value=1e18) fingerprint (hardcoded literal anchor, Phase 31 Plan 31-03)", () => {
+    // Rocket Pool Phase 31-03 canonical anchor: value-bearing 1 ETH stake.
+    // The selector 0xd0e30db0 COLLIDES with WETH9.deposit() (Pitfall 1) — the
+    // distinguishing field is `tx.to` (depositPool address), which IS part of
+    // the payloadFingerprint preimage. So Fixture AA-RP and any analogous
+    // WETH9.deposit fingerprint are byte-DISTINCT by construction.
+    //
+    // NAME DISAMBIGUATION: the suffix `-RP` distinguishes this Rocket Pool
+    // fingerprint fixture from the pre-existing BTC LiFi "Fixture AA" in this
+    // same file (Phase 26 Plan 26-03). Different functions / different
+    // describe blocks; the suffix prevents human confusion.
+    const depositPool = getRocketPoolDepositPoolAddress(1)!;
+    const valueWei = 1_000_000_000_000_000_000n; // 1 ETH
+    const data = encodeRocketPoolDeposit();
+
+    // Selector-only calldata: 10 chars total (4-byte selector, no args).
+    expect(data.length).toBe(10);
+    expect(data.toLowerCase()).toBe("0xd0e30db0");
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: depositPool,
+      valueWei,
+      data,
+    });
+
+    // Hardcoded literal — computed at write-time (2026-05-23) per CLAUDE.md
+    // "NO `beforeAll`-snapshot" rule. Drift in preimage assembly for any of
+    // {DEPOSIT_POOL address, 1e18 value, 0xd0e30db0 selector,
+    // computePayloadFingerprint shape} fails THIS exact assertion.
+    //
+    // Fixture AA-RP cross-link: test/prepare-rocketpool-stake.test.ts +
+    // test/integration-eigenlayer-rocketpool.test.ts re-anchor via this
+    // literal. Re-anchoring across persona swaps proves from-INDEPENDENCE
+    // end-to-end (the `from` address is NOT in the fingerprint preimage —
+    // T-BIND-1).
+    expect(fp).toBe("0x615683fb4b0cf540d1e5ba8f12c0766e542825557f769e60e83aa2cc76be0ca3");
+  });
+
+  it("Fixture AB-RP — rETH.burn(1e18) fingerprint (hardcoded literal anchor, Phase 31 Plan 31-03)", () => {
+    // Rocket Pool Phase 31-03 canonical anchor: 1 rETH burn (rETH → ETH).
+    // The selector 0x42966c68 is the GENERIC OpenZeppelin ERC20Burnable
+    // selector (Pitfall 2). Distinguishing factor is `tx.to` (rETH address),
+    // which IS part of the payloadFingerprint preimage. Fixture AB-RP is
+    // byte-DISTINCT from any analogous burn fingerprint on a different
+    // contract by construction.
+    //
+    // NAME DISAMBIGUATION: see Fixture AA-RP — `-RP` suffix distinguishes
+    // from the pre-existing BTC LiFi "Fixture AA" describe block below.
+    const reth = getRocketPoolRethAddress(1)!;
+    const data = encodeRocketPoolBurn(1_000_000_000_000_000_000n);
+
+    // 36-byte calldata: 4-byte selector + 32-byte amount; 74 chars total.
+    expect(data.length).toBe(74);
+    expect(data.slice(0, 10).toLowerCase()).toBe("0x42966c68");
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: reth,
+      valueWei: 0n, // burn is NOT payable
+      data,
+    });
+
+    // Hardcoded literal — computed at write-time (2026-05-23) per CLAUDE.md
+    // "NO `beforeAll`-snapshot" rule. Drift in preimage assembly for any of
+    // {RETH address, 0n value, 0x42966c68 selector, 1e18 amount encoding,
+    // computePayloadFingerprint shape} fails THIS exact assertion.
+    //
+    // Fixture AB-RP cross-link: test/prepare-rocketpool-unstake.test.ts +
+    // test/integration-eigenlayer-rocketpool.test.ts re-anchor via this
+    // literal. Cross-persona byte-identity proves from-INDEPENDENCE (T-BIND-1).
+    expect(fp).toBe("0xd12144239fb353612c20a3aa0a9dbcd9dd73de4141e1adce866ecf0974854edc");
   });
 
   it("invalid `to` (not a 0x-prefixed 20-byte hex) → throws via viem.hexToBytes", () => {
