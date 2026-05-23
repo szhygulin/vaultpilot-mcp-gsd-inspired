@@ -438,6 +438,267 @@ export function getLidoWithdrawalQueueAddress(chainId: ChainId): Address | null 
 }
 
 // ---------------------------------------------------------------------------
+// EigenLayer per-chain SOT — Phase 31 Plan 31-01.
+// ---------------------------------------------------------------------------
+//
+// Sibling sub-table (NOT a widening of `ContractsForChain`) per Phase 28/29/30
+// precedent. EigenLayer ships TWO core contracts per chain (StrategyManager +
+// DelegationManager) plus a curated per-LST registry (D-04: top-7 by TVL —
+// stETH / rETH / cbETH / ETHx / wBETH / sfrxETH / mETH). Phase 31 is Ethereum-
+// only (D-03) so only chainId=1 is populated; the getters return null on
+// 42161 / 137 / 8453 / 10 by construction.
+//
+// Provenance (research date 2026-05-23 — research § Topic 1 + planner-gate
+// verification 2026-05-23 — see 31-01-PLANNER-GATE-VERIFICATION.md):
+//   - StrategyManager:        0x858646372CC42E1A627fcE94aa7A7033e7CF075A
+//   - DelegationManager:      0x39053D51B77DC0d36036Fc1fCc8Cb819df8Ef37A
+//   - 7× per-strategy proxies + 7× underlying-token ERC-20s, all cross-verified
+//     against eigenlayer-contracts/script/configs/mainnet-addresses.config.json
+//     and against on-chain `Strategy.underlyingToken()` returns at planner-gate
+//     (A2 RESOLVED — zero drift on cbETH / ETHx / wBETH / sfrxETH / mETH).
+//
+// Cross-SOT byte-identity invariants:
+//   - EIGENLAYER_RAW[1].lstTokens.stETH === LIDO_RAW[1].steth (Phase 30 SOT)
+//   - EIGENLAYER_RAW[1].lstTokens.rETH  === ROCKETPOOL_RAW[1].reth (this phase SOT)
+//   T-EIGENLAYER-SPENDER-DRIFT-1 (StrategyManager ↔ KNOWN_SPENDERS) anchored in
+//   test/config-contracts.test.ts.
+//
+// Each literal `getAddress`-wrapped at the literal site so a corrupted snapshot
+// — single hex digit flipped at rest — throws EIP-55 at module load.
+
+/**
+ * The 7 LSTs whose EigenLayer strategies ship in the Phase 31 curated
+ * registry (D-04 — top by TVL as of late 2025). Long-tail strategies refuse at
+ * the tool surface with `INVALID_INPUT + hintTool → request_capability`.
+ * Adding a new LST is a 2-step ritual: extend this literal-union, populate the
+ * `strategies` + `lstTokens` rows for that LST.
+ *
+ * Ordering follows TVL rank (stETH first; mETH last) for code-review readability;
+ * the type itself is order-agnostic.
+ */
+export type EigenLayerLst =
+  | "stETH"
+  | "rETH"
+  | "cbETH"
+  | "ETHx"
+  | "wBETH"
+  | "sfrxETH"
+  | "mETH";
+
+/**
+ * Per-chain EigenLayer canonical contract registry. Phase 31 ships chainId=1
+ * only; v2.x widens (e.g. if EigenLayer deploys on an L2). The `strategies` +
+ * `lstTokens` inner records are `Partial` so a future LST addition that lacks
+ * one chain's strategy proxy doesn't force a placeholder row.
+ */
+export interface EigenLayerContracts {
+  strategyManager: Address;
+  delegationManager: Address;
+  /** Per-LST EigenLayer strategy proxy contracts (the `strategy` arg to `depositIntoStrategy`). */
+  strategies: Partial<Record<EigenLayerLst, Address>>;
+  /** Per-LST underlying ERC-20 token contracts (the `token` arg to `depositIntoStrategy`; also the user-approval target). */
+  lstTokens: Partial<Record<EigenLayerLst, Address>>;
+}
+
+const EIGENLAYER_RAW: Partial<Record<ChainId, EigenLayerContracts>> = {
+  1: {
+    strategyManager: getAddress("0x858646372CC42E1A627fcE94aa7A7033e7CF075A"),
+    delegationManager: getAddress("0x39053D51B77DC0d36036Fc1fCc8Cb819df8Ef37A"),
+    strategies: {
+      stETH:   getAddress("0x93c4b944D05dfe6df7645A86cd2206016c51564D"),
+      rETH:    getAddress("0x1BeE69b7dFFfA4E2d53C2a2Df135C388AD25dCD2"),
+      cbETH:   getAddress("0x54945180dB7943c0ed0FEE7EdaB2Bd24620256bc"),
+      ETHx:    getAddress("0x9d7eD45EE2E8FC5482fa2428f15C971e6369011d"),
+      wBETH:   getAddress("0x7CA911E83dabf90C90dD3De5411a10F1A6112184"),
+      sfrxETH: getAddress("0x8CA7A5d6f3acd3A7A8bC468a8CD0FB14B6BD28b6"),
+      mETH:    getAddress("0x298aFB19A105D59E74658C4C334Ff360BadE6dd2"),
+    },
+    lstTokens: {
+      // stETH literal MUST stay byte-identical to LIDO_RAW[1].steth (Phase 30 SOT).
+      // Cross-SOT byte-identity is asserted in test/config-contracts.test.ts.
+      stETH:   getAddress("0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84"),
+      // rETH literal MUST stay byte-identical to ROCKETPOOL_RAW[1].reth (declared below).
+      rETH:    getAddress("0xae78736Cd615f374D3085123A210448E74Fc6393"),
+      // cbETH / ETHx / wBETH / sfrxETH / mETH all VERIFIED via Strategy.underlyingToken()
+      // at planner-gate 2026-05-23 (zero drift); see 31-01-PLANNER-GATE-VERIFICATION.md.
+      cbETH:   getAddress("0xBe9895146f7AF43049ca1c1AE358B0541Ea49704"),
+      ETHx:    getAddress("0xA35b1B31Ce002FBF2058D22F30f95D405200A15b"),
+      wBETH:   getAddress("0xa2E3356610840701BDf5611a53974510Ae27E2e1"),
+      sfrxETH: getAddress("0xac3E018457B222d93114458476f3E3416Abbe38F"),
+      mETH:    getAddress("0xd5F7838F5C461fefF7FE49ea5ebaF7728bB0ADfa"),
+    },
+  },
+};
+
+/**
+ * Get the canonical EigenLayer `StrategyManager` proxy address. Returns `null`
+ * for chains without an EigenLayer deployment (everything except Ethereum at
+ * Phase 31 scope). Consumed by Plan 31-02's `prepare_eigenlayer_deposit` and
+ * the canonical-dispatch Ethereum arm + KNOWN_SPENDERS_ETHEREUM (T-EIGENLAYER-
+ * SPENDER-DRIFT-1).
+ */
+export function getEigenLayerStrategyManagerAddress(chainId: ChainId): Address | null {
+  return EIGENLAYER_RAW[chainId]?.strategyManager ?? null;
+}
+
+/**
+ * Get the canonical EigenLayer `DelegationManager` proxy address. Returns
+ * `null` for chains without an EigenLayer deployment. Consumed by Plan 31-02's
+ * `get_eigenlayer_positions` queued-withdrawal read.
+ */
+export function getEigenLayerDelegationManagerAddress(chainId: ChainId): Address | null {
+  return EIGENLAYER_RAW[chainId]?.delegationManager ?? null;
+}
+
+/**
+ * Get the canonical EigenLayer per-strategy proxy address for `(chainId, lst)`.
+ * Returns `null` for unsupported chains OR LSTs absent from the curated
+ * registry (e.g. `ankrETH`, `swETH`, `lsETH`, `oETH`, `osETH` — these refuse at
+ * the tool surface with `INVALID_INPUT + hintTool → request_capability` per D-04).
+ */
+export function getEigenLayerStrategyAddress(
+  chainId: ChainId,
+  lst: EigenLayerLst,
+): Address | null {
+  return EIGENLAYER_RAW[chainId]?.strategies[lst] ?? null;
+}
+
+/**
+ * Get the canonical underlying ERC-20 token address for `(chainId, lst)` — the
+ * contract the user APPROVES for the StrategyManager (D-05 pre-flight target).
+ * Returns `null` for unsupported chains OR LSTs absent from the curated
+ * registry.
+ *
+ * Cross-SOT byte-identity invariant for chainId=1:
+ *   - getEigenLayerLstTokenAddress(1, "stETH") === getLidoStethAddress(1)
+ *   - getEigenLayerLstTokenAddress(1, "rETH")  === getRocketPoolRethAddress(1)
+ */
+export function getEigenLayerLstTokenAddress(
+  chainId: ChainId,
+  lst: EigenLayerLst,
+): Address | null {
+  return EIGENLAYER_RAW[chainId]?.lstTokens[lst] ?? null;
+}
+
+/**
+ * Fan-out helper — returns every `(lst, strategy, lstToken)` row deployed on
+ * `chainId`. Returns `[]` (NOT undefined / throw) for chains absent from
+ * `EIGENLAYER_RAW`. Consumed by the canonical-dispatch Ethereum arm (each
+ * strategy proxy is a distinct dispatch target — T-DISPATCH-COLLISION-31).
+ * Order follows `Object.keys` iteration of the `strategies` inner record;
+ * callers MUST NOT depend on it.
+ */
+export function getAllEigenLayerStrategiesForChain(
+  chainId: ChainId,
+): Array<{ lst: EigenLayerLst; strategy: Address; lstToken: Address }> {
+  const row = EIGENLAYER_RAW[chainId];
+  if (!row) return [];
+  const result: Array<{ lst: EigenLayerLst; strategy: Address; lstToken: Address }> = [];
+  for (const lst of Object.keys(row.strategies) as EigenLayerLst[]) {
+    const strategy = row.strategies[lst];
+    const lstToken = row.lstTokens[lst];
+    if (strategy && lstToken) result.push({ lst, strategy, lstToken });
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Rocket Pool per-chain SOT — Phase 31 Plan 31-01.
+// ---------------------------------------------------------------------------
+//
+// Sibling sub-table (NOT a widening of `ContractsForChain`). Rocket Pool ships
+// THREE contracts per chain in different roles:
+//   - RocketDepositPool v1.2 — `deposit()` payable; value-bearing stake entry.
+//   - rETH (RocketTokenRETH)  — `burn(uint256)` unstake; `getExchangeRate()` view.
+//   - RocketDAOProtocolSettingsDeposit — `getMinimumDeposit()` view (D-07).
+//
+// Per D-07: a hardcoded `ROCKET_POOL_MINIMUM_DEPOSIT_FALLBACK_WEI` (0.01 ETH =
+// 1e16 wei) anchors resilience if the on-chain read fails or times out.
+//
+// Per RESEARCH § Topic 1 Option A (recommended): the
+// RocketDAOProtocolSettingsDeposit address is resolved ONCE via
+// RocketStorage.getAddress(keccak256("contract.address",
+// "rocketDAOProtocolSettingsDeposit")) at planner-gate and hardcoded here.
+// See 31-01-PLANNER-GATE-VERIFICATION.md for the resolution audit trail (A1).
+// A future Rocket Pool major version is a code change anyway; the dynamic
+// lookup pattern is not load-bearing for v2.3.
+//
+// Phase 31 ships chainId=1 only (D-03 — Rocket Pool is Ethereum-mainnet-only
+// at v2.3 scope). Each literal `getAddress`-wrapped at the literal site so a
+// corrupted snapshot — single hex digit flipped at rest — throws EIP-55 at
+// module load.
+//
+// Cross-SOT byte-identity invariant: ROCKETPOOL_RAW[1].reth ===
+// EIGENLAYER_RAW[1].lstTokens.rETH (both equal the canonical rETH ERC-20).
+
+/**
+ * Per-chain Rocket Pool canonical contract registry. Phase 31 ships chainId=1
+ * only; v2.6 cross-chain rETH bridging is a separate milestone surface.
+ */
+export interface RocketPoolContracts {
+  /** RocketDepositPool v1.2 — value-bearing `deposit()` entry; also the `tx.to` for stake. */
+  depositPool: Address;
+  /** rETH (RocketTokenRETH) — the LST contract; `burn(uint256)` is the unstake entry. */
+  reth: Address;
+  /** RocketDAOProtocolSettingsDeposit — `getMinimumDeposit()` view; D-07 pre-flight read target. */
+  settingsDeposit: Address;
+}
+
+const ROCKETPOOL_RAW: Partial<Record<ChainId, RocketPoolContracts>> = {
+  1: {
+    depositPool:     getAddress("0xDD3f50F8A6CafbE9b31a427582963f465E745AF8"),
+    reth:            getAddress("0xae78736Cd615f374D3085123A210448E74Fc6393"),
+    // VERIFIED via RocketStorage.getAddress(keccak256("contract.address",
+    // "rocketDAOProtocolSettingsDeposit")) at planner-gate 2026-05-23;
+    // supersedes RESEARCH § Topic 1 training-data literal 0xac2245BE…
+    // See 31-01-PLANNER-GATE-VERIFICATION.md (A1 RESOLVED).
+    settingsDeposit: getAddress("0x227BE8dD01DF8ad9BED0178e4F8cEC2996C5c365"),
+  },
+};
+
+/**
+ * Get the canonical RocketDepositPool v1.2 proxy address. Returns `null` for
+ * chains without a Rocket Pool deployment (everything except Ethereum at Phase
+ * 31 scope). Consumed by Plan 31-03's `prepare_rocketpool_stake` (as `tx.to`)
+ * and the canonical-dispatch Ethereum arm + KNOWN_SPENDERS_ETHEREUM
+ * (T-ROCKETPOOL-SPENDER-DRIFT-1).
+ */
+export function getRocketPoolDepositPoolAddress(chainId: ChainId): Address | null {
+  return ROCKETPOOL_RAW[chainId]?.depositPool ?? null;
+}
+
+/**
+ * Get the canonical rETH (RocketTokenRETH) ERC-20 address. Returns `null` for
+ * chains without a Rocket Pool deployment. Consumed by Plan 31-03's
+ * `prepare_rocketpool_unstake` (as `tx.to` for the `burn(uint256)` call) and
+ * by `get_rocketpool_positions` (as the `balanceOf` / `getExchangeRate` call
+ * target). Cross-SOT byte-identity: equals EIGENLAYER_RAW[1].lstTokens.rETH.
+ */
+export function getRocketPoolRethAddress(chainId: ChainId): Address | null {
+  return ROCKETPOOL_RAW[chainId]?.reth ?? null;
+}
+
+/**
+ * Get the canonical RocketDAOProtocolSettingsDeposit proxy. Returns `null` for
+ * chains without a Rocket Pool deployment. Consumed by Plan 31-03's D-07
+ * pre-flight read (`getMinimumDeposit()` against this address; falls back to
+ * `ROCKET_POOL_MINIMUM_DEPOSIT_FALLBACK_WEI` on read failure).
+ */
+export function getRocketPoolDepositSettingsAddress(chainId: ChainId): Address | null {
+  return ROCKETPOOL_RAW[chainId]?.settingsDeposit ?? null;
+}
+
+/**
+ * D-07 resilience anchor — the minimum-deposit constant Rocket Pool enforces
+ * at the `RocketDepositPool.deposit()` entry. 0.01 ETH = 1e16 wei. Verified
+ * against docs.rocketpool.net + RocketDAOProtocolSettingsDeposit.sol source
+ * at research time. Used by Plan 31-03's pre-flight when the on-chain
+ * `getMinimumDeposit()` read against `RocketDAOProtocolSettingsDeposit` fails
+ * or times out — protects against silent acceptance of an under-min stake.
+ */
+export const ROCKET_POOL_MINIMUM_DEPOSIT_FALLBACK_WEI: bigint = 10_000_000_000_000_000n;
+
+// ---------------------------------------------------------------------------
 // Known-spender table — PREP-30 surface for approval-class DECODED ARGS.
 // ---------------------------------------------------------------------------
 
@@ -543,6 +804,32 @@ export const KNOWN_SPENDERS_ETHEREUM: readonly KnownSpender[] = [
     address: getLidoWithdrawalQueueAddress(1)!,
     label: "Lido WithdrawalQueueERC721 (for stETH unstake)",
     source: "https://docs.lido.fi/deployed-contracts/",
+  },
+  // EigenLayer + Rocket Pool — Phase 31 Plan 31-01. Three additive rows: the
+  // EigenLayer StrategyManager is the LST approval target for
+  // prepare_eigenlayer_deposit (per-LST users approve StrategyManager to
+  // transferFrom their LST balance — D-05 pre-flight). The two Rocket Pool
+  // rows are informational labels for preview_send DECODED ARGS coverage:
+  // the stake call to RocketDepositPool is value-bearing (no approval) but
+  // the row is included for symmetry; the rETH row tags the burn target.
+  // All three `address` fields delegate to SOT getters so T-EIGENLAYER-SPENDER-
+  // DRIFT-1 + T-ROCKETPOOL-SPENDER-DRIFT-1 cross-view byte-identity is
+  // enforced by construction. The `!` non-null assertion is safe because
+  // EIGENLAYER_RAW[1] and ROCKETPOOL_RAW[1] are both populated at module load.
+  {
+    address: getEigenLayerStrategyManagerAddress(1)!,
+    label: "EigenLayer StrategyManager",
+    source: "https://github.com/Layr-Labs/eigenlayer-contracts",
+  },
+  {
+    address: getRocketPoolDepositPoolAddress(1)!,
+    label: "Rocket Pool RocketDepositPool (stake — value-bearing)",
+    source: "https://docs.rocketpool.net/",
+  },
+  {
+    address: getRocketPoolRethAddress(1)!,
+    label: "Rocket Pool rETH token (burn target)",
+    source: "https://docs.rocketpool.net/",
   },
   {
     address: getAddress("0x111111125421cA6dc452d289314280a0F8842A65"),
