@@ -829,9 +829,9 @@ Plans:
 
 Plans:
 
-- [ ] 29-01: `src/config/contracts.ts` Morpho Blue addresses + known-market registry (top 20-30 markets by TVL at planning time); canonical-dispatch allowlist Morpho arm wiring
-- [ ] 29-02: `get_morpho_positions` + `src/chains/morpho-blue.ts` (Morpho contract ABI + market-id-keyed position decoder)
-- [ ] 29-03: `prepare_morpho_supply/_withdraw/_borrow/_repay` (with `amount: "max"` close-position support); `src/protocols/morpho-blue.ts`; Fixture T (Morpho supply) + Fixture U (Morpho repay-max) literal anchors
+- [x] 29-01: `src/config/contracts.ts` Morpho Blue addresses + known-market registry (top 20-30 markets by TVL at planning time); canonical-dispatch allowlist Morpho arm wiring
+- [x] 29-02: `get_morpho_positions` + `src/chains/morpho-blue.ts` (Morpho contract ABI + market-id-keyed position decoder)
+- [x] 29-03: `prepare_morpho_supply/_withdraw/_borrow/_repay` (with `amount: "max"` close-position support); `src/protocols/morpho-blue.ts`; Fixture T (Morpho supply) + Fixture U (Morpho repay-max) literal anchors
 
 #### Phase 30: Lido — stake / unstake / wrap / unwrap (stETH↔wstETH)
 
@@ -1137,7 +1137,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 26. LTC scaffolding + LiFi BTC→EVM/Solana bridging | v2.2 | 3/3 | Complete    | 2026-05-22 |
 | 27. Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics | v2.2 | 2/3 | In Progress|  |
 | 28. Compound V3 — multi-Comet supply/withdraw/borrow/repay (Ethereum mainnet — 6 Comets) | v2.3 | 4/4 | Complete (verify-phase open); closes #64 | 2026-05-20 |
-| 29. Morpho Blue — supply/withdraw/borrow/repay | v2.3 | 0/3 | Not started | - |
+| 29. Morpho Blue — supply/withdraw/borrow/repay | v2.3 | 3/3 | Complete   | 2026-05-23 |
 | 30. Lido — stake/unstake/wrap/unwrap (stETH↔wstETH) | v2.3 | 0/3 | Not started | - |
 | 31. EigenLayer + Rocket Pool | v2.3 | 0/3 | Not started | - |
 | 32. Uniswap V3 swap (auto-fee-tier, same-chain) | v2.4 | 0/2 | Not started | - |

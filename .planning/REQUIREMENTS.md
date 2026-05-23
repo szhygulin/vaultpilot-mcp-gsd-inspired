@@ -304,10 +304,10 @@ Each protocol is a phase with its own read tools, prepare tools, allowlist entri
 #### Morpho Blue (MOR-*)
 
 - [ ] **MOR-01**: `get_morpho_positions({ wallet, chain? })` returns Morpho Blue positions keyed by market-id (loanToken + collateralToken + oracle + IRM + LLTV)
-- [ ] **MOR-02**: `prepare_morpho_supply({ chain, marketId, amount })` produces an unsigned Morpho contract call
-- [ ] **MOR-03**: `prepare_morpho_withdraw` + `prepare_morpho_borrow` cover the supply/borrow lifecycle
-- [ ] **MOR-04**: `prepare_morpho_repay({ chain, marketId, amount })` accepts `amount: "max"` as full-position close (resolved server-side)
-- [ ] **MOR-05**: Morpho Blue contract addresses + known-market registry (top 20-30 markets by TVL at planning time) sourced from `src/config/contracts.ts` per-chain table; canonical-dispatch allowlist Morpho arm wiring
+- [x] **MOR-02**: `prepare_morpho_supply({ chain, marketId, amount })` produces an unsigned Morpho contract call
+- [x] **MOR-03**: `prepare_morpho_withdraw` + `prepare_morpho_borrow` cover the supply/borrow lifecycle
+- [x] **MOR-04**: `prepare_morpho_repay({ chain, marketId, amount })` accepts `amount: "max"` as full-position close (resolved server-side)
+- [x] **MOR-05**: Morpho Blue contract addresses + known-market registry (top 20-30 markets by TVL at planning time) sourced from `src/config/contracts.ts` per-chain table; canonical-dispatch allowlist Morpho arm wiring
 
 #### Lido (LIDO-*)
 
