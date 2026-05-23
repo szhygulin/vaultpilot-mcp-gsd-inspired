@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Bitcoin + Litecoin
 current_plan: 32-03 (Plans 32-01 + 32-02 complete; 1 of 3 plans remaining)
-status: executing
-last_updated: "2026-05-23T21:11:00.000Z"
+status: verifying
+last_updated: "2026-05-23T18:50:20.109Z"
 last_activity: 2026-05-23
 progress:
   total_phases: 6
@@ -28,8 +28,8 @@ See: .planning/PROJECT.md (updated 2026-05-12)
 Phase: 32 — evm uniswap v3 swap
 Current Plan: 32-03 (Plans 32-01 + 32-02 complete; 1 of 3 plans remaining)
 Total Plans in Phase: 3
-Status: In progress (32-01 + 32-02 closed; 32-03 remaining)
-Last activity: 2026-05-23 — Phase 32 Plan 32-02 (Wave 2 — get_uniswap_quote tool) closed code-complete on `feat/32-evm-uniswap-v3-swap`. 3 atomic execute commits (f54ee4f → 54828c7) landed sequentially. 3 source files created: `src/signing/uniswap-price-impact.ts` (pure-bigint Quoter-midpoint math; 11 test assertions), `src/chains/uniswap-v3.ts` (Quoter V2 wrapper with Promise.allSettled 4-tier iteration + CANONICAL_FEE_TIERS 7-pair mapping for multi-hop; 20 test assertions), `src/tools/get_uniswap_quote.ts` (MCP tool with auto-fee-tier + 0.5% multi-hop threshold + D-04a no-liquidity refusal + ETH-in/out sentinel + D-08 sandwich-MEV warning at >2% impact; 20 test assertions). 1 additive line in `src/tools/register-all.ts` (Phase 32 Plan 32-02 import). Full-suite test trajectory 3727 → 3778 (+51 net across 3 new test files). 5 minor deviations auto-fixed (2 plan-spec grep collisions, 1 export-async-function regex mismatch, 2 test-mock-helper edge cases — all documented in 32-02-SUMMARY.md § Deviations). FROZEN-area zero-diff held END-TO-END. CANONICAL_FEE_TIERS 7 entries: WETH↔USDC=500, WETH↔USDT/WBTC/DAI=3000, USDC/USDT/DAI=100 (per RESEARCH § Topic 10).
+Status: Phase complete — ready for verification
+Last activity: 2026-05-23
 
 Prior activity: 2026-05-23 — Phase 32 Plan 32-01 closed code-complete (6 atomic commits f68b305 → 597a1a1 + docs commit a27601f). UniswapV3Contracts SOT + SwapRouter02 KNOWN_SPENDERS row promotion + canonical-dispatch arm + protocols/uniswap-v3.ts + signing/uniswap-path.ts + 2 APPEND-ONLY block templates + Fixtures UNI-A/B/C hardcoded payloadFingerprint literals.
 
@@ -88,6 +88,7 @@ Progress: [██████████] 100%
 | Phase 26 P26-03 | 180 | 3 tasks | 15 files |
 | Phase 32 P01 | 1743 | 6 tasks | 12 files |
 | Phase 32 P02 | 14 | 3 tasks | 7 files |
+| Phase 32 P03 | 29min | 5 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -132,6 +133,9 @@ Recent decisions affecting current work:
 - [Phase ?]: Phase 32 Plan 32-02: D-04a no-liquidity refusal uses INVALID_INPUT + hintTool: "request_capability" (keeps 21-code errorCode union FROZEN)
 - [Phase ?]: Phase 32 Plan 32-02: Quoter-midpoint price-impact with sub-base-unit tinyAmount fallback at the CALLER level (tool layer) — keeps the pure-bigint helper unit-testable with deterministic inputs
 - [Phase ?]: Phase 32 Plan 32-02: ETH sentinel resolved server-side to WETH for the Quoter call; envelope echoes 'ETH' back unchanged (D-05 — agent preserves input shape); same-token-swap caught AFTER sentinel resolution (covers ETH↔ETH + ETH↔WETH + address↔address in one place)
+- [Phase ?]: Phase 32 swap-only v2.4 milestone code-complete (Plan 32-01 + 32-02 + 32-03 across 3 waves)
+- [Phase ?]: Fixture UNI-A + UNI-B byte-identity cross-link reproducible at prepare-tool level when from === FIXTURE_PERSONA (Anvil acct 1); UNI-C not reproducible due to canonical-fee-tier mismatch — remains anchored standalone
+- [Phase ?]: Uniswap V3 calldata is from-DEPENDENT (recipient embedded in exactInputSingle/exactInput/unwrapWETH9 params); integration test re-computes per-persona deterministic fingerprints via encoder primitives
 
 ### Pending Todos
 
@@ -331,6 +335,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-23T17:53:24.081Z
+Last session: 2026-05-23T18:49:56.372Z
 Stopped at: Plan 32-01 complete — 32-02 + 32-03 remaining in Phase 32
 Resume file: None
