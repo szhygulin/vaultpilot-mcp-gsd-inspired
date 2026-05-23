@@ -89,6 +89,7 @@ import "./prepare_morpho_supply.js";              // Phase 29 Plan 29-03 (MOR-02
 import "./prepare_morpho_supply_collateral.js";   // Phase 29 Plan 29-03 (MOR-03) — Morpho Blue supplyCollateral
 import "./prepare_morpho_withdraw.js";            // Phase 29 Plan 29-03 (MOR-03) — Morpho Blue withdraw (toAssetsDown for "max")
 import "./prepare_morpho_withdraw_collateral.js"; // Phase 29 Plan 29-03 (MOR-03) — Morpho Blue withdrawCollateral
+import "./get_lido_positions.js"; // Phase 30 Plan 30-02 (LIDO-01) — stETH + wstETH positions (Ethereum + Arbitrum)
 import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";
