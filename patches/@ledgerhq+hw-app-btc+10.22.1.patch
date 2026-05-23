@@ -1,0 +1,384 @@
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/Btc.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/Btc.js
+index f253796..364a9ed 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/Btc.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/Btc.js
+@@ -1,13 +1,13 @@
+ import semver from "semver";
+-import BtcNew from "./BtcNew";
+-import BtcOld from "./BtcOld";
+-import { getTrustedInput } from "./getTrustedInput";
+-import { getTrustedInputBIP143 } from "./getTrustedInputBIP143";
+-import { AppClient } from "./newops/appClient";
+-import { serializeTransactionOutputs } from "./serializeTransaction";
+-import { splitTransaction } from "./splitTransaction";
+-import { signP2SHTransaction } from "./signP2SHTransaction";
+-import { checkIsBtcLegacy, getAppAndVersion } from "./getAppAndVersion";
++import BtcNew from "./BtcNew.js";
++import BtcOld from "./BtcOld.js";
++import { getTrustedInput } from "./getTrustedInput.js";
++import { getTrustedInputBIP143 } from "./getTrustedInputBIP143.js";
++import { AppClient } from "./newops/appClient.js";
++import { serializeTransactionOutputs } from "./serializeTransaction.js";
++import { splitTransaction } from "./splitTransaction.js";
++import { signP2SHTransaction } from "./signP2SHTransaction.js";
++import { checkIsBtcLegacy, getAppAndVersion } from "./getAppAndVersion.js";
+ /**
+  * @class Btc
+  * @description Bitcoin API.
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/BtcNew.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/BtcNew.js
+index 81e3d0e..8ca09d9 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/BtcNew.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/BtcNew.js
+@@ -1,17 +1,17 @@
+ import { crypto } from "bitcoinjs-lib";
+ import { secp256k1 } from "@noble/curves/secp256k1";
+-import { getXpubComponents, hardenedPathOf, pathArrayToString, pathStringToArray, pubkeyFromXpub, } from "./bip32";
++import { getXpubComponents, hardenedPathOf, pathArrayToString, pathStringToArray, pubkeyFromXpub, } from "./bip32.js";
+ import { BufferReader, psbtIn, PsbtV2 } from "@ledgerhq/psbtv2";
+-import { p2pkh, p2tr, p2wpkh, p2wpkhWrapped, } from "./newops/accounttype";
+-import { createKey, WalletPolicy } from "./newops/policy";
+-import { extract } from "./newops/psbtExtractor";
+-import { finalize } from "./newops/psbtFinalizer";
+-import { serializeTransaction } from "./serializeTransaction";
+-import { deserializePsbt } from "./signPsbt/parsePsbt";
+-import { analyzeAllInputs } from "./signPsbt/inputAnalysis";
+-import { determineAccountType } from "./signPsbt/accountTypeResolver";
+-import { populateMissingBip32Derivations } from "./signPsbt/derivationPopulation";
+-import { createWalletPolicy, createProgressCallback, finalizePsbtAndExtract, } from "./signPsbt/signAndFinalize";
++import { p2pkh, p2tr, p2wpkh, p2wpkhWrapped, } from "./newops/accounttype.js";
++import { createKey, WalletPolicy } from "./newops/policy.js";
++import { extract } from "./newops/psbtExtractor.js";
++import { finalize } from "./newops/psbtFinalizer.js";
++import { serializeTransaction } from "./serializeTransaction.js";
++import { deserializePsbt } from "./signPsbt/parsePsbt.js";
++import { analyzeAllInputs } from "./signPsbt/inputAnalysis.js";
++import { determineAccountType } from "./signPsbt/accountTypeResolver.js";
++import { populateMissingBip32Derivations } from "./signPsbt/derivationPopulation.js";
++import { createWalletPolicy, createProgressCallback, finalizePsbtAndExtract, } from "./signPsbt/signAndFinalize.js";
+ // Replacement for pointCompress from tiny-secp256k1
+ function pointCompress(point, compressed = true) {
+     const p = secp256k1.ProjectivePoint.fromHex(point);
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/BtcOld.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/BtcOld.js
+index dbf5a67..50258a2 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/BtcOld.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/BtcOld.js
+@@ -1,10 +1,10 @@
+ import bs58 from "bs58";
+ import { sha256 as nobleSha256 } from "@noble/hashes/sha256";
+ import { ripemd160 as nobleRipemd160 } from "@noble/hashes/ripemd160";
+-import { createTransaction } from "./createTransaction";
+-import { getWalletPublicKey } from "./getWalletPublicKey";
+-import { pathArrayToString, pathStringToArray } from "./bip32";
+-import { signMessage } from "./signMessage";
++import { createTransaction } from "./createTransaction.js";
++import { getWalletPublicKey } from "./getWalletPublicKey.js";
++import { pathArrayToString, pathStringToArray } from "./bip32.js";
++import { signMessage } from "./signMessage.js";
+ /**
+  * @class BtcOld
+  * @description This Bitcoin old API is compatible with versions of the Bitcoin nano app that are earlier than 2.1.0
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/createTransaction.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/createTransaction.js
+index afa655d..5933424 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/createTransaction.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/createTransaction.js
+@@ -1,16 +1,16 @@
+ import { log } from "@ledgerhq/logs";
+-import { hashPublicKey } from "./hashPublicKey";
+-import { getWalletPublicKey } from "./getWalletPublicKey";
+-import { getTrustedInput } from "./getTrustedInput";
+-import { startUntrustedHashTransactionInput } from "./startUntrustedHashTransactionInput";
+-import { serializeTransaction } from "./serializeTransaction";
+-import { getTrustedInputBIP143 } from "./getTrustedInputBIP143";
+-import { compressPublicKey } from "./compressPublicKey";
+-import { signTransaction } from "./signTransaction";
+-import { hashOutputFull, provideOutputFullChangePath } from "./finalizeInput";
+-import { getAppAndVersion } from "./getAppAndVersion";
+-import { DEFAULT_LOCKTIME, DEFAULT_SEQUENCE, SIGHASH_ALL, OP_DUP, OP_HASH160, HASH_SIZE, OP_EQUALVERIFY, OP_CHECKSIG, ZCASH_ACTIVATION_HEIGHTS, } from "./constants";
+-import { shouldUseTrustedInputForSegwit } from "./shouldUseTrustedInputForSegwit";
++import { hashPublicKey } from "./hashPublicKey.js";
++import { getWalletPublicKey } from "./getWalletPublicKey.js";
++import { getTrustedInput } from "./getTrustedInput.js";
++import { startUntrustedHashTransactionInput } from "./startUntrustedHashTransactionInput.js";
++import { serializeTransaction } from "./serializeTransaction.js";
++import { getTrustedInputBIP143 } from "./getTrustedInputBIP143.js";
++import { compressPublicKey } from "./compressPublicKey.js";
++import { signTransaction } from "./signTransaction.js";
++import { hashOutputFull, provideOutputFullChangePath } from "./finalizeInput.js";
++import { getAppAndVersion } from "./getAppAndVersion.js";
++import { DEFAULT_LOCKTIME, DEFAULT_SEQUENCE, SIGHASH_ALL, OP_DUP, OP_HASH160, HASH_SIZE, OP_EQUALVERIFY, OP_CHECKSIG, ZCASH_ACTIVATION_HEIGHTS, } from "./constants.js";
++import { shouldUseTrustedInputForSegwit } from "./shouldUseTrustedInputForSegwit.js";
+ const defaultsSignTransaction = {
+     lockTime: DEFAULT_LOCKTIME,
+     sigHashType: SIGHASH_ALL,
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/finalizeInput.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/finalizeInput.js
+index b3a7c54..d3665a3 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/finalizeInput.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/finalizeInput.js
+@@ -1,5 +1,5 @@
+-import { bip32asBuffer } from "./bip32";
+-import { MAX_SCRIPT_BLOCK } from "./constants";
++import { bip32asBuffer } from "./bip32.js";
++import { MAX_SCRIPT_BLOCK } from "./constants.js";
+ export function provideOutputFullChangePath(transport, path) {
+     const buffer = bip32asBuffer(path);
+     return transport.send(0xe0, 0x4a, 0xff, 0x00, buffer);
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/getTrustedInput.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/getTrustedInput.js
+index 07312b6..20d0a70 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/getTrustedInput.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/getTrustedInput.js
+@@ -1,6 +1,6 @@
+ import invariant from "invariant";
+-import { MAX_SCRIPT_BLOCK, zCashEncCiphertextSize } from "./constants";
+-import { createVarint } from "./varint";
++import { MAX_SCRIPT_BLOCK, zCashEncCiphertextSize } from "./constants.js";
++import { createVarint } from "./varint.js";
+ export async function getTrustedInputRaw(transport, transactionData, indexLookup) {
+     let data;
+     let firstRound = false;
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/getTrustedInputBIP143.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/getTrustedInputBIP143.js
+index 6416373..b8277cc 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/getTrustedInputBIP143.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/getTrustedInputBIP143.js
+@@ -1,5 +1,5 @@
+ import { sha256 } from "@noble/hashes/sha256";
+-import { serializeTransaction } from "./serializeTransaction";
++import { serializeTransaction } from "./serializeTransaction.js";
+ export function getTrustedInputBIP143(indexLookup, transaction, additionals = []) {
+     if (!transaction) {
+         throw new Error("getTrustedInputBIP143: missing tx");
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/getWalletPublicKey.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/getWalletPublicKey.js
+index aee668a..b3f9384 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/getWalletPublicKey.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/getWalletPublicKey.js
+@@ -1,4 +1,4 @@
+-import { bip32asBuffer } from "./bip32";
++import { bip32asBuffer } from "./bip32.js";
+ const addressFormatMap = {
+     legacy: 0,
+     p2sh: 1,
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/index.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/index.js
+index 5b7ec1d..6cd2268 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/index.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/index.js
+@@ -1,3 +1,3 @@
+-import Btc from "./Btc";
++import Btc from "./Btc.js";
+ export default Btc;
+ //# sourceMappingURL=index.js.map
+\ No newline at end of file
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/accounttype.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/accounttype.js
+index 3da3fb0..ae3a046 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/accounttype.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/accounttype.js
+@@ -1,8 +1,8 @@
+ import { crypto } from "bitcoinjs-lib";
+ import { secp256k1 } from "@noble/curves/secp256k1";
+ import { BufferWriter } from "@ledgerhq/psbtv2";
+-import { HASH_SIZE, OP_CHECKSIG, OP_DUP, OP_EQUAL, OP_EQUALVERIFY, OP_HASH160 } from "../constants";
+-import { hashPublicKey } from "../hashPublicKey";
++import { HASH_SIZE, OP_CHECKSIG, OP_DUP, OP_EQUAL, OP_EQUALVERIFY, OP_HASH160 } from "../constants.js";
++import { hashPublicKey } from "../hashPublicKey.js";
+ // Helper function to convert bytes to bigint for scalar operations
+ function bytesToBigInt(bytes) {
+     const hex = Array.from(bytes)
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/appClient.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/appClient.js
+index c61b121..4580ed7 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/appClient.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/appClient.js
+@@ -1,8 +1,8 @@
+-import { pathElementsToBuffer } from "../bip32";
+-import { MerkelizedPsbt } from "./merkelizedPsbt";
+-import { ClientCommandInterpreter } from "./clientCommands";
+-import { createVarint } from "../varint";
+-import { hashLeaf, Merkle } from "./merkle";
++import { pathElementsToBuffer } from "../bip32.js";
++import { MerkelizedPsbt } from "./merkelizedPsbt.js";
++import { ClientCommandInterpreter } from "./clientCommands.js";
++import { createVarint } from "../varint.js";
++import { hashLeaf, Merkle } from "./merkle.js";
+ const CLA_BTC = 0xe1;
+ const CLA_FRAMEWORK = 0xf8;
+ var BitcoinIns;
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/clientCommands.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/clientCommands.js
+index b2113aa..21f483f 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/clientCommands.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/clientCommands.js
+@@ -1,7 +1,7 @@
+ import { crypto } from "bitcoinjs-lib";
+ import { BufferReader } from "@ledgerhq/psbtv2";
+-import { createVarint } from "../varint";
+-import { hashLeaf, Merkle } from "./merkle";
++import { createVarint } from "../varint.js";
++import { hashLeaf, Merkle } from "./merkle.js";
+ var ClientCommandCode;
+ (function (ClientCommandCode) {
+     ClientCommandCode[ClientCommandCode["YIELD"] = 16] = "YIELD";
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/merkelizedPsbt.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/merkelizedPsbt.js
+index 0c7ac24..d2e99fc 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/merkelizedPsbt.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/merkelizedPsbt.js
+@@ -1,4 +1,4 @@
+-import { MerkleMap } from "./merkleMap";
++import { MerkleMap } from "./merkleMap.js";
+ import { PsbtV2 } from "@ledgerhq/psbtv2";
+ /**
+  * This class merkelizes a PSBTv2, by merkelizing the different
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/merkleMap.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/merkleMap.js
+index 423933b..329555f 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/merkleMap.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/merkleMap.js
+@@ -1,5 +1,5 @@
+-import { createVarint } from "../varint";
+-import { hashLeaf, Merkle } from "./merkle";
++import { createVarint } from "../varint.js";
++import { hashLeaf, Merkle } from "./merkle.js";
+ /**
+  * This implements "Merkelized Maps", documented at
+  * https://github.com/LedgerHQ/app-bitcoin-new/blob/master/doc/merkle.md#merkleized-maps
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/policy.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/policy.js
+index 3f3eb33..db5d37d 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/policy.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/newops/policy.js
+@@ -1,7 +1,7 @@
+ import { crypto } from "bitcoinjs-lib";
+-import { pathArrayToString } from "../bip32";
++import { pathArrayToString } from "../bip32.js";
+ import { BufferWriter } from "@ledgerhq/psbtv2";
+-import { hashLeaf, Merkle } from "./merkle";
++import { hashLeaf, Merkle } from "./merkle.js";
+ /**
+  * The Bitcon hardware app uses a descriptors-like thing to describe
+  * how to construct output scripts from keys. A "Wallet Policy" consists
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/serializeTransaction.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/serializeTransaction.js
+index 59b8f02..285a775 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/serializeTransaction.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/serializeTransaction.js
+@@ -1,4 +1,4 @@
+-import { createVarint } from "./varint";
++import { createVarint } from "./varint.js";
+ /**
+   @example
+ const tx1 = btc.splitTransaction("01000000014ea60aeac5252c14291d428915bd7ccd1bfc4af009f4d4dc57ae597ed0420b71010000008a47304402201f36a12c240dbf9e566bc04321050b1984cd6eaf6caee8f02bb0bfec08e3354b022012ee2aeadcbbfd1e92959f57c15c1c6debb757b798451b104665aa3010569b49014104090b15bde569386734abf2a2b99f9ca6a50656627e77de663ca7325702769986cf26cc9dd7fdea0af432c8e2becc867c932e1b9dd742f2a108997c2252e2bdebffffffff0281b72e00000000001976a91472a5d75c8d2d0565b656a5232703b167d50d5a2b88aca0860100000000001976a9144533f5fb9b4817f713c48f0bfe96b9f50c476c9b88ac00000000");
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/signMessage.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/signMessage.js
+index 2534e9e..c071605 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/signMessage.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/signMessage.js
+@@ -1,5 +1,5 @@
+ import bippath from "bip32-path";
+-import { MAX_SCRIPT_BLOCK } from "./constants";
++import { MAX_SCRIPT_BLOCK } from "./constants.js";
+ export async function signMessage(transport, { path, messageHex, }) {
+     const paths = bippath.fromString(path).toPathArray();
+     const message = Buffer.from(messageHex, "hex");
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/signP2SHTransaction.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/signP2SHTransaction.js
+index bba0382..deaf217 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/signP2SHTransaction.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/signP2SHTransaction.js
+@@ -1,9 +1,9 @@
+-import { getTrustedInput } from "./getTrustedInput";
+-import { startUntrustedHashTransactionInput } from "./startUntrustedHashTransactionInput";
+-import { getTrustedInputBIP143 } from "./getTrustedInputBIP143";
+-import { signTransaction } from "./signTransaction";
+-import { hashOutputFull } from "./finalizeInput";
+-import { DEFAULT_LOCKTIME, DEFAULT_VERSION, DEFAULT_SEQUENCE, SIGHASH_ALL } from "./constants";
++import { getTrustedInput } from "./getTrustedInput.js";
++import { startUntrustedHashTransactionInput } from "./startUntrustedHashTransactionInput.js";
++import { getTrustedInputBIP143 } from "./getTrustedInputBIP143.js";
++import { signTransaction } from "./signTransaction.js";
++import { hashOutputFull } from "./finalizeInput.js";
++import { DEFAULT_LOCKTIME, DEFAULT_VERSION, DEFAULT_SEQUENCE, SIGHASH_ALL } from "./constants.js";
+ const defaultArg = {
+     lockTime: DEFAULT_LOCKTIME,
+     sigHashType: SIGHASH_ALL,
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/accountTypeResolver.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/accountTypeResolver.js
+index 4acf558..4b755de 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/accountTypeResolver.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/accountTypeResolver.js
+@@ -1,5 +1,5 @@
+ import { detectScriptType } from "@ledgerhq/psbtv2";
+-import { p2pkh, p2tr, p2wpkh, p2wpkhWrapped } from "../newops/accounttype";
++import { p2pkh, p2tr, p2wpkh, p2wpkhWrapped } from "../newops/accounttype.js";
+ function descrTemplFrom(addressFormat) {
+     switch (addressFormat) {
+         case "legacy":
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/derivationPopulation.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/derivationPopulation.js
+index 6d26b28..1a9dbf3 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/derivationPopulation.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/derivationPopulation.js
+@@ -1,8 +1,8 @@
+ import { BufferReader, extractHashFromScriptPubKey } from "@ledgerhq/psbtv2";
+-import { pubkeyFromXpub } from "../bip32";
+-import { p2tr } from "../newops/accounttype";
+-import { getDerivationAccessors, checkBip32Derivation, checkOutputBip32Derivation, } from "./derivationAccessors";
+-import { createAccountTypeFromScriptType, determineAccountTypeFromPurpose, } from "./accountTypeResolver";
++import { pubkeyFromXpub } from "../bip32.js";
++import { p2tr } from "../newops/accounttype.js";
++import { getDerivationAccessors, checkBip32Derivation, checkOutputBip32Derivation, } from "./derivationAccessors.js";
++import { createAccountTypeFromScriptType, determineAccountTypeFromPurpose, } from "./accountTypeResolver.js";
+ /**
+  * Extracts the scriptPubKey from a non-witness UTXO by parsing the previous transaction.
+  */
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/inputAnalysis.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/inputAnalysis.js
+index 7f7791d..1a02802 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/inputAnalysis.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/inputAnalysis.js
+@@ -1,6 +1,6 @@
+ import { detectScriptType } from "@ledgerhq/psbtv2";
+-import { pathArrayToString, pathStringToArray } from "../bip32";
+-import { checkBip32Derivation } from "./derivationAccessors";
++import { pathArrayToString, pathStringToArray } from "../bip32.js";
++import { checkBip32Derivation } from "./derivationAccessors.js";
+ export function arePathsEqual(path1, path2) {
+     if (path1.length !== path2.length)
+         return false;
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/signAndFinalize.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/signAndFinalize.js
+index f7bb846..d5771d4 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/signAndFinalize.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/signPsbt/signAndFinalize.js
+@@ -1,6 +1,6 @@
+-import { createKey, WalletPolicy } from "../newops/policy";
+-import { extract } from "../newops/psbtExtractor";
+-import { finalize } from "../newops/psbtFinalizer";
++import { createKey, WalletPolicy } from "../newops/policy.js";
++import { extract } from "../newops/psbtExtractor.js";
++import { finalize } from "../newops/psbtFinalizer.js";
+ /**
+  * Creates a WalletPolicy for the given account.
+  */
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/signTransaction.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/signTransaction.js
+index eadf9b1..484f2e8 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/signTransaction.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/signTransaction.js
+@@ -1,4 +1,4 @@
+-import { bip32asBuffer } from "./bip32";
++import { bip32asBuffer } from "./bip32.js";
+ export function signTransaction(transport, path, lockTime, sigHashType, expiryHeight, additionals = []) {
+     const isDecred = additionals.includes("decred");
+     const pathsBuffer = bip32asBuffer(path);
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/splitTransaction.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/splitTransaction.js
+index cead50a..5458f4e 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/splitTransaction.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/splitTransaction.js
+@@ -1,7 +1,7 @@
+ import { log } from "@ledgerhq/logs";
+-import { getVarint } from "./varint";
+-import { formatTransactionDebug } from "./debug";
+-import { zCashOutCiphertextSize, zCashEncCiphertextSize, zCashProofsSaplingSize, } from "./constants";
++import { getVarint } from "./varint.js";
++import { formatTransactionDebug } from "./debug.js";
++import { zCashOutCiphertextSize, zCashEncCiphertextSize, zCashProofsSaplingSize, } from "./constants.js";
+ export function splitTransaction(transactionHex, isSegwitSupported = false, hasExtraData = false, additionals = []) {
+     const inputs = [];
+     const outputs = [];
+diff --git a/node_modules/@ledgerhq/hw-app-btc/lib-es/startUntrustedHashTransactionInput.js b/node_modules/@ledgerhq/hw-app-btc/lib-es/startUntrustedHashTransactionInput.js
+index 984df0a..1cb3ed1 100644
+--- a/node_modules/@ledgerhq/hw-app-btc/lib-es/startUntrustedHashTransactionInput.js
++++ b/node_modules/@ledgerhq/hw-app-btc/lib-es/startUntrustedHashTransactionInput.js
+@@ -1,5 +1,5 @@
+-import { createVarint } from "./varint";
+-import { MAX_SCRIPT_BLOCK } from "./constants";
++import { createVarint } from "./varint.js";
++import { MAX_SCRIPT_BLOCK } from "./constants.js";
+ export function startUntrustedHashTransactionInputRaw(transport, newTransaction, firstRound, transactionData, bip143 = false, overwinter = false, additionals = []) {
+     const p2 = additionals.includes("cashaddr")
+         ? 0x03
