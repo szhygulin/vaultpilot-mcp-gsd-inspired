@@ -60,6 +60,7 @@ import { getAddress, type Address } from "viem";
 import {
   getAaveV3PoolAddress,
   getAllCompoundCometsForChain,
+  getMorphoBlueAddress,
   getWethAddress,
   type ChainId,
 } from "../config/contracts.js";
@@ -114,6 +115,15 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
   // Optimism Comets, at which point the SOT getter widens and this builder
   // picks them up automatically — zero code change here.
   const compoundComets = getAllCompoundCometsForChain(chainId);
+  // Phase 29 — Plan 29-03. Morpho Blue is a SINGLE singleton contract per
+  // chain (one set entry, not a 6-entry expansion like Compound). Sourced via
+  // `getMorphoBlueAddress(chainId)` SOT getter (Plan 29-01) — NO inline
+  // literals. Phase 29 ships ONLY the Ethereum arm (chainId === 1); other
+  // chains return null per the SOT contract and the null is filtered out.
+  // v2.3.x adds Base / Polygon Morpho deployments at the SOT layer, and this
+  // builder picks them up automatically.
+  const morphoBlue = getMorphoBlueAddress(chainId);
+  const morphoEntries: Address[] = morphoBlue ? [morphoBlue] : [];
   return new Set<Address>([
     getAaveV3PoolAddress(chainId),
     getWethAddress(chainId),
@@ -121,6 +131,7 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
     LIFI_DIAMOND_ALL_CHAINS,
     ...tokenContracts,
     ...compoundComets,
+    ...morphoEntries,
   ]);
 }
 
@@ -130,13 +141,13 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
  * new chain extends this Record alongside the `ChainId` union in
  * `src/config/contracts.ts`.
  *
- * Membership counts per chain (execute-time, 2026-05-20 — Phase 28 Plan 28-04
- * Ethereum-arm extended by 6 Compound V3 Comets):
- *   - Ethereum (1):  26 entries (4 canonical + 17 BRIDGED_VARIANTS — 1 WETH overlap + 6 Comets)
- *   - Arbitrum (42161): 21 entries (4 + 18 — 1 WETH overlap; Compound v2.3.x)
- *   - Polygon (137):    22 entries (4 + 19 — 1 WETH overlap; Compound v2.3.x)
- *   - Base (8453):       8 entries (4 + 5 — 1 WETH overlap; Compound v2.3.x)
- *   - Optimism (10):    17 entries (4 + 14 — 1 WETH overlap; Compound v2.3.x)
+ * Membership counts per chain (execute-time, 2026-05-23 — Phase 29 Plan 29-03
+ * Ethereum-arm extended by 1 Morpho Blue singleton):
+ *   - Ethereum (1):  27 entries (4 canonical + 17 BRIDGED_VARIANTS — 1 WETH overlap + 6 Comets + 1 Morpho)
+ *   - Arbitrum (42161): 21 entries (4 + 18 — 1 WETH overlap; Compound + Morpho v2.3.x)
+ *   - Polygon (137):    22 entries (4 + 19 — 1 WETH overlap; Compound + Morpho v2.3.x)
+ *   - Base (8453):       8 entries (4 + 5 — 1 WETH overlap; Compound + Morpho v2.3.x)
+ *   - Optimism (10):    17 entries (4 + 14 — 1 WETH overlap; Compound + Morpho v2.3.x)
  */
 export const CANONICAL_DISPATCH_TARGETS: Readonly<
   Record<ChainId, ReadonlySet<Address>>

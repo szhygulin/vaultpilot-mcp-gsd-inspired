@@ -477,3 +477,48 @@ describe("preview_send Layer 0.5 — Compound V3 Comets pass on Ethereum (Phase 
     expect(sc.errorCode).toBe("DISPATCH_TARGET_REFUSED");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 29 Plan 29-03 — Morpho Blue allowlist coverage. The singleton Morpho
+// Blue contract on Ethereum mainnet passes Layer 0.5; non-Morpho `tx.to`
+// still refused.
+// ---------------------------------------------------------------------------
+
+// Morpho Blue supply calldata: selector 0xa99aad89 + MarketParams (5 words) +
+// assets + shares + onBehalf + offset/length/data. Synthesized minimal-shape
+// payload — selector + 32-byte-padded fields. Layer 0.5 checks only `tx.to`
+// not selector validity (selector validity is Layer 2 territory), so a stub
+// shape suffices for the dispatch test.
+const MORPHO_SUPPLY_STUB_DATA =
+  ("0xa99aad89" +
+    "0".repeat(64 * 9)) as Hex;
+
+describe("preview_send Layer 0.5 — Morpho Blue passes on Ethereum (Phase 29 Plan 29-03)", () => {
+  it("(12) Morpho Blue Ethereum mainnet address passes Layer 0.5", async () => {
+    const { getMorphoBlueAddress: getMorpho } = await import(
+      "../src/config/contracts.js"
+    );
+    const morpho = getMorpho(1);
+    expect(morpho).not.toBeNull();
+    const handle = seedHandle(1, morpho!, MORPHO_SUPPLY_STUB_DATA);
+    scriptHappyMocks();
+    const result = await callPreview({ handle });
+    // Layer 0.5 passes (Morpho is canonical); preview may still fail later for
+    // a different reason (e.g. malformed calldata in the simulation block),
+    // but it does NOT refuse with DISPATCH_TARGET_REFUSED.
+    if (result.isError === true) {
+      const sc = result.structuredContent as { errorCode?: string };
+      expect(sc.errorCode).not.toBe("DISPATCH_TARGET_REFUSED");
+    }
+  });
+
+  it("(13) Non-Morpho Ethereum address with Morpho calldata → DISPATCH_TARGET_REFUSED", async () => {
+    // Generic EOA with Morpho calldata — selector is valid, but tx.to is
+    // off-list. Layer 0.5 still refuses (negative regression).
+    const handle = seedHandle(1, OFF_LIST_TO, MORPHO_SUPPLY_STUB_DATA);
+    const result = await callPreview({ handle });
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as { errorCode: string };
+    expect(sc.errorCode).toBe("DISPATCH_TARGET_REFUSED");
+  });
+});

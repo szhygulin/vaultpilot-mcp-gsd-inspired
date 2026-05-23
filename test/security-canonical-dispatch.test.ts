@@ -21,6 +21,7 @@ import { getAddress, type Address } from "viem";
 import {
   getAaveV3PoolAddress,
   getAllCompoundCometsForChain,
+  getMorphoBlueAddress,
   getWethAddress,
   type ChainId,
 } from "../src/config/contracts.js";
@@ -291,5 +292,62 @@ describe("Phase 28 Plan 28-04 — Compound V3 Comets in Ethereum-arm allowlist",
     for (const comet of getAllCompoundCometsForChain(1)) {
       expect(result.allowlist).toContain(comet);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 29 Plan 29-03 — Morpho Blue in the Ethereum-arm allowlist.
+// Single singleton contract (one entry, not a 6-entry expansion like
+// Compound); v2.3.x widens to Base + Polygon Morpho deployments.
+// ---------------------------------------------------------------------------
+
+describe("Phase 29 Plan 29-03 — Morpho Blue in Ethereum-arm allowlist", () => {
+  it("getMorphoBlueAddress(1) is in the Ethereum allowlist", () => {
+    const morpho = getMorphoBlueAddress(1);
+    expect(morpho).not.toBeNull();
+    expect(CANONICAL_DISPATCH_TARGETS[1].has(morpho!)).toBe(true);
+  });
+
+  it("Morpho Blue mainnet address passes checkDispatchTarget on Ethereum", () => {
+    const morpho = getMorphoBlueAddress(1);
+    expect(morpho).not.toBeNull();
+    expect(checkDispatchTarget(1, morpho!)).toEqual({ kind: "ok" });
+  });
+
+  it("Morpho Blue address is NOT in non-Ethereum allowlists (Phase 29 mainnet-only)", () => {
+    // Phase 29 ships chainId 1 only; v2.3.x widens to Base + Polygon.
+    // Until then, the Morpho address MUST NOT leak onto L2 allowlists.
+    const morpho = getMorphoBlueAddress(1);
+    expect(morpho).not.toBeNull();
+    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
+    for (const chainId of otherChains) {
+      expect(CANONICAL_DISPATCH_TARGETS[chainId].has(morpho!)).toBe(false);
+    }
+  });
+
+  it("getMorphoBlueAddress returns null on non-mainnet — SOT cross-check", () => {
+    // The allowlist builder consumes this SOT getter directly; a null return
+    // guarantees zero contamination across the Ethereum-arm extension.
+    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
+    for (const chainId of otherChains) {
+      expect(getMorphoBlueAddress(chainId)).toBeNull();
+    }
+  });
+
+  it("Ethereum-arm allowlist size grew 26 → 27 after Plan 29-03 Morpho extension", () => {
+    // Hard-pinned count assertion — drift in this number indicates either a
+    // missing extension or an unintended addition elsewhere. Updates require
+    // an explicit plan commit.
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(27);
+  });
+
+  it("Refused tx.to on Ethereum surfaces the Morpho Blue address in allowlist (verbatim)", () => {
+    const eoa = getAddress("0x0000000000000000000000000000000000000001");
+    const result = checkDispatchTarget(1, eoa);
+    expect(result.kind).toBe("refused");
+    if (result.kind !== "refused") return;
+    const morpho = getMorphoBlueAddress(1);
+    expect(morpho).not.toBeNull();
+    expect(result.allowlist).toContain(morpho!);
   });
 });
