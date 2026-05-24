@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Bitcoin + Litecoin
-current_plan: 32-03 (Plans 32-01 + 32-02 complete; 1 of 3 plans remaining)
+current_plan: 1
 status: executing
-last_updated: "2026-05-24T06:37:40.720Z"
-last_activity: 2026-05-24 -- Phase 33 planning complete
+last_updated: "2026-05-24T06:44:23.296Z"
+last_activity: 2026-05-24 -- Phase 33 execution started
 progress:
   total_phases: 6
   completed_phases: 6
@@ -21,15 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-12)
 
 **Core value:** The user trusts what the Ledger screen shows — nothing else. Tampering at any layer between the agent and the device produces a visible mismatch on-screen before signing.
-**Current focus:** Phase 32 — evm uniswap v3 swap
+**Current focus:** Phase 33 — evm-uniswap-v3-lp-verb-set
 
 ## Current Position
 
-Phase: 32 — evm uniswap v3 swap
-Current Plan: 32-03 (Plans 32-01 + 32-02 complete; 1 of 3 plans remaining)
+Phase: 33 (evm-uniswap-v3-lp-verb-set) — EXECUTING
+Plan: 1 of 3
+Current Plan: 1
 Total Plans in Phase: 3
-Status: Ready to execute
-Last activity: 2026-05-24 -- Phase 33 planning complete
+Status: Executing Phase 33
+Last activity: 2026-05-24 -- Phase 33 execution started
 
 Prior activity: 2026-05-23 — Phase 32 Plan 32-01 closed code-complete (6 atomic commits f68b305 → 597a1a1 + docs commit a27601f). UniswapV3Contracts SOT + SwapRouter02 KNOWN_SPENDERS row promotion + canonical-dispatch arm + protocols/uniswap-v3.ts + signing/uniswap-path.ts + 2 APPEND-ONLY block templates + Fixtures UNI-A/B/C hardcoded payloadFingerprint literals.
 
