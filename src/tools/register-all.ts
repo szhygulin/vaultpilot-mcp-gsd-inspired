@@ -101,6 +101,7 @@ import "./prepare_rocketpool_stake.js";   // Phase 31 Plan 31-03 (RP-02 stake) �
 import "./prepare_rocketpool_unstake.js"; // Phase 31 Plan 31-03 (RP-02 unstake) — rETH.burn(uint256) (0x42966c68 is generic ERC-20 Burnable — preview_send tuple-dispatches)
 import "./get_uniswap_quote.js"; // Phase 32 Plan 32-02 (UNI-01) — Uniswap V3 quote with auto-fee-tier + multi-hop + sandwich-MEV warning
 import "./prepare_uniswap_swap.js"; // Phase 32 Plan 32-03 (UNI-02 + UNI-03) — Uniswap V3 swap + sandwich-MEV gate + token-approval pre-flight + multicall+deadline composition + unconditional LEDGER NOTICE
+import "./get_lp_positions.js"; // Phase 33 Plan 33-01 (UNI-04) — Uniswap V3 LP positions + IL estimate
 import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";

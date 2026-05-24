@@ -2349,3 +2349,46 @@ export function buildUniswapV3DecodedArgsBlock(decoded: UniswapV3Decoded): strin
         .replace("{RECIPIENT}", decoded.recipient);
   }
 }
+
+// =============================================================================
+// Phase 33 — Plan 33-01 additive extensions (APPEND-ONLY).
+// =============================================================================
+//
+// `LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE` is the unconditional blind-sign NOTICE
+// for every Phase 33 prepare_uniswap_v3_* tool (consumed by Plan 33-02 + 33-03).
+// The NonfungiblePositionManager contract has NO ERC-7730 clear-sign coverage
+// in the Ledger Ethereum app's registry as of 2026-05-24 (RESEARCH § Topic 10
+// confirmed via direct registry inspection). The device displays a raw
+// keccak256 hash for every NPM verb (mint / increaseLiquidity / decreaseLiquidity
+// / collect / burn / multicall(bytes[])).
+//
+// APPEND-ONLY discipline preserves the byte-identity of every upstream template
+// (mirrors Phase 4 / Phase 9 / Phase 30 / Phase 32 precedent). The template's
+// 13-line body MUST stay byte-identical for the test/signing-blocks.test.ts
+// downstream assertion (Plan 33-02 will pin this).
+
+/**
+ * LEDGER NOTICE template emitted UNCONDITIONALLY by every Phase 33 NPM
+ * prepare tool (Plans 33-02 + 33-03). The NonfungiblePositionManager
+ * contract has no ERC-7730 clear-sign coverage in the Ledger Ethereum app
+ * (verified 2026-05-24 against the ERC-7730 registry — RESEARCH § Topic 10).
+ *
+ * Body MUST stay byte-identical — Plan 33-02 prepare tests pin this template
+ * to anchor the unconditional emission discipline.
+ */
+export const LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE: string = [
+  "LEDGER NOTICE — Uniswap V3 LP operations blind-sign on device",
+  "",
+  "  The Ledger Ethereum app does NOT have ERC-7730 clear-sign coverage for the",
+  "  Uniswap V3 NonfungiblePositionManager contract. When you sign this transaction,",
+  "  the device will display the keccak256 hash of the calldata, NOT the decoded",
+  "  operation (mint / increaseLiquidity / decreaseLiquidity / collect / burn).",
+  "",
+  "  Before approving on-device, verify the LEDGER BLIND-SIGN HASH below matches what",
+  "  the device displays. The CHECKS PERFORMED block above shows the decoded args the",
+  "  server computed server-side — if those args don't match what you intended, refuse",
+  "  on-device and call the appropriate tool again.",
+  "",
+  "  Coverage may be added in a future Ledger app update; consult Ledger's ERC-7730",
+  "  registry at https://github.com/LedgerHQ/clear-signing-erc7730-registry.",
+].join("\n");
