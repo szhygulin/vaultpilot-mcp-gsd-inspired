@@ -940,8 +940,16 @@ Plans:
 
 Plans:
 
+**Wave 1**
+
 - [ ] 33-01: `src/chains/uniswap-v3-lp.ts` (position reader via NonfungiblePositionManager; IL estimate math); `get_lp_positions`; tick ↔ price helpers in `src/signing/uniswap-tick.ts`
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 33-02: `prepare_uniswap_v3_mint` + `_increase_liquidity` + `_decrease_liquidity` + `_collect` + `_burn` (5 prepare tools as mechanical clones of `prepare_aave_supply` shape); `src/protocols/uniswap-v3-lp.ts`
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 33-03: `prepare_uniswap_v3_rebalance` (multicall builder — decrease + collect + mint); composite-tx preview surfacing pattern (new shape — agent + on-device need to see the multi-step decoded view)
 
 #### Phase 34: Curve swap + add liquidity
