@@ -29,16 +29,21 @@ import {
 
 import {
   MAX_UINT128,
+  MULTICALL_BYTES_ABI,
   NPM_WRITE_ABI,
   UNISWAP_V3_LP_SELECTORS,
   _uniswapV3LpProtocol,
+  composeRebalanceCalldata,
   encodeBurn,
   encodeCollect,
   encodeDecreaseLiquidity,
   encodeIncreaseLiquidity,
   encodeMint,
+  encodeMulticallBytes,
+  type MintParams,
 } from "../src/protocols/uniswap-v3-lp.js";
 import { ROCKETPOOL_SELECTORS } from "../src/protocols/rocketpool.js";
+import { UNISWAP_V3_SELECTORS } from "../src/protocols/uniswap-v3.js";
 
 // Canonical EIP-55-checksummed token literals shared across encoder fixtures.
 const USDC: Address = getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
@@ -96,6 +101,26 @@ describe("src/protocols/uniswap-v3-lp.ts — UNISWAP_V3_LP_SELECTORS byte-identi
       toFunctionSelector("function burn(uint256)"),
     );
     expect(UNISWAP_V3_LP_SELECTORS.burn).toBe("0x42966c68");
+  });
+
+  it("multicallBytes === toFunctionSelector('function multicall(bytes[])') — Plan 33-03", () => {
+    expect(UNISWAP_V3_LP_SELECTORS.multicallBytes).toBe(
+      toFunctionSelector("function multicall(bytes[])"),
+    );
+    expect(UNISWAP_V3_LP_SELECTORS.multicallBytes).toBe("0xac9650d8");
+  });
+
+  it("multicallBytes is DISTINCT from Phase 32's deadline-overload multicall selector (T-MULTICALL-SELECTOR-DRIFT)", () => {
+    // NPM uses `multicall(bytes[])` 0xac9650d8 — inherited from IMulticall.
+    // SwapRouter02 uses `multicall(uint256,bytes[])` (the deadline-overload
+    // — see src/protocols/uniswap-v3.ts UNISWAP_V3_SELECTORS.multicallWithDeadline)
+    // — inherited from IMulticallExtended. Different overloads on different
+    // contracts; the two selectors MUST NEVER collapse. A regression that
+    // accidentally reused the deadline-overload literal here would silently
+    // shift every ABI decode slot.
+    expect(UNISWAP_V3_LP_SELECTORS.multicallBytes).not.toBe(
+      UNISWAP_V3_SELECTORS.multicallWithDeadline,
+    );
   });
 });
 
@@ -225,6 +250,158 @@ describe("src/protocols/uniswap-v3-lp.ts — encoder round-trip (encode → deco
   });
 });
 
+describe("src/protocols/uniswap-v3-lp.ts — encodeMulticallBytes (Plan 33-03)", () => {
+  it("encodeMulticallBytes([]) returns calldata with selector 0xac9650d8", () => {
+    const data = encodeMulticallBytes([]);
+    expect(data.slice(0, 10).toLowerCase()).toBe("0xac9650d8");
+  });
+
+  it("encodeMulticallBytes round-trips through decodeFunctionData byte-identically", () => {
+    const inner: readonly `0x${string}`[] = [
+      "0xdeadbeef" as const,
+      "0xcafebabe1234" as const,
+    ];
+    const data = encodeMulticallBytes(inner);
+    expect(data.slice(0, 10).toLowerCase()).toBe("0xac9650d8");
+
+    const decoded = decodeFunctionData({ abi: MULTICALL_BYTES_ABI, data });
+    expect(decoded.functionName).toBe("multicall");
+    const [calls] = decoded.args as [readonly `0x${string}`[]];
+    expect(calls.length).toBe(2);
+    expect(calls[0]).toBe("0xdeadbeef");
+    expect(calls[1]).toBe("0xcafebabe1234");
+  });
+});
+
+describe("src/protocols/uniswap-v3-lp.ts — composeRebalanceCalldata (Plan 33-03 — UNI-09)", () => {
+  // Canonical rebalance composition inputs reused across tests in this block.
+  const REB_TOKEN_ID = 12345n;
+  const REB_EXISTING_LIQUIDITY = 3_289_473_921n;
+  const REB_NEW_TICK_LOWER = -207000;
+  const REB_NEW_TICK_UPPER = -202000;
+  const REB_DEADLINE = 1748707200n;
+
+  const mintParams: MintParams = {
+    token0: USDC,
+    token1: WETH,
+    fee: 500,
+    tickLower: REB_NEW_TICK_LOWER,
+    tickUpper: REB_NEW_TICK_UPPER,
+    amount0Desired: 100_000000n,
+    amount1Desired: 50_000_000_000_000_000n,
+    amount0Min: 99_500000n,
+    amount1Min: 49_750_000_000_000_000n,
+    recipient: ANVIL_1,
+    deadline: REB_DEADLINE,
+  };
+
+  function compose(): `0x${string}` {
+    return composeRebalanceCalldata({
+      tokenId: REB_TOKEN_ID,
+      existingLiquidity: REB_EXISTING_LIQUIDITY,
+      collectRecipient: ANVIL_1,
+      mintParams,
+      decreaseAmount0Min: 0n,
+      decreaseAmount1Min: 0n,
+      deadline: REB_DEADLINE,
+    });
+  }
+
+  it("outer selector is 0xac9650d8 (multicall(bytes[]))", () => {
+    const data = compose();
+    expect(data.slice(0, 10).toLowerCase()).toBe("0xac9650d8");
+  });
+
+  it("decoded bytes[] has exactly 3 inner calls", () => {
+    const data = compose();
+    const decoded = decodeFunctionData({ abi: MULTICALL_BYTES_ABI, data });
+    const [calls] = decoded.args as [readonly `0x${string}`[]];
+    expect(calls.length).toBe(3);
+  });
+
+  it("inner selectors are LOAD-BEARING order: decreaseLiquidity → collect → mint", () => {
+    const data = compose();
+    const decoded = decodeFunctionData({ abi: MULTICALL_BYTES_ABI, data });
+    const [calls] = decoded.args as [readonly `0x${string}`[]];
+    expect(calls[0]!.slice(0, 10).toLowerCase()).toBe(
+      UNISWAP_V3_LP_SELECTORS.decreaseLiquidity,
+    );
+    expect(calls[1]!.slice(0, 10).toLowerCase()).toBe(
+      UNISWAP_V3_LP_SELECTORS.collect,
+    );
+    expect(calls[2]!.slice(0, 10).toLowerCase()).toBe(
+      UNISWAP_V3_LP_SELECTORS.mint,
+    );
+  });
+
+  it("inner[0] decreaseLiquidity carries tokenId + 100% existingLiquidity + supplied amount mins + deadline", () => {
+    const data = compose();
+    const decoded = decodeFunctionData({ abi: MULTICALL_BYTES_ABI, data });
+    const [calls] = decoded.args as [readonly `0x${string}`[]];
+    const innerDecoded = decodeFunctionData({
+      abi: NPM_WRITE_ABI,
+      data: calls[0]!,
+    });
+    expect(innerDecoded.functionName).toBe("decreaseLiquidity");
+    const [params] = innerDecoded.args as [
+      {
+        tokenId: bigint;
+        liquidity: bigint;
+        amount0Min: bigint;
+        amount1Min: bigint;
+        deadline: bigint;
+      },
+    ];
+    expect(params.tokenId).toBe(REB_TOKEN_ID);
+    expect(params.liquidity).toBe(REB_EXISTING_LIQUIDITY);
+    expect(params.amount0Min).toBe(0n);
+    expect(params.amount1Min).toBe(0n);
+    expect(params.deadline).toBe(REB_DEADLINE);
+  });
+
+  it("inner[1] collect uses MAX_UINT128 sentinel for both amount maxes (collect-everything)", () => {
+    const data = compose();
+    const decoded = decodeFunctionData({ abi: MULTICALL_BYTES_ABI, data });
+    const [calls] = decoded.args as [readonly `0x${string}`[]];
+    const innerDecoded = decodeFunctionData({
+      abi: NPM_WRITE_ABI,
+      data: calls[1]!,
+    });
+    expect(innerDecoded.functionName).toBe("collect");
+    const [params] = innerDecoded.args as [
+      {
+        tokenId: bigint;
+        recipient: typeof ANVIL_1;
+        amount0Max: bigint;
+        amount1Max: bigint;
+      },
+    ];
+    expect(params.tokenId).toBe(REB_TOKEN_ID);
+    expect(params.recipient).toBe(ANVIL_1);
+    expect(params.amount0Max).toBe(MAX_UINT128);
+    expect(params.amount1Max).toBe(MAX_UINT128);
+  });
+
+  it("inner[2] mint carries supplied MintParams at the NEW tick range", () => {
+    const data = compose();
+    const decoded = decodeFunctionData({ abi: MULTICALL_BYTES_ABI, data });
+    const [calls] = decoded.args as [readonly `0x${string}`[]];
+    const innerDecoded = decodeFunctionData({
+      abi: NPM_WRITE_ABI,
+      data: calls[2]!,
+    });
+    expect(innerDecoded.functionName).toBe("mint");
+    const [params] = innerDecoded.args as [typeof mintParams];
+    expect(params.token0).toBe(USDC);
+    expect(params.token1).toBe(WETH);
+    expect(params.fee).toBe(500);
+    expect(params.tickLower).toBe(REB_NEW_TICK_LOWER);
+    expect(params.tickUpper).toBe(REB_NEW_TICK_UPPER);
+    expect(params.recipient).toBe(ANVIL_1);
+    expect(params.deadline).toBe(REB_DEADLINE);
+  });
+});
+
 describe("src/protocols/uniswap-v3-lp.ts — anti-pattern guard (Phase 32 deadline-overload selector MUST NOT appear)", () => {
   it("source file does NOT contain the literal 0x5ae401dc (Phase 32 multicallWithDeadline)", () => {
     // Defense-in-depth file-level grep: NPM uses multicall(bytes[]) =
@@ -241,7 +418,7 @@ describe("src/protocols/uniswap-v3-lp.ts — anti-pattern guard (Phase 32 deadli
 });
 
 describe("src/protocols/uniswap-v3-lp.ts — ESM spy-affordance", () => {
-  it("_uniswapV3LpProtocol exports all 5 encoders by named reference", () => {
+  it("_uniswapV3LpProtocol exports all 5 single-step encoders + Plan 33-03 composite helpers by named reference", () => {
     expect(_uniswapV3LpProtocol.encodeMint).toBe(encodeMint);
     expect(_uniswapV3LpProtocol.encodeIncreaseLiquidity).toBe(
       encodeIncreaseLiquidity,
@@ -251,6 +428,22 @@ describe("src/protocols/uniswap-v3-lp.ts — ESM spy-affordance", () => {
     );
     expect(_uniswapV3LpProtocol.encodeCollect).toBe(encodeCollect);
     expect(_uniswapV3LpProtocol.encodeBurn).toBe(encodeBurn);
+    expect(_uniswapV3LpProtocol.encodeMulticallBytes).toBe(encodeMulticallBytes);
+    expect(_uniswapV3LpProtocol.composeRebalanceCalldata).toBe(
+      composeRebalanceCalldata,
+    );
+  });
+
+  it("_uniswapV3LpProtocol surface widens from 5 → 7 keys at Plan 33-03", () => {
+    expect(Object.keys(_uniswapV3LpProtocol).sort()).toEqual([
+      "composeRebalanceCalldata",
+      "encodeBurn",
+      "encodeCollect",
+      "encodeDecreaseLiquidity",
+      "encodeIncreaseLiquidity",
+      "encodeMint",
+      "encodeMulticallBytes",
+    ]);
   });
 });
 
@@ -265,5 +458,11 @@ describe("src/protocols/uniswap-v3-lp.ts — ABI fragment exports", () => {
       "increaseLiquidity",
       "mint",
     ]);
+  });
+
+  it("MULTICALL_BYTES_ABI is a 1-entry fragment containing the bytes-only multicall (Plan 33-03)", () => {
+    expect(MULTICALL_BYTES_ABI.length).toBe(1);
+    const names = MULTICALL_BYTES_ABI.map((f) => (f as { name?: string }).name);
+    expect(names).toEqual(["multicall"]);
   });
 });

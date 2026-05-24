@@ -1,10 +1,12 @@
 // Uniswap V3 NonfungiblePositionManager (NPM) protocol primitives —
-// Phase 33 Plan 33-02 (UNI-05 + UNI-06 + UNI-07 + UNI-08).
+// Phase 33 Plans 33-02 (UNI-05..08 single-step) + 33-03 (UNI-09 composite
+// rebalance via multicall(bytes[])).
 //
 // Per CONTEXT.md D-02 / RESEARCH § Architectural Responsibility Map: SEPARATE
 // file from Phase 32's `src/protocols/uniswap-v3.ts` (SwapRouter02 + Quoter V2).
 // The two modules MUST NOT cross-import. Phase 33 ships its own NPM ABI
-// fragments + selector dispatch table for the 5 single-step LP verbs.
+// fragments + selector dispatch table for the 5 single-step LP verbs PLUS
+// the multicall(bytes[]) composer used by `prepare_uniswap_v3_rebalance`.
 //
 // Structural analog: src/protocols/uniswap-v3.ts (Phase 32) for the multi-method
 // shape + parseAbi tuple-struct declaration idiom + selector-table layout +
@@ -20,6 +22,7 @@
 //                                                          0x0c49ccbe
 //   NPM.collect((uint256,address,uint128,uint128)):        0xfc6f7865
 //   NPM.burn(uint256):                                     0x42966c68
+//   NPM.multicall(bytes[]):                                0xac9650d8  (Plan 33-03)
 //
 // SELECTOR-COLLISION WARNINGS:
 //
@@ -36,17 +39,19 @@
 //     appear in this module. NPM's own multicall overload is
 //     `multicall(bytes[])` (selector `0xac9650d8`) because each NPM
 //     mint/increase/decrease struct carries a per-call `deadline` field —
-//     the outer wrapper needs no deadline. Plan 33-03 adds the
-//     `multicall(bytes[])` selector to this table when shipping
-//     `prepare_uniswap_v3_rebalance`; Plan 33-02 (this file's initial cut)
-//     reserves the slot and does NOT define the encoder. The anti-pattern
-//     test in test/protocols-uniswap-v3-lp.test.ts greps the source for the
-//     full 10-char literal to enforce.
+//     the outer wrapper needs no deadline. Plan 33-03 ships the
+//     `multicall(bytes[])` selector + encoder + `composeRebalanceCalldata`
+//     composition helper in this module. The anti-pattern test in
+//     test/protocols-uniswap-v3-lp.test.ts greps the source for the full
+//     10-char Phase 32 literal to enforce — the two multicall overloads
+//     live on DIFFERENT contracts (NPM inherits IMulticall vs SwapRouter02
+//     inherits IMulticallExtended) and MUST stay distinct.
 //
-// ESM spy-affordance: `_uniswapV3LpProtocol` wraps all 5 encoders so tests can
-// `vi.spyOn(_uniswapV3LpProtocol, "encodeMint")` without monkey-patching named
-// exports (ESM bindings are immutable; direct spies are no-ops for module-
-// internal calls). Per CLAUDE.md § Conventions.
+// ESM spy-affordance: `_uniswapV3LpProtocol` wraps all 5 encoders PLUS the
+// new Plan 33-03 `encodeMulticallBytes` + `composeRebalanceCalldata` entries
+// so tests can `vi.spyOn(_uniswapV3LpProtocol, "composeRebalanceCalldata")`
+// without monkey-patching named exports (ESM bindings are immutable; direct
+// spies are no-ops for module-internal calls). Per CLAUDE.md § Conventions.
 //
 // Consumed by:
 //   - src/tools/prepare_uniswap_v3_mint.ts               (Plan 33-02 UNI-05)
@@ -54,9 +59,10 @@
 //   - src/tools/prepare_uniswap_v3_decrease_liquidity.ts (Plan 33-02 UNI-06)
 //   - src/tools/prepare_uniswap_v3_collect.ts            (Plan 33-02 UNI-07)
 //   - src/tools/prepare_uniswap_v3_burn.ts               (Plan 33-02 UNI-08)
-//   - src/tools/preview_send.ts                          (Plan 33-02 — (to, selector) tuple dispatch)
+//   - src/tools/prepare_uniswap_v3_rebalance.ts          (Plan 33-03 UNI-09 — composite multicall)
+//   - src/tools/preview_send.ts                          (Plans 33-02 + 33-03 — (to, selector) tuple dispatch + composite arm)
 //   - test/protocols-uniswap-v3-lp.test.ts               (byte-identity selector + encoder regressions)
-//   - test/signing-fingerprint.test.ts                   (Fixtures UNI-LP-A..E)
+//   - test/signing-fingerprint.test.ts                   (Fixtures UNI-LP-A..F)
 
 import {
   type Address,
@@ -91,23 +97,43 @@ export const NPM_WRITE_ABI = parseAbi([
   "function burn(uint256 tokenId) external payable",
 ]);
 
+/**
+ * NPM `multicall(bytes[])` overload — Phase 33 Plan 33-03. DISTINCT from
+ * Phase 32's `MULTICALL_DEADLINE_ABI` in `src/protocols/uniswap-v3.ts` (the
+ * deadline-overload `multicall(uint256,bytes[])` — selector prefix
+ * `0x5ae4...`). NPM's per-call structs carry their own deadline fields so
+ * the outer multicall doesn't need one.
+ *
+ * Inherited by `NonfungiblePositionManager` from
+ * `@uniswap/v3-periphery/contracts/interfaces/IMulticall.sol` — see
+ * 33-RESEARCH § Topic 2 (selector `0xac9650d8` VERIFIED via
+ * viem.toFunctionSelector at research time).
+ */
+export const MULTICALL_BYTES_ABI = parseAbi([
+  "function multicall(bytes[] data) external payable returns (bytes[])",
+]);
+
 // ---------------------------------------------------------------------------
 // Selector table (HARDCODED VERIFIED LITERALS — Pitfall: burn collision)
 // ---------------------------------------------------------------------------
 
 /**
  * 4-byte function selectors for the 5 NPM verbs VaultPilot encodes at Phase 33
- * Plan 33-02. Empirically verified via `viem.toFunctionSelector` at research
- * time (33-RESEARCH § Topic 2, 2026-05-24) and re-asserted at runtime in
+ * Plan 33-02, plus the composite `multicall(bytes[])` outer wrapper Plan 33-03
+ * uses for `prepare_uniswap_v3_rebalance`. Empirically verified via
+ * `viem.toFunctionSelector` at research time (33-RESEARCH § Topic 2,
+ * 2026-05-24) and re-asserted at runtime in
  * `test/protocols-uniswap-v3-lp.test.ts`.
  *
  * COLLISION + DRIFT WARNINGS:
  *   - `burn === "0x42966c68"` COLLIDES with Phase 31 `rETH.burn` + generic
  *     ERC-20 Burnable mixin. `preview_send` resolves via `(tx.to, selector)`
  *     tuple dispatch — when `to === NPM SOT`, route to NPM burn decoder.
- *   - The Phase 32 deadline-overload selector (prefix `0x5ae4...`) is NOT
- *     in this table. NPM uses `multicall(bytes[])` (selector `0xac9650d8`) for
- *     composite calls — Plan 33-03 adds that slot when shipping rebalance.
+ *   - `multicallBytes === "0xac9650d8"` is the bytes-only NPM overload —
+ *     NEVER conflate with the Phase 32 deadline-overload selector (prefix
+ *     `0x5ae4...` on the SwapRouter02 `MULTICALL_DEADLINE_ABI`). They are
+ *     different overloads on different contracts (NPM inherits IMulticall,
+ *     SwapRouter02 inherits IMulticallExtended).
  */
 export const UNISWAP_V3_LP_SELECTORS = {
   /** NPM.mint(MintParams) — creates new LP position; Fixture UNI-LP-A anchor. */
@@ -120,6 +146,13 @@ export const UNISWAP_V3_LP_SELECTORS = {
   collect: "0xfc6f7865" as Hex,
   /** NPM.burn(tokenId) — closes empty position; Fixture UNI-LP-E anchor; COLLIDES with rETH.burn (Phase 31). */
   burn: "0x42966c68" as Hex,
+  /**
+   * NPM.multicall(bytes[]) — composite outer wrapper for Plan 33-03 rebalance;
+   * Fixture UNI-LP-F anchor. DISTINCT from Phase 32's deadline-overload
+   * (prefix `0x5ae4...`). The two live on DIFFERENT contracts and the wrong
+   * fragment produces an ABI decode that silently shifts every slot.
+   */
+  multicallBytes: "0xac9650d8" as Hex,
 } as const;
 
 /**
@@ -323,6 +356,86 @@ export function encodeBurn(tokenId: bigint): Hex {
 }
 
 // ---------------------------------------------------------------------------
+// Plan 33-03 — composite multicall encoder + rebalance composition helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Encode `NPM.multicall(bytes[])` calldata wrapping `innerCalls` — Plan 33-03.
+ * Each inner call is a pre-encoded NPM verb calldata blob (produced by
+ * `encodeDecreaseLiquidity` / `encodeCollect` / `encodeMint` etc.).
+ *
+ * Selector `0xac9650d8` — NEVER conflate with the Phase 32 deadline-overload
+ * (prefix `0x5ae4...`); the two live on different contracts. The internal
+ * `assertSelector` guard catches drift at encode time.
+ *
+ * Fixture UNI-LP-F anchor: see test/signing-fingerprint.test.ts.
+ */
+export function encodeMulticallBytes(innerCalls: readonly Hex[]): Hex {
+  const data = encodeFunctionData({
+    abi: MULTICALL_BYTES_ABI,
+    functionName: "multicall",
+    args: [innerCalls as Hex[]],
+  });
+  assertSelector(data, UNISWAP_V3_LP_SELECTORS.multicallBytes, "MulticallBytes");
+  return data;
+}
+
+/**
+ * Composition helper for `prepare_uniswap_v3_rebalance` — composes 3 NPM
+ * inner calls in LOAD-BEARING order and wraps them in `multicall(bytes[])`:
+ *
+ *   1. `decreaseLiquidity` — burns 100% of `existingLiquidity` from the
+ *       position; settles the resulting token amounts to `tokensOwed0/1`
+ *       on the position state (per 33-RESEARCH § Topic 2: decreaseLiquidity
+ *       does NOT transfer tokens — they must be collected).
+ *   2. `collect` — sweeps the settled-but-uncollected amounts (plus any
+ *       pre-existing accrued fees) using the `MAX_UINT128` sentinel for
+ *       both `amount*Max` fields, sending to `collectRecipient`.
+ *   3. `mint` — opens a NEW position at the new tick range with the
+ *       supplied `mintParams`.
+ *
+ * The order is LOAD-BEARING (33-RESEARCH § Topic 2 + 33-CONTEXT.md D-06):
+ *   - decrease BEFORE collect: decreaseLiquidity is what populates
+ *     `tokensOwed0/1` for collect to harvest.
+ *   - collect BEFORE mint: the new mint pulls token balances from the user's
+ *     wallet via `TransferHelper.safeTransferFrom`; the collected tokens
+ *     must already be present in the wallet at the time mint executes. The
+ *     multicall executes atomically — collect's transfer-out to
+ *     `collectRecipient` (= user) lands BEFORE mint's transferFrom pulls.
+ *
+ * Swapping any step's position would either (a) collect nothing (mint before
+ * collect would still receive its tokens but the decreased liquidity stays
+ * stranded in `tokensOwed`) or (b) leak the collected tokens into the user's
+ * wallet without re-deploying them as the new position. Both are user-visible
+ * value losses.
+ */
+export function composeRebalanceCalldata(args: {
+  tokenId: bigint;
+  existingLiquidity: bigint;
+  collectRecipient: Address;
+  mintParams: MintParams;
+  decreaseAmount0Min: bigint;
+  decreaseAmount1Min: bigint;
+  deadline: bigint;
+}): Hex {
+  const decreaseInner = encodeDecreaseLiquidity({
+    tokenId: args.tokenId,
+    liquidity: args.existingLiquidity,
+    amount0Min: args.decreaseAmount0Min,
+    amount1Min: args.decreaseAmount1Min,
+    deadline: args.deadline,
+  });
+  const collectInner = encodeCollect({
+    tokenId: args.tokenId,
+    recipient: args.collectRecipient,
+    amount0Max: MAX_UINT128,
+    amount1Max: MAX_UINT128,
+  });
+  const mintInner = encodeMint(args.mintParams);
+  return encodeMulticallBytes([decreaseInner, collectInner, mintInner]);
+}
+
+// ---------------------------------------------------------------------------
 // ESM spy-affordance indirection (CLAUDE.md § Conventions)
 // ---------------------------------------------------------------------------
 
@@ -333,6 +446,7 @@ export function encodeBurn(tokenId: bigint): Hex {
  * monkey-patching named exports.
  *
  * Mirror of `_uniswapV3Protocol` in src/protocols/uniswap-v3.ts (Phase 32).
+ * Plan 33-03 widens with `encodeMulticallBytes` + `composeRebalanceCalldata`.
  */
 export const _uniswapV3LpProtocol = {
   encodeMint,
@@ -340,4 +454,6 @@ export const _uniswapV3LpProtocol = {
   encodeDecreaseLiquidity,
   encodeCollect,
   encodeBurn,
+  encodeMulticallBytes,
+  composeRebalanceCalldata,
 };
