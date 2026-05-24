@@ -961,6 +961,17 @@ export const KNOWN_SPENDERS_ETHEREUM: readonly KnownSpender[] = [
     label: "Uniswap V3 SwapRouter02",
     source: "https://docs.uniswap.org",
   },
+  // Phase 33 Plan 33-01 — NPM promotion to KNOWN_SPENDERS_ETHEREUM per RESEARCH
+  // § Topic 8 (CONFIRMED: NPM IS a spender for mint/increase via internal
+  // TransferHelper.safeTransferFrom on BOTH token0 AND token1). Address
+  // delegated to SOT getter for cross-view byte-identity
+  // (T-UNISWAP-V3-NPM-SPENDER-DRIFT-1). The SOT slot is pre-populated at Phase
+  // 32 D-01; Phase 33 only adds this consumer row.
+  {
+    address: getUniswapV3NonfungiblePositionManagerAddress(1)!,
+    label: "Uniswap V3 NonfungiblePositionManager",
+    source: "https://docs.uniswap.org/contracts/v3/reference/periphery/NonfungiblePositionManager",
+  },
   {
     address: getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"),
     label: "WETH9 (canonical wETH)",

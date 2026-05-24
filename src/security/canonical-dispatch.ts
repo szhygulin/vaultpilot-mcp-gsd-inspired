@@ -68,6 +68,7 @@ import {
   getMorphoBlueAddress,
   getRocketPoolDepositPoolAddress,
   getRocketPoolRethAddress,
+  getUniswapV3NonfungiblePositionManagerAddress,
   getUniswapV3SwapRouter02Address,
   getWethAddress,
   type ChainId,
@@ -182,6 +183,19 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
         (a): a is Address => !!a && a !== "0x0000000000000000000000000000000000000000",
       )
     : [];
+  // Phase 33 — NonfungiblePositionManager dispatch allowlist arm. NPM is the
+  // write target for mint / increaseLiquidity / decreaseLiquidity / collect /
+  // burn / multicall(bytes[]) (rebalance composite). Per RESEARCH § Topic 8,
+  // NPM IS a spender (mint/increase perform TransferHelper.safeTransferFrom on
+  // both token0 and token1). Non-Ethereum chains:
+  // getUniswapV3NonfungiblePositionManagerAddress returns null per D-03 →
+  // outer ternary yields [] → spread adds nothing.
+  const uniswapV3Npm = getUniswapV3NonfungiblePositionManagerAddress(chainId);
+  const uniswapV3LpEntries: Address[] = uniswapV3Npm
+    ? [uniswapV3Npm].filter(
+        (a): a is Address => !!a && a !== "0x0000000000000000000000000000000000000000",
+      )
+    : [];
   return new Set<Address>([
     getAaveV3PoolAddress(chainId),
     getWethAddress(chainId),
@@ -194,6 +208,7 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
     ...eigenEntries,
     ...rocketEntries,
     ...uniswapEntries,
+    ...uniswapV3LpEntries,
   ]);
 }
 
@@ -203,11 +218,11 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
  * new chain extends this Record alongside the `ChainId` union in
  * `src/config/contracts.ts`.
  *
- * Membership counts per chain (execute-time, 2026-05-23 — Phase 32 Plan 32-01
- * Ethereum-arm extended by 1 Uniswap V3 SwapRouter02; Quoter V2 NOT added
- * per D-13a read-only):
- *   - Ethereum (1):     39 entries (38 post-Phase-31 + Uniswap V3 SwapRouter02; net +1)
- *   - Arbitrum (42161): 21 entries (unchanged — Phase 32 is Ethereum-only per D-03)
+ * Membership counts per chain (execute-time, 2026-05-24 — Phase 33 Plan 33-01
+ * Ethereum-arm extended by 1 Uniswap V3 NonfungiblePositionManager; SOT slot
+ * was pre-populated at Phase 32 D-01 but no dispatch arm landed until Phase 33):
+ *   - Ethereum (1):     40 entries (39 post-Phase-32 + Uniswap V3 NPM; net +1)
+ *   - Arbitrum (42161): 21 entries (unchanged — Phase 33 is Ethereum-only per D-03)
  *   - Polygon (137):    22 entries (unchanged)
  *   - Base (8453):       8 entries (unchanged)
  *   - Optimism (10):    17 entries (unchanged)
