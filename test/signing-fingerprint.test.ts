@@ -744,6 +744,22 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     "0x4c8a7833209aa8659a6de2aac5d4bde61306df51dd715eb834805efdcc7c73c7";
   const FIXTURE_UNI_LP_E_FP =
     "0x9a3f61d8a80fdcbb0718466b1c4e92057e6dc261317858ef47957bb7b29feaa8";
+  // Fixture UNI-LP-F — Phase 33 Plan 33-03 (UNI-09) — composite rebalance
+  // multicall(bytes[]) fingerprint over the FULL outer multicall calldata.
+  // Single hash; cryptographic-binding chain UNCHANGED from Phase 4 per
+  // CONTEXT.md D-06 + RESEARCH § Topic 9. Canonical preimage inputs:
+  //   tokenId            = 12345n
+  //   existingLiquidity  = 3_289_473_921n  (matches the Plan 33-03 rebalance
+  //                                          test composeRebalance inputs)
+  //   collectRecipient   = FIXTURE_NPM_PERSONA (Anvil acct 1)
+  //   mintParams         = USDC/WETH/500/[-207000, -202000]/100 USDC/0.05 WETH/
+  //                        99.5 USDC min/0.0498 WETH min/recipient=PERSONA/
+  //                        deadline=FIXTURE_NPM_DEADLINE
+  //   decreaseAmount0Min = 0n     (Plan 33-02/33-03 convention — slippage
+  //   decreaseAmount1Min = 0n      floor deferred to v2.4.x)
+  //   deadline           = FIXTURE_NPM_DEADLINE
+  const FIXTURE_UNI_LP_F_FP =
+    "0x6f3324f421c5d6c28df7d4ded3447be1b8b41d884df21e908bb9d8ecd7f4711a";
 
   const FIXTURE_NPM_PERSONA = getAddress(
     "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
@@ -863,19 +879,64 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     expect(fp).toBe(FIXTURE_UNI_LP_E_FP);
   });
 
-  it("Fixtures UNI-LP-A..E produce 5 distinct fingerprints", () => {
-    // Each verb has its own calldata shape; the 5 fingerprints MUST differ.
+  it("Fixture UNI-LP-F — NPM.multicall(bytes[]) rebalance fingerprint (hardcoded literal anchor, Phase 33 Plan 33-03)", () => {
+    // The composite rebalance calldata: 3 inner calls (decreaseLiquidity-all
+    // + collect-MAX_UINT128 + mint-at-new-range) wrapped in multicall(bytes[]).
+    // Single payloadFingerprint over the FULL outer calldata — the
+    // cryptographic-binding chain is the SAME single-hash path Phase 4
+    // established (CONTEXT.md D-06 + RESEARCH § Topic 9).
+    const npm = getUniswapV3NonfungiblePositionManagerAddress(1)!;
+    const USDC = getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    const WETH = getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    const data = _uniswapV3LpProtocol.composeRebalanceCalldata({
+      tokenId: 12345n,
+      existingLiquidity: 3_289_473_921n,
+      collectRecipient: FIXTURE_NPM_PERSONA,
+      mintParams: {
+        token0: USDC,
+        token1: WETH,
+        fee: 500,
+        tickLower: -207000,
+        tickUpper: -202000,
+        amount0Desired: 100_000000n,
+        amount1Desired: 50_000_000_000_000_000n,
+        amount0Min: 99_500000n,
+        amount1Min: 49_750_000_000_000_000n,
+        recipient: FIXTURE_NPM_PERSONA,
+        deadline: FIXTURE_NPM_DEADLINE,
+      },
+      decreaseAmount0Min: 0n,
+      decreaseAmount1Min: 0n,
+      deadline: FIXTURE_NPM_DEADLINE,
+    });
+    // Selector pin BEFORE fingerprint pin (Phase 32 line-537 discipline).
+    expect(data.slice(0, 10).toLowerCase()).toBe(
+      UNISWAP_V3_LP_SELECTORS.multicallBytes,
+    );
+    expect(data.slice(0, 10).toLowerCase()).toBe("0xac9650d8");
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: npm,
+      valueWei: 0n,
+      data,
+    });
+    expect(fp).toBe(FIXTURE_UNI_LP_F_FP);
+  });
+
+  it("Fixtures UNI-LP-A..F produce 6 distinct fingerprints", () => {
+    // Each verb has its own calldata shape; the 6 fingerprints MUST differ.
     // A regression that collapses calldata-shape distinguishability (e.g.
     // accidentally dropping a struct field from a preimage) fires this Set-
-    // size assertion.
+    // size assertion. Plan 33-03 widens to 6 with the composite rebalance.
     const distinct = new Set([
       FIXTURE_UNI_LP_A_FP,
       FIXTURE_UNI_LP_B_FP,
       FIXTURE_UNI_LP_C_FP,
       FIXTURE_UNI_LP_D_FP,
       FIXTURE_UNI_LP_E_FP,
+      FIXTURE_UNI_LP_F_FP,
     ]);
-    expect(distinct.size).toBe(5);
+    expect(distinct.size).toBe(6);
   });
 
   it("invalid `to` (not a 0x-prefixed 20-byte hex) → throws via viem.hexToBytes", () => {
