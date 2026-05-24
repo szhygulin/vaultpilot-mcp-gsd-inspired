@@ -1098,3 +1098,62 @@ describe("src/config/contracts.ts — Uniswap V3 SOT (Phase 32 Plan 32-01)", () 
     expect(row).toBeUndefined();
   });
 });
+
+// =============================================================================
+// Phase 33 — Plan 33-01: NonfungiblePositionManager promoted to KNOWN_SPENDERS.
+// =============================================================================
+//
+// T-UNISWAP-V3-NPM-SPENDER-DRIFT-1: KNOWN_SPENDERS_ETHEREUM "Uniswap V3
+// NonfungiblePositionManager" row must be byte-identical to
+// getUniswapV3NonfungiblePositionManagerAddress(1). NPM is a spender for
+// mint / increaseLiquidity (internal TransferHelper.safeTransferFrom on BOTH
+// token0 AND token1 — RESEARCH § Topic 8 CONFIRMED). The SOT slot was
+// pre-populated at Phase 32 D-01; Phase 33 only adds the consumer row in
+// KNOWN_SPENDERS — this drift-test enforces the cross-view byte-identity that
+// prevents the two sources from silently diverging.
+
+describe("src/config/contracts.ts — Phase 33 Uniswap V3 NPM KNOWN_SPENDERS promotion", () => {
+  // T-UNISWAP-V3-NPM-SPENDER-DRIFT-1: NPM row ↔ getter cross-view byte-identity.
+  it("T-UNISWAP-V3-NPM-SPENDER-DRIFT-1 — KNOWN_SPENDERS_ETHEREUM 'Uniswap V3 NonfungiblePositionManager' row address matches getUniswapV3NonfungiblePositionManagerAddress(1)", () => {
+    // 3-assertion regression block mirroring Phase 32 T-UNISWAP-V3-SPENDER-DRIFT-1:
+    // (1) SOT getter non-null on chainId=1.
+    const sotAddr = getUniswapV3NonfungiblePositionManagerAddress(1);
+    expect(sotAddr).not.toBeNull();
+    // (2) The KNOWN_SPENDERS row's address equals the SOT getter return.
+    const row = KNOWN_SPENDERS_ETHEREUM.find(
+      (r) => r.label === "Uniswap V3 NonfungiblePositionManager",
+    );
+    expect(row).toBeDefined();
+    expect(row?.address).toBe(sotAddr);
+    // (3) Defense-in-depth — SOT getter returns the verified canonical literal.
+    expect(sotAddr).toBe(getAddress("0xC36442b4a4522E871399CD717aBDD847Ab11FE88"));
+  });
+
+  // Insertion order: alphabetical-by-label — NPM row sits AFTER SwapRouter02,
+  // BEFORE WETH9. Drift here means the row was inserted at the wrong position.
+  it("KNOWN_SPENDERS row position — 'Uniswap V3 NonfungiblePositionManager' sits between SwapRouter02 and WETH9", () => {
+    const npmIdx = KNOWN_SPENDERS_ETHEREUM.findIndex(
+      (r) => r.label === "Uniswap V3 NonfungiblePositionManager",
+    );
+    const swapRouter02Idx = KNOWN_SPENDERS_ETHEREUM.findIndex(
+      (r) => r.label === "Uniswap V3 SwapRouter02",
+    );
+    const wethIdx = KNOWN_SPENDERS_ETHEREUM.findIndex(
+      (r) => r.label === "WETH9 (canonical wETH)",
+    );
+    expect(npmIdx).toBeGreaterThan(-1);
+    expect(swapRouter02Idx).toBeGreaterThan(-1);
+    expect(wethIdx).toBeGreaterThan(-1);
+    expect(npmIdx).toBe(swapRouter02Idx + 1);
+    expect(npmIdx).toBe(wethIdx - 1);
+  });
+
+  // EIP-55 round-trip — corrupted-snapshot guard.
+  it("NPM KNOWN_SPENDERS row address is EIP-55 checksummed", () => {
+    const row = KNOWN_SPENDERS_ETHEREUM.find(
+      (r) => r.label === "Uniswap V3 NonfungiblePositionManager",
+    );
+    expect(row).toBeDefined();
+    expect(row!.address).toBe(getAddress(row!.address));
+  });
+});

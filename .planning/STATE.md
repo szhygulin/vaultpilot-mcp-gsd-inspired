@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Bitcoin + Litecoin
-current_plan: 32-03 (Plans 32-01 + 32-02 complete; 1 of 3 plans remaining)
-status: executing
-last_updated: "2026-05-24T06:37:40.720Z"
-last_activity: 2026-05-24 -- Phase 33 planning complete
+current_plan: 3
+status: verifying
+last_updated: "2026-05-24T08:40:51.317Z"
+last_activity: 2026-05-24
 progress:
   total_phases: 6
   completed_phases: 6
@@ -21,15 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-12)
 
 **Core value:** The user trusts what the Ledger screen shows — nothing else. Tampering at any layer between the agent and the device produces a visible mismatch on-screen before signing.
-**Current focus:** Phase 32 — evm uniswap v3 swap
+**Current focus:** Phase 33 — evm-uniswap-v3-lp-verb-set
 
 ## Current Position
 
-Phase: 32 — evm uniswap v3 swap
-Current Plan: 32-03 (Plans 32-01 + 32-02 complete; 1 of 3 plans remaining)
+Phase: 33 (evm-uniswap-v3-lp-verb-set) — EXECUTING
+Plan: 3 of 3
+Current Plan: 3
 Total Plans in Phase: 3
-Status: Ready to execute
-Last activity: 2026-05-24 -- Phase 33 planning complete
+Status: Phase complete — ready for verification
+Last activity: 2026-05-24
 
 Prior activity: 2026-05-23 — Phase 32 Plan 32-01 closed code-complete (6 atomic commits f68b305 → 597a1a1 + docs commit a27601f). UniswapV3Contracts SOT + SwapRouter02 KNOWN_SPENDERS row promotion + canonical-dispatch arm + protocols/uniswap-v3.ts + signing/uniswap-path.ts + 2 APPEND-ONLY block templates + Fixtures UNI-A/B/C hardcoded payloadFingerprint literals.
 
@@ -89,6 +90,9 @@ Progress: [██████████] 100%
 | Phase 32 P01 | 1743 | 6 tasks | 12 files |
 | Phase 32 P02 | 14 | 3 tasks | 7 files |
 | Phase 32 P03 | 29min | 5 tasks | 8 files |
+| Phase 33 P01 | 32 min | 3 tasks | 20 files |
+| Phase 33 P33-02 | ~33 min | 3 tasks | 17 files |
+| Phase 33 P33-03 | 38 min | 3 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -136,6 +140,15 @@ Recent decisions affecting current work:
 - [Phase ?]: Phase 32 swap-only v2.4 milestone code-complete (Plan 32-01 + 32-02 + 32-03 across 3 waves)
 - [Phase ?]: Fixture UNI-A + UNI-B byte-identity cross-link reproducible at prepare-tool level when from === FIXTURE_PERSONA (Anvil acct 1); UNI-C not reproducible due to canonical-fee-tier mismatch — remains anchored standalone
 - [Phase ?]: Uniswap V3 calldata is from-DEPENDENT (recipient embedded in exactInputSingle/exactInput/unwrapWETH9 params); integration test re-computes per-persona deterministic fingerprints via encoder primitives
+- [Phase 33]: Plan 33-01: HAND-ROLL all LP math (tick / liquidity / fees / IL / pool-address) per SDK Probe Verdict — zero new npm packages
+- [Phase 33]: Plan 33-01: NPM promoted to KNOWN_SPENDERS_ETHEREUM + canonical-dispatch.ethereum (RESEARCH § Topic 8 CONFIRMED spender for mint/increase)
+- [Phase 33]: Plan 33-01: ilEstimateConfidence tier — high for in-range, low for out-of-range geometric-midpoint OR extreme-asymmetric refusal
+- [Phase 33]: Plan 33-01: module-load self-check in src/signing/uniswap-pool-address.ts — first runtime drift-anchor against derived on-chain values
+- [Phase ?]: Phase 33 Plan 33-02: decreaseLiquidity amount0Min/amount1Min default to 0 at prepare layer; current-pool-state derivation deferred to v2.4.x
+- [Phase ?]: Phase 33 Plan 33-02: burn selector collision (0x42966c68) resolved by extending Phase 31 rETH arm in-place — both rETH and NPM routes via (tx.to, selector) tuple dispatch
+- [Phase ?]: Phase 33 Plan 33-02: decodeSingleNpmCall exported from preview_send.ts as Pitfall 7 SHARED-decoder SOT for Plan 33-03 composite-multicall reuse
+- [Phase ?]: ESM spy-affordance for shared decoders — add at write time when cross-export internal calls need test interception (Plan 33-03 _npmDecodeShared in preview_send.ts; CLAUDE.md ESM bindings rule)
+- [Phase ?]: Composite-tx preview shape (Plan 33-03 UNI-09) — ONE tool / ONE handle / ONE calldata / single payloadFingerprint over outer multicall; LOAD-BEARING inner-call order in composeRebalanceCalldata; recursive decode via SHARED helper (Pitfall 7 SOT). Canonical reference for v2.5 Safe three-step.
 
 ### Pending Todos
 
@@ -335,6 +348,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-24T05:45:00.292Z
-Stopped at: Phase 33 context gathered (autonomous)
-Resume file: .planning/phases/33-evm-uniswap-v3-lp-verb-set/33-CONTEXT.md
+Last session: 2026-05-24T08:40:51.306Z
+Stopped at: Completed 33-03-PLAN.md — Phase 33 v2.4 LP milestone code-complete
+Resume file: None

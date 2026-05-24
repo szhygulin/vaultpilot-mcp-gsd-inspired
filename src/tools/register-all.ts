@@ -101,6 +101,13 @@ import "./prepare_rocketpool_stake.js";   // Phase 31 Plan 31-03 (RP-02 stake) �
 import "./prepare_rocketpool_unstake.js"; // Phase 31 Plan 31-03 (RP-02 unstake) — rETH.burn(uint256) (0x42966c68 is generic ERC-20 Burnable — preview_send tuple-dispatches)
 import "./get_uniswap_quote.js"; // Phase 32 Plan 32-02 (UNI-01) — Uniswap V3 quote with auto-fee-tier + multi-hop + sandwich-MEV warning
 import "./prepare_uniswap_swap.js"; // Phase 32 Plan 32-03 (UNI-02 + UNI-03) — Uniswap V3 swap + sandwich-MEV gate + token-approval pre-flight + multicall+deadline composition + unconditional LEDGER NOTICE
+import "./get_lp_positions.js"; // Phase 33 Plan 33-01 (UNI-04) — Uniswap V3 LP positions + IL estimate
+import "./prepare_uniswap_v3_mint.js";               // Phase 33 Plan 33-02 (UNI-05) — NPM.mint with tick snap + approval pre-flight (token0+token1) + LEDGER NOTICE
+import "./prepare_uniswap_v3_increase_liquidity.js"; // Phase 33 Plan 33-02 (UNI-06) — NPM.increaseLiquidity with approval pre-flight (token0+token1) + LEDGER NOTICE
+import "./prepare_uniswap_v3_decrease_liquidity.js"; // Phase 33 Plan 33-02 (UNI-06) — NPM.decreaseLiquidity with "does NOT transfer" notice + LEDGER NOTICE
+import "./prepare_uniswap_v3_collect.js";            // Phase 33 Plan 33-02 (UNI-07) — NPM.collect with MAX_UINT128 sentinel default + LEDGER NOTICE
+import "./prepare_uniswap_v3_burn.js";               // Phase 33 Plan 33-02 (UNI-08) — NPM.burn with non-empty-position pre-flight refusal + LEDGER NOTICE (selector 0x42966c68 collides with Phase 31 rETH.burn)
+import "./prepare_uniswap_v3_rebalance.js";          // Phase 33 Plan 33-03 (UNI-09) — composite multicall(bytes[]) — decreaseLiquidity-all + collect + mint at new range (LOAD-BEARING order; single payloadFingerprint over outer multicall calldata)
 import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";

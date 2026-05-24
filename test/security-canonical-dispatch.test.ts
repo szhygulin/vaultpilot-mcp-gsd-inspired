@@ -26,6 +26,7 @@ import {
   getMorphoBlueAddress,
   getRocketPoolDepositPoolAddress,
   getRocketPoolRethAddress,
+  getUniswapV3NonfungiblePositionManagerAddress,
   getUniswapV3QuoterV2Address,
   getUniswapV3SwapRouter02Address,
   getWethAddress,
@@ -340,7 +341,7 @@ describe("Phase 29 Plan 29-03 — Morpho Blue in Ethereum-arm allowlist", () => 
     }
   });
 
-  it("Ethereum-arm allowlist size grew 29 → 39 after Plans 31-01 + 32-01 (Phase 31 +9 + Phase 32 +1 Uniswap V3 SwapRouter02)", () => {
+  it("Ethereum-arm allowlist size grew 29 → 40 after Plans 31-01 + 32-01 + 33-01 (Phase 31 +9 + Phase 32 +1 SwapRouter02 + Phase 33 +1 NPM)", () => {
     // Hard-pinned count assertion — drift in this number indicates either a
     // missing extension or an unintended addition elsewhere. Updates require
     // an explicit plan commit.
@@ -358,7 +359,10 @@ describe("Phase 29 Plan 29-03 — Morpho Blue in Ethereum-arm allowlist", () => 
     // Phase 32 Plan 32-01: 38 → 39 (+1 net SwapRouter02). Quoter V2 NOT added
     // (read-only per D-13a). NonfungiblePositionManager NOT added (Phase 33 LP-verb
     // dispatch target — pre-populated in SOT but no dispatch arm at Phase 32).
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(39);
+    // Phase 33 Plan 33-01: 39 → 40 (+1 net Uniswap V3 NonfungiblePositionManager
+    // for the LP verb set — mint / increase / decrease / collect / burn /
+    // multicall(bytes[])).
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(40);
   });
 
   it("Refused tx.to on Ethereum surfaces the Morpho Blue address in allowlist (verbatim)", () => {
@@ -456,7 +460,8 @@ describe("CANONICAL_DISPATCH_TARGETS — Phase 31 EigenLayer + Rocket Pool entri
     // Phase 32 Plan 32-01: 38 → 39 (+1 net SwapRouter02). Quoter V2 NOT added
     // (read-only per D-13a). NonfungiblePositionManager NOT added (Phase 33 LP-verb
     // dispatch target — pre-populated in SOT but no dispatch arm at Phase 32).
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(39);
+    // Phase 33 Plan 33-01: 39 → 40 (+1 net NPM for the LP verb set).
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(40);
   });
 
   it("Refused tx.to on Ethereum surfaces the EigenLayer + Rocket Pool addresses in allowlist (verbatim)", () => {
@@ -512,12 +517,12 @@ describe("CANONICAL_DISPATCH_TARGETS — Phase 32 Uniswap V3 SwapRouter02 entry 
     }
   });
 
-  it("Phase 32 membership delta is exactly +1 net over the Phase 31 baseline (38 → 39)", () => {
-    // Hard-pinned count anchor. The 1 candidate addition lands: SwapRouter02.
-    // The SwapRouter02 address 0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45 is
-    // NOT in BRIDGED_VARIANTS (it's a router, not a token), so no de-dupe
-    // — net +1.
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(39);
+  it("Phase 32 membership delta is exactly +1 net over the Phase 31 baseline (38 → 39); Phase 33 lifts it to 40", () => {
+    // Hard-pinned count anchor. Phase 32 added: SwapRouter02 (NOT in
+    // BRIDGED_VARIANTS — it's a router, not a token; no de-dupe; net +1).
+    // Phase 33 added: NonfungiblePositionManager (also NOT in
+    // BRIDGED_VARIANTS — net +1). Combined post-Phase-33 size: 40.
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(40);
   });
 
   it("Refused tx.to on Ethereum surfaces the Uniswap V3 SwapRouter02 address in allowlist (verbatim)", () => {
@@ -528,5 +533,53 @@ describe("CANONICAL_DISPATCH_TARGETS — Phase 32 Uniswap V3 SwapRouter02 entry 
     expect(result.allowlist).toContain(getUniswapV3SwapRouter02Address(1)!);
     // Quoter V2 must NOT appear (read-only per D-13a).
     expect(result.allowlist).not.toContain(getUniswapV3QuoterV2Address(1)!);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 33 Plan 33-01 — Uniswap V3 NonfungiblePositionManager dispatch arm.
+// Net +1 entry on Ethereum (40 total after Phase 32+33). Non-Ethereum chains
+// stay byte-identical because the SOT getter returns null on non-Ethereum
+// chains per D-03 → outer ternary yields [] → spread adds nothing.
+// ---------------------------------------------------------------------------
+
+describe("CANONICAL_DISPATCH_TARGETS — Phase 33 Uniswap V3 NPM entry (Ethereum)", () => {
+  it("Uniswap_V3_NPM — Ethereum (1) Set includes Uniswap V3 NonfungiblePositionManager", () => {
+    const npm = getUniswapV3NonfungiblePositionManagerAddress(1);
+    expect(npm).not.toBeNull();
+    expect(CANONICAL_DISPATCH_TARGETS[1].has(npm!)).toBe(true);
+  });
+
+  it("Uniswap_V3_NPM — checkDispatchTarget returns { kind: \"ok\" } for NPM on Ethereum", () => {
+    const npm = getUniswapV3NonfungiblePositionManagerAddress(1);
+    expect(npm).not.toBeNull();
+    expect(checkDispatchTarget(1, npm!)).toEqual({ kind: "ok" });
+  });
+
+  it("Uniswap_V3_NPM — non-Ethereum chains do NOT include NPM (Phase 33 Ethereum-only — D-03)", () => {
+    const npm = getUniswapV3NonfungiblePositionManagerAddress(1)!;
+    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
+    for (const chainId of otherChains) {
+      expect(CANONICAL_DISPATCH_TARGETS[chainId].has(npm)).toBe(false);
+      // Defense-in-depth — the per-chain SOT getter itself returns null on
+      // non-Ethereum chains, so the dispatch arm filter omits the entry.
+      expect(getUniswapV3NonfungiblePositionManagerAddress(chainId)).toBeNull();
+    }
+  });
+
+  it("Uniswap_V3_NPM — Phase 33 membership delta is exactly +1 net over the Phase 32 baseline (39 → 40)", () => {
+    // Direct count anchor. Drift fires the test before downstream allow-pattern
+    // regressions surface elsewhere. NPM address 0xC36442b4a4522E871399CD717aBDD847Ab11FE88
+    // is NOT in BRIDGED_VARIANTS (it's a position manager contract, not a token),
+    // so no de-dupe — net +1.
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(40);
+  });
+
+  it("Uniswap_V3_NPM — refused tx.to on Ethereum surfaces NPM address in allowlist (verbatim)", () => {
+    const eoa = getAddress("0x0000000000000000000000000000000000000001");
+    const result = checkDispatchTarget(1, eoa);
+    expect(result.kind).toBe("refused");
+    if (result.kind !== "refused") return;
+    expect(result.allowlist).toContain(getUniswapV3NonfungiblePositionManagerAddress(1)!);
   });
 });

@@ -834,6 +834,35 @@ describe("src/signing/blocks.ts — Phase 32 additive templates", () => {
 });
 
 // =============================================================================
+// Phase 33 Plan 33-01 — APPEND-ONLY LEDGER NOTICE template for NPM blind-sign.
+// =============================================================================
+
+describe("src/signing/blocks.ts — Phase 33 LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE", () => {
+  it("LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE export exists and carries key blind-sign phrases", async () => {
+    const blocks = await import("../src/signing/blocks.js");
+    const t = blocks.LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE;
+    expect(typeof t).toBe("string");
+    expect(t.length).toBeGreaterThan(100);
+    expect(t).toMatch(/LEDGER\s+NOTICE/);
+    expect(t).toMatch(/Uniswap\s+V3\s+LP\s+operations\s+blind-sign\s+on\s+device/);
+    expect(t).toMatch(/ERC-7730/);
+    expect(t).toMatch(/NonfungiblePositionManager/);
+    expect(t).toMatch(/LEDGER\s+BLIND-SIGN\s+HASH/);
+    expect(t).toMatch(/clear-signing-erc7730-registry/);
+  });
+
+  it("LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE is structurally distinct from Phase 32 swap template", async () => {
+    // Phase 32 LEDGER_NOTICE_UNISWAP_V3_TEMPLATE describes the multicall outer-
+    // selector blind-sign for swaps. Phase 33 template describes the NPM-wide
+    // blind-sign for LP verbs — different copy, different surface.
+    const blocks = await import("../src/signing/blocks.js");
+    expect(blocks.LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE).not.toBe(
+      blocks.LEDGER_NOTICE_UNISWAP_V3_TEMPLATE,
+    );
+  });
+});
+
+// =============================================================================
 // Phase 32 Plan 32-03 — Uniswap V3 PREPARE RECEIPT + 4 DECODED ARGS templates
 // =============================================================================
 //
