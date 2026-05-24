@@ -942,7 +942,7 @@ Plans:
 
 **Wave 1**
 
-- [ ] 33-01: `src/chains/uniswap-v3-lp.ts` (position reader via NonfungiblePositionManager; IL estimate math); `get_lp_positions`; tick ↔ price helpers in `src/signing/uniswap-tick.ts`
+- [x] 33-01: `src/chains/uniswap-v3-lp.ts` (position reader via NonfungiblePositionManager; IL estimate math); `get_lp_positions`; tick ↔ price helpers in `src/signing/uniswap-tick.ts`
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -1166,7 +1166,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 30. Lido — stake/unstake/wrap/unwrap (stETH↔wstETH) | v2.3 | 3/3 | Complete    | 2026-05-23 |
 | 31. EigenLayer + Rocket Pool | v2.3 | 3/3 | Complete    | 2026-05-23 |
 | 32. Uniswap V3 swap (auto-fee-tier, same-chain) | v2.4 | 3/3 | Complete   | 2026-05-23 |
-| 33. Uniswap V3 full LP verb set + `get_lp_positions` with IL estimate | v2.4 | 0/3 | Not started | - |
+| 33. Uniswap V3 full LP verb set + `get_lp_positions` with IL estimate | v2.4 | 1/3 | In Progress|  |
 | 34. Curve swap + add liquidity | v2.4 | 0/2 | Not started | - |
 | 35. Escape hatch — `prepare_custom_call` + `get_contract_abi` + `read_contract` | v2.4 | 0/3 | Not started | - |
 | 36. Safe positions + Tx Service API integration + `get_safe_positions` | v2.5 | 0/2 | Not started | - |

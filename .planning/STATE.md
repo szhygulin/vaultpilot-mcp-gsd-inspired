@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Bitcoin + Litecoin
-current_plan: 1
+current_plan: 2
 status: executing
-last_updated: "2026-05-24T06:44:23.296Z"
-last_activity: 2026-05-24 -- Phase 33 execution started
+last_updated: "2026-05-24T07:24:58.414Z"
+last_activity: 2026-05-24
 progress:
   total_phases: 6
   completed_phases: 6
@@ -26,11 +26,11 @@ See: .planning/PROJECT.md (updated 2026-05-12)
 ## Current Position
 
 Phase: 33 (evm-uniswap-v3-lp-verb-set) — EXECUTING
-Plan: 1 of 3
-Current Plan: 1
+Plan: 2 of 3
+Current Plan: 2
 Total Plans in Phase: 3
-Status: Executing Phase 33
-Last activity: 2026-05-24 -- Phase 33 execution started
+Status: Ready to execute
+Last activity: 2026-05-24
 
 Prior activity: 2026-05-23 — Phase 32 Plan 32-01 closed code-complete (6 atomic commits f68b305 → 597a1a1 + docs commit a27601f). UniswapV3Contracts SOT + SwapRouter02 KNOWN_SPENDERS row promotion + canonical-dispatch arm + protocols/uniswap-v3.ts + signing/uniswap-path.ts + 2 APPEND-ONLY block templates + Fixtures UNI-A/B/C hardcoded payloadFingerprint literals.
 
@@ -90,6 +90,7 @@ Progress: [██████████] 100%
 | Phase 32 P01 | 1743 | 6 tasks | 12 files |
 | Phase 32 P02 | 14 | 3 tasks | 7 files |
 | Phase 32 P03 | 29min | 5 tasks | 8 files |
+| Phase 33 P01 | 32 min | 3 tasks | 20 files |
 
 ## Accumulated Context
 
@@ -137,6 +138,10 @@ Recent decisions affecting current work:
 - [Phase ?]: Phase 32 swap-only v2.4 milestone code-complete (Plan 32-01 + 32-02 + 32-03 across 3 waves)
 - [Phase ?]: Fixture UNI-A + UNI-B byte-identity cross-link reproducible at prepare-tool level when from === FIXTURE_PERSONA (Anvil acct 1); UNI-C not reproducible due to canonical-fee-tier mismatch — remains anchored standalone
 - [Phase ?]: Uniswap V3 calldata is from-DEPENDENT (recipient embedded in exactInputSingle/exactInput/unwrapWETH9 params); integration test re-computes per-persona deterministic fingerprints via encoder primitives
+- [Phase 33]: Plan 33-01: HAND-ROLL all LP math (tick / liquidity / fees / IL / pool-address) per SDK Probe Verdict — zero new npm packages
+- [Phase 33]: Plan 33-01: NPM promoted to KNOWN_SPENDERS_ETHEREUM + canonical-dispatch.ethereum (RESEARCH § Topic 8 CONFIRMED spender for mint/increase)
+- [Phase 33]: Plan 33-01: ilEstimateConfidence tier — high for in-range, low for out-of-range geometric-midpoint OR extreme-asymmetric refusal
+- [Phase 33]: Plan 33-01: module-load self-check in src/signing/uniswap-pool-address.ts — first runtime drift-anchor against derived on-chain values
 
 ### Pending Todos
 
@@ -336,6 +341,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-24T05:45:00.292Z
+Last session: 2026-05-24T07:23:06.349Z
 Stopped at: Phase 33 context gathered (autonomous)
-Resume file: .planning/phases/33-evm-uniswap-v3-lp-verb-set/33-CONTEXT.md
+Resume file: None
