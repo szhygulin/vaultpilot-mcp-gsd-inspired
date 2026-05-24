@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v2.2
 milestone_name: Bitcoin + Litecoin
-current_plan: 2
+current_plan: 3
 status: executing
-last_updated: "2026-05-24T07:24:58.414Z"
+last_updated: "2026-05-24T08:06:05.701Z"
 last_activity: 2026-05-24
 progress:
   total_phases: 6
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-05-12)
 ## Current Position
 
 Phase: 33 (evm-uniswap-v3-lp-verb-set) — EXECUTING
-Plan: 2 of 3
-Current Plan: 2
+Plan: 3 of 3
+Current Plan: 3
 Total Plans in Phase: 3
 Status: Ready to execute
 Last activity: 2026-05-24
@@ -91,6 +91,7 @@ Progress: [██████████] 100%
 | Phase 32 P02 | 14 | 3 tasks | 7 files |
 | Phase 32 P03 | 29min | 5 tasks | 8 files |
 | Phase 33 P01 | 32 min | 3 tasks | 20 files |
+| Phase 33 P33-02 | ~33 min | 3 tasks | 17 files |
 
 ## Accumulated Context
 
@@ -142,6 +143,9 @@ Recent decisions affecting current work:
 - [Phase 33]: Plan 33-01: NPM promoted to KNOWN_SPENDERS_ETHEREUM + canonical-dispatch.ethereum (RESEARCH § Topic 8 CONFIRMED spender for mint/increase)
 - [Phase 33]: Plan 33-01: ilEstimateConfidence tier — high for in-range, low for out-of-range geometric-midpoint OR extreme-asymmetric refusal
 - [Phase 33]: Plan 33-01: module-load self-check in src/signing/uniswap-pool-address.ts — first runtime drift-anchor against derived on-chain values
+- [Phase ?]: Phase 33 Plan 33-02: decreaseLiquidity amount0Min/amount1Min default to 0 at prepare layer; current-pool-state derivation deferred to v2.4.x
+- [Phase ?]: Phase 33 Plan 33-02: burn selector collision (0x42966c68) resolved by extending Phase 31 rETH arm in-place — both rETH and NPM routes via (tx.to, selector) tuple dispatch
+- [Phase ?]: Phase 33 Plan 33-02: decodeSingleNpmCall exported from preview_send.ts as Pitfall 7 SHARED-decoder SOT for Plan 33-03 composite-multicall reuse
 
 ### Pending Todos
 
@@ -341,6 +345,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-24T07:23:06.349Z
+Last session: 2026-05-24T08:05:30.900Z
 Stopped at: Phase 33 context gathered (autonomous)
 Resume file: None

@@ -337,10 +337,10 @@ Uniswap V3 swap + full LP verb set; Curve swap + add-liquidity (stETH/ETH legacy
 - [x] **UNI-02**: `prepare_uniswap_swap({ chain, tokenIn, tokenOut, amount, slippageBps })` returns an unsigned SwapRouter02 transaction with auto-fee-tier selection (best price across 0.01% / 0.05% / 0.30% / 1.00% pools); multi-hop routing supported when single-hop has worse price
 - [x] **UNI-03**: Sandwich-MEV defense — default slippage hint = 50 bps; refuses without explicit `slippageBps` when price impact > 2% (pre-loaded by v2.6 MEV-01 per-L2 thresholds)
 - [x] **UNI-04**: `get_lp_positions({ wallet, chain? })` returns Uniswap V3 LP positions per NFT-id with current price + tick range + in-range/out-of-range flag + accrued fees + IL estimate (relative to a hodl baseline)
-- [ ] **UNI-05**: `prepare_uniswap_v3_mint({ chain, token0, token1, fee, tickLower, tickUpper, amount0, amount1 })` produces an unsigned NonfungiblePositionManager `mint` call
-- [ ] **UNI-06**: `prepare_uniswap_increase_liquidity` + `prepare_uniswap_decrease_liquidity` cover liquidity adjustments on existing positions (NFT-keyed)
-- [ ] **UNI-07**: `prepare_uniswap_collect` produces an unsigned `collect(tokenId, ...)` call to harvest accrued fees
-- [ ] **UNI-08**: `prepare_uniswap_burn` produces an unsigned `burn(tokenId)` call to close a fully-decreased position
+- [x] **UNI-05**: `prepare_uniswap_v3_mint({ chain, token0, token1, fee, tickLower, tickUpper, amount0, amount1 })` produces an unsigned NonfungiblePositionManager `mint` call
+- [x] **UNI-06**: `prepare_uniswap_increase_liquidity` + `prepare_uniswap_decrease_liquidity` cover liquidity adjustments on existing positions (NFT-keyed)
+- [x] **UNI-07**: `prepare_uniswap_collect` produces an unsigned `collect(tokenId, ...)` call to harvest accrued fees
+- [x] **UNI-08**: `prepare_uniswap_burn` produces an unsigned `burn(tokenId)` call to close a fully-decreased position
 - [ ] **UNI-09**: `prepare_uniswap_v3_rebalance({ tokenId, newTickLower, newTickUpper })` is a composite tool that builds a multicall (decrease all + collect + mint at new range); preview surfaces the multi-step decoded view
 - [x] **UNI-10**: Uniswap V3 SwapRouter02 + Quoter V2 + NonfungiblePositionManager addresses sourced from `src/config/contracts.ts` per-chain table; tick math + price↔tick conversions handled server-side in `src/signing/uniswap-tick.ts`; canonical-dispatch allowlist Uniswap arm wiring
 
