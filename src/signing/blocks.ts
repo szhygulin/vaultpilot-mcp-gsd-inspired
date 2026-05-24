@@ -2392,3 +2392,336 @@ export const LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE: string = [
   "  Coverage may be added in a future Ledger app update; consult Ledger's ERC-7730",
   "  registry at https://github.com/LedgerHQ/clear-signing-erc7730-registry.",
 ].join("\n");
+
+// =============================================================================
+// Phase 33 — Plan 33-02 additive extensions (APPEND-ONLY).
+// =============================================================================
+//
+// 5 PREPARE RECEIPT templates + 5 DECODED ARGS templates + UniswapV3LpDecoded
+// discriminated union + buildUniswapV3LpDecodedArgsBlock helper for the 5
+// single-step NPM verbs (mint / increase / decrease / collect / burn).
+// Consumed by prepare_uniswap_v3_*.ts (Plan 33-02) for receipt rendering and
+// by preview_send.ts (Plan 33-02) for DECODED ARGS dispatch.
+//
+// APPEND-ONLY discipline preserves the byte-identity of every upstream
+// template; the Plan 33-01 LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE block
+// immediately above stays unchanged.
+
+/**
+ * PREPARE RECEIPT template for `prepare_uniswap_v3_mint`. Slots:
+ *   `{CHAIN}`, `{NPM}`, `{TOKEN0}`, `{TOKEN1}`, `{FEE}`,
+ *   `{PRICE_LOWER}` (verbatim agent input), `{PRICE_UPPER}` (verbatim),
+ *   `{TICK_LOWER}` (server-snapped), `{TICK_UPPER}` (server-snapped),
+ *   `{AMOUNT0_DESIRED}`, `{AMOUNT1_DESIRED}`, `{SLIPPAGE_BPS}`, `{DEADLINE}`.
+ */
+export const UNISWAP_V3_LP_MINT_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT — Uniswap V3 mint (NonfungiblePositionManager)",
+  "  chain:              {CHAIN}",
+  "  npm:                {NPM}",
+  "  token0:             {TOKEN0}",
+  "  token1:             {TOKEN1}",
+  "  fee:                {FEE}",
+  "  priceLower:         {PRICE_LOWER}",
+  "  priceUpper:         {PRICE_UPPER}",
+  "  tickLower:          {TICK_LOWER}",
+  "  tickUpper:          {TICK_UPPER}",
+  "  amount0Desired:     {AMOUNT0_DESIRED}",
+  "  amount1Desired:     {AMOUNT1_DESIRED}",
+  "  slippageBps:        {SLIPPAGE_BPS}",
+  "  deadline:           {DEADLINE}",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT template for `prepare_uniswap_v3_increase_liquidity`. Slots:
+ *   `{CHAIN}`, `{NPM}`, `{TOKEN_ID}`, `{AMOUNT0_DESIRED}`, `{AMOUNT1_DESIRED}`,
+ *   `{SLIPPAGE_BPS}`, `{DEADLINE}`.
+ */
+export const UNISWAP_V3_LP_INCREASE_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT — Uniswap V3 increaseLiquidity (NonfungiblePositionManager)",
+  "  chain:              {CHAIN}",
+  "  npm:                {NPM}",
+  "  tokenId:            {TOKEN_ID}",
+  "  amount0Desired:     {AMOUNT0_DESIRED}",
+  "  amount1Desired:     {AMOUNT1_DESIRED}",
+  "  slippageBps:        {SLIPPAGE_BPS}",
+  "  deadline:           {DEADLINE}",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT template for `prepare_uniswap_v3_decrease_liquidity`. Slots:
+ *   `{CHAIN}`, `{NPM}`, `{TOKEN_ID}`, `{LIQUIDITY_DELTA}`, `{AMOUNT0_MIN}`,
+ *   `{AMOUNT1_MIN}`, `{SLIPPAGE_BPS}`, `{DEADLINE}`.
+ *
+ * The verbatim "does NOT transfer" sentence is baked in (T-DECREASE-DOES-
+ * NOT-TRANSFER mitigation) — drift in this template fires the test in
+ * test/prepare-uniswap-v3-decrease-liquidity.test.ts.
+ */
+export const UNISWAP_V3_LP_DECREASE_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT — Uniswap V3 decreaseLiquidity (NonfungiblePositionManager)",
+  "  chain:              {CHAIN}",
+  "  npm:                {NPM}",
+  "  tokenId:            {TOKEN_ID}",
+  "  liquidityDelta:     {LIQUIDITY_DELTA}",
+  "  amount0Min:         {AMOUNT0_MIN}",
+  "  amount1Min:         {AMOUNT1_MIN}",
+  "  slippageBps:        {SLIPPAGE_BPS}",
+  "  deadline:           {DEADLINE}",
+  "",
+  "  Note: decreaseLiquidity does NOT transfer tokens to your wallet. Call prepare_uniswap_v3_collect to harvest.",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT template for `prepare_uniswap_v3_collect`. Slots:
+ *   `{CHAIN}`, `{NPM}`, `{TOKEN_ID}`, `{RECIPIENT}`, `{AMOUNT0_MAX}`,
+ *   `{AMOUNT1_MAX}`.
+ *
+ * `{AMOUNT0_MAX}`/`{AMOUNT1_MAX}` receive either the decimal-string
+ * user-override OR the literal "MAX_UINT128 (collect everything)" sentinel
+ * (T-MAX-UINT128-SENTINEL mitigation).
+ */
+export const UNISWAP_V3_LP_COLLECT_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT — Uniswap V3 collect (NonfungiblePositionManager)",
+  "  chain:              {CHAIN}",
+  "  npm:                {NPM}",
+  "  tokenId:            {TOKEN_ID}",
+  "  recipient:          {RECIPIENT}",
+  "  amount0Max:         {AMOUNT0_MAX}",
+  "  amount1Max:         {AMOUNT1_MAX}",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT template for `prepare_uniswap_v3_burn`. Slots:
+ *   `{CHAIN}`, `{NPM}`, `{TOKEN_ID}`.
+ *
+ * Burn refuses on-chain if the position has liquidity OR tokensOwed. The
+ * prepare tool pre-flights via `positions(tokenId)` (T-BURN-PRECONDITION).
+ */
+export const UNISWAP_V3_LP_BURN_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT — Uniswap V3 burn (NonfungiblePositionManager)",
+  "  chain:              {CHAIN}",
+  "  npm:                {NPM}",
+  "  tokenId:            {TOKEN_ID}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `NPM.mint(MintParams)`.
+ * Slots: `{TOKEN0}`, `{TOKEN1}`, `{FEE}`, `{TICK_LOWER}`, `{TICK_UPPER}`,
+ *        `{AMOUNT0_DESIRED}`, `{AMOUNT1_DESIRED}`, `{AMOUNT0_MIN}`,
+ *        `{AMOUNT1_MIN}`, `{RECIPIENT}`, `{DEADLINE}`.
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_MINT: string = [
+  "DECODED ARGS — mint (Uniswap V3 NonfungiblePositionManager)",
+  "  token0:             {TOKEN0}",
+  "  token1:             {TOKEN1}",
+  "  fee:                {FEE}",
+  "  tickLower:          {TICK_LOWER}",
+  "  tickUpper:          {TICK_UPPER}",
+  "  amount0Desired:     {AMOUNT0_DESIRED}",
+  "  amount1Desired:     {AMOUNT1_DESIRED}",
+  "  amount0Min:         {AMOUNT0_MIN}",
+  "  amount1Min:         {AMOUNT1_MIN}",
+  "  recipient:          {RECIPIENT}",
+  "  deadline:           {DEADLINE}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `NPM.increaseLiquidity(IncreaseLiquidityParams)`.
+ * Slots: `{TOKEN_ID}`, `{AMOUNT0_DESIRED}`, `{AMOUNT1_DESIRED}`,
+ *        `{AMOUNT0_MIN}`, `{AMOUNT1_MIN}`, `{DEADLINE}`.
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_INCREASE: string = [
+  "DECODED ARGS — increaseLiquidity (Uniswap V3 NonfungiblePositionManager)",
+  "  tokenId:            {TOKEN_ID}",
+  "  amount0Desired:     {AMOUNT0_DESIRED}",
+  "  amount1Desired:     {AMOUNT1_DESIRED}",
+  "  amount0Min:         {AMOUNT0_MIN}",
+  "  amount1Min:         {AMOUNT1_MIN}",
+  "  deadline:           {DEADLINE}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `NPM.decreaseLiquidity(DecreaseLiquidityParams)`.
+ * Slots: `{TOKEN_ID}`, `{LIQUIDITY}`, `{AMOUNT0_MIN}`, `{AMOUNT1_MIN}`,
+ *        `{DEADLINE}`.
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_DECREASE: string = [
+  "DECODED ARGS — decreaseLiquidity (Uniswap V3 NonfungiblePositionManager)",
+  "  tokenId:            {TOKEN_ID}",
+  "  liquidity:          {LIQUIDITY}",
+  "  amount0Min:         {AMOUNT0_MIN}",
+  "  amount1Min:         {AMOUNT1_MIN}",
+  "  deadline:           {DEADLINE}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `NPM.collect(CollectParams)`.
+ * Slots: `{TOKEN_ID}`, `{RECIPIENT}`, `{AMOUNT0_MAX}`, `{AMOUNT1_MAX}`.
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_COLLECT: string = [
+  "DECODED ARGS — collect (Uniswap V3 NonfungiblePositionManager)",
+  "  tokenId:            {TOKEN_ID}",
+  "  recipient:          {RECIPIENT}",
+  "  amount0Max:         {AMOUNT0_MAX}",
+  "  amount1Max:         {AMOUNT1_MAX}",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `NPM.burn(tokenId)`.
+ * Slots: `{TOKEN_ID}`.
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_BURN: string = [
+  "DECODED ARGS — burn (Uniswap V3 NonfungiblePositionManager)",
+  "  tokenId:            {TOKEN_ID}",
+].join("\n");
+
+/**
+ * NPM decoded-args discriminated union for `preview_send` (tx.to, selector)
+ * tuple-dispatch arms (Plan 33-02). 5 variants — one per single-step verb.
+ * Plan 33-03 widens this with a `composite-multicall` variant for rebalance.
+ */
+export type UniswapV3LpDecoded =
+  | {
+      kind: "uniswap-v3-lp-mint";
+      token0: Address;
+      token1: Address;
+      fee: number;
+      tickLower: number;
+      tickUpper: number;
+      amount0Desired: bigint;
+      amount1Desired: bigint;
+      amount0Min: bigint;
+      amount1Min: bigint;
+      recipient: Address;
+      deadline: bigint;
+    }
+  | {
+      kind: "uniswap-v3-lp-increase-liquidity";
+      tokenId: bigint;
+      amount0Desired: bigint;
+      amount1Desired: bigint;
+      amount0Min: bigint;
+      amount1Min: bigint;
+      deadline: bigint;
+    }
+  | {
+      kind: "uniswap-v3-lp-decrease-liquidity";
+      tokenId: bigint;
+      liquidity: bigint;
+      amount0Min: bigint;
+      amount1Min: bigint;
+      deadline: bigint;
+    }
+  | {
+      kind: "uniswap-v3-lp-collect";
+      tokenId: bigint;
+      recipient: Address;
+      amount0Max: bigint;
+      amount1Max: bigint;
+    }
+  | {
+      kind: "uniswap-v3-lp-burn";
+      tokenId: bigint;
+    };
+
+/**
+ * Build the DECODED ARGS block for an NPM call. Discriminated dispatch on
+ * `decoded.kind`. Bigint amounts render as raw wei-string; the caller may
+ * augment with token decimals if context is available. Deadline renders as
+ * ISO-8601 from epoch-seconds.
+ */
+export function buildUniswapV3LpDecodedArgsBlock(
+  decoded: UniswapV3LpDecoded,
+): string {
+  switch (decoded.kind) {
+    case "uniswap-v3-lp-mint": {
+      const deadlineIso = new Date(
+        Number(decoded.deadline) * 1000,
+      ).toISOString();
+      return DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_MINT
+        .replace("{TOKEN0}", decoded.token0)
+        .replace("{TOKEN1}", decoded.token1)
+        .replace(
+          "{FEE}",
+          `${decoded.fee} (${(decoded.fee / 10000).toFixed(2)}%)`,
+        )
+        .replace("{TICK_LOWER}", decoded.tickLower.toString())
+        .replace("{TICK_UPPER}", decoded.tickUpper.toString())
+        .replace(
+          "{AMOUNT0_DESIRED}",
+          `${decoded.amount0Desired.toString()} (wei-units)`,
+        )
+        .replace(
+          "{AMOUNT1_DESIRED}",
+          `${decoded.amount1Desired.toString()} (wei-units)`,
+        )
+        .replace(
+          "{AMOUNT0_MIN}",
+          `${decoded.amount0Min.toString()} (wei-units)`,
+        )
+        .replace(
+          "{AMOUNT1_MIN}",
+          `${decoded.amount1Min.toString()} (wei-units)`,
+        )
+        .replace("{RECIPIENT}", decoded.recipient)
+        .replace("{DEADLINE}", deadlineIso);
+    }
+    case "uniswap-v3-lp-increase-liquidity": {
+      const deadlineIso = new Date(
+        Number(decoded.deadline) * 1000,
+      ).toISOString();
+      return DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_INCREASE
+        .replace("{TOKEN_ID}", decoded.tokenId.toString())
+        .replace(
+          "{AMOUNT0_DESIRED}",
+          `${decoded.amount0Desired.toString()} (wei-units)`,
+        )
+        .replace(
+          "{AMOUNT1_DESIRED}",
+          `${decoded.amount1Desired.toString()} (wei-units)`,
+        )
+        .replace(
+          "{AMOUNT0_MIN}",
+          `${decoded.amount0Min.toString()} (wei-units)`,
+        )
+        .replace(
+          "{AMOUNT1_MIN}",
+          `${decoded.amount1Min.toString()} (wei-units)`,
+        )
+        .replace("{DEADLINE}", deadlineIso);
+    }
+    case "uniswap-v3-lp-decrease-liquidity": {
+      const deadlineIso = new Date(
+        Number(decoded.deadline) * 1000,
+      ).toISOString();
+      return DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_DECREASE
+        .replace("{TOKEN_ID}", decoded.tokenId.toString())
+        .replace("{LIQUIDITY}", decoded.liquidity.toString())
+        .replace(
+          "{AMOUNT0_MIN}",
+          `${decoded.amount0Min.toString()} (wei-units)`,
+        )
+        .replace(
+          "{AMOUNT1_MIN}",
+          `${decoded.amount1Min.toString()} (wei-units)`,
+        )
+        .replace("{DEADLINE}", deadlineIso);
+    }
+    case "uniswap-v3-lp-collect": {
+      const MAX_U128 = (1n << 128n) - 1n;
+      const renderMax = (v: bigint): string =>
+        v === MAX_U128
+          ? "MAX_UINT128 (collect everything)"
+          : `${v.toString()} (wei-units)`;
+      return DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_COLLECT
+        .replace("{TOKEN_ID}", decoded.tokenId.toString())
+        .replace("{RECIPIENT}", decoded.recipient)
+        .replace("{AMOUNT0_MAX}", renderMax(decoded.amount0Max))
+        .replace("{AMOUNT1_MAX}", renderMax(decoded.amount1Max));
+    }
+    case "uniswap-v3-lp-burn":
+      return DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_BURN.replace(
+        "{TOKEN_ID}",
+        decoded.tokenId.toString(),
+      );
+  }
+}
