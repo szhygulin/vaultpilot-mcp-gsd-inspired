@@ -1192,22 +1192,22 @@ const payloadFingerprint = computePayloadFingerprint(tx);
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should `prepare_uniswap_v3_rebalance` accept new amounts (`amount0Desired`, `amount1Desired`) or use ALL collected from decrease+collect?**
    - What we know: rebalance decreases all current liquidity → collects all tokens → mints at new range. The amounts available for mint are exactly what `decrease + collect` settles. Phase 33 prepare doesn't know the EXACT amounts until simulation (they depend on current pool price affecting the proportional split).
    - What's unclear: Whether agent specifies new amounts (overriding the collected amounts — implies extra approval for any deficit) or whether server uses ALL of what collect returns (simpler but constrains user choice).
-   - Recommendation: Phase 33 ships with `amounts ← all-of-collect-output` semantics. CHECKS PERFORMED notes: `mint amounts derived from decrease+collect output — to add additional liquidity, call prepare_uniswap_v3_increase_liquidity after the rebalance confirms.` Future enhancement: `extraAmount0`/`extraAmount1` agent parameters for top-up.
+   - RESOLVED: Phase 33 ships with `amounts ← all-of-collect-output` semantics. CHECKS PERFORMED notes: `mint amounts derived from decrease+collect output — to add additional liquidity, call prepare_uniswap_v3_increase_liquidity after the rebalance confirms.` Future enhancement: `extraAmount0`/`extraAmount1` agent parameters for top-up. Anchored in Plan 33-03 Task 2 §B step 7.
 
 2. **Should `get_lp_positions` skip positions with `liquidity == 0 AND tokensOwed == 0` (effectively burned but NFT not collected)?**
    - What we know: NPM NFTs persist after `decreaseLiquidity` clears liquidity until `burn` is called. A user might have several "drained" NFTs cluttering their wallet.
    - What's unclear: Whether to show them (with `status: "drained, ready-to-burn"`) or filter them out.
-   - Recommendation: SHOW them with a `status` field — user might want to know to burn them (gas refund). Filter is opt-in via `{ includeDrainedPositions: false }` agent parameter (default true).
+   - RESOLVED: SHOW them with a `status` field — user might want to know to burn them (gas refund). Filter is opt-in via `{ includeDrainedPositions: false }` agent parameter (default true). Plan 33-01 Task 3 implements; not load-bearing for any of UNI-04..10 success criteria.
 
 3. **Should the SDK probe verdict be re-evaluated for IL math specifically?**
    - What we know: SDK rejected on JSBI + ethers grounds across the board.
    - What's unclear: The IL math is ~50 lines of pure formula derivation — the SDK doesn't have a public "computeIL" helper either, so this is hand-rolled regardless.
-   - Recommendation: SDK is not relevant for IL — Phase 33 implements from first principles using the hand-rolled liquidity helpers. No revisit needed.
+   - RESOLVED: SDK is not relevant for IL — Phase 33 implements from first principles using the hand-rolled liquidity helpers. No revisit needed.
 
 ---
 
