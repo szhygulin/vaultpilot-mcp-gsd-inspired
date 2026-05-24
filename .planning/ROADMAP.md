@@ -950,7 +950,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 33-03: `prepare_uniswap_v3_rebalance` (multicall builder — decrease + collect + mint); composite-tx preview surfacing pattern (new shape — agent + on-device need to see the multi-step decoded view)
+- [x] 33-03: `prepare_uniswap_v3_rebalance` (multicall builder — decrease + collect + mint); composite-tx preview surfacing pattern (new shape — agent + on-device need to see the multi-step decoded view)
 
 #### Phase 34: Curve swap + add liquidity
 
@@ -1166,7 +1166,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 30. Lido — stake/unstake/wrap/unwrap (stETH↔wstETH) | v2.3 | 3/3 | Complete    | 2026-05-23 |
 | 31. EigenLayer + Rocket Pool | v2.3 | 3/3 | Complete    | 2026-05-23 |
 | 32. Uniswap V3 swap (auto-fee-tier, same-chain) | v2.4 | 3/3 | Complete   | 2026-05-23 |
-| 33. Uniswap V3 full LP verb set + `get_lp_positions` with IL estimate | v2.4 | 2/3 | In Progress|  |
+| 33. Uniswap V3 full LP verb set + `get_lp_positions` with IL estimate | v2.4 | 3/3 | Complete   | 2026-05-24 |
 | 34. Curve swap + add liquidity | v2.4 | 0/2 | Not started | - |
 | 35. Escape hatch — `prepare_custom_call` + `get_contract_abi` + `read_contract` | v2.4 | 0/3 | Not started | - |
 | 36. Safe positions + Tx Service API integration + `get_safe_positions` | v2.5 | 0/2 | Not started | - |

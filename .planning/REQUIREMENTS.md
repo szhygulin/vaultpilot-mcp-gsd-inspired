@@ -341,7 +341,7 @@ Uniswap V3 swap + full LP verb set; Curve swap + add-liquidity (stETH/ETH legacy
 - [x] **UNI-06**: `prepare_uniswap_increase_liquidity` + `prepare_uniswap_decrease_liquidity` cover liquidity adjustments on existing positions (NFT-keyed)
 - [x] **UNI-07**: `prepare_uniswap_collect` produces an unsigned `collect(tokenId, ...)` call to harvest accrued fees
 - [x] **UNI-08**: `prepare_uniswap_burn` produces an unsigned `burn(tokenId)` call to close a fully-decreased position
-- [ ] **UNI-09**: `prepare_uniswap_v3_rebalance({ tokenId, newTickLower, newTickUpper })` is a composite tool that builds a multicall (decrease all + collect + mint at new range); preview surfaces the multi-step decoded view
+- [x] **UNI-09**: `prepare_uniswap_v3_rebalance({ tokenId, newTickLower, newTickUpper })` is a composite tool that builds a multicall (decrease all + collect + mint at new range); preview surfaces the multi-step decoded view
 - [x] **UNI-10**: Uniswap V3 SwapRouter02 + Quoter V2 + NonfungiblePositionManager addresses sourced from `src/config/contracts.ts` per-chain table; tick math + price↔tick conversions handled server-side in `src/signing/uniswap-tick.ts`; canonical-dispatch allowlist Uniswap arm wiring
 
 #### Curve (CRV-*)
