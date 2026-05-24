@@ -45,6 +45,9 @@ export const NPM_READ_ABI = parseAbi([
   "function positions(uint256 tokenId) view returns (uint96 nonce, address operator, address token0, address token1, uint24 fee, int24 tickLower, int24 tickUpper, uint128 liquidity, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128, uint128 tokensOwed0, uint128 tokensOwed1)",
   "function balanceOf(address owner) view returns (uint256)",
   "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
+  // ERC-721 — used at Plan 33-03 by prepare_uniswap_v3_rebalance for
+  // pre-flight ownership refusal (INVALID_INPUT when ownerOf(tokenId) !== from).
+  "function ownerOf(uint256 tokenId) view returns (address)",
 ]);
 
 /**

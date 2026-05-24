@@ -2576,8 +2576,13 @@ export const DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_BURN: string = [
 
 /**
  * NPM decoded-args discriminated union for `preview_send` (tx.to, selector)
- * tuple-dispatch arms (Plan 33-02). 5 variants — one per single-step verb.
- * Plan 33-03 widens this with a `composite-multicall` variant for rebalance.
+ * tuple-dispatch arms (Plan 33-02 single-step + Plan 33-03 composite). 6
+ * variants — 5 single-step verbs + 1 composite-multicall outer wrapper.
+ *
+ * The composite arm carries `subCalls: readonly UniswapV3LpDecoded[]` —
+ * recursive shape; `buildUniswapV3LpDecodedArgsBlock` walks the array and
+ * renders each inner sub-call with 2-space indent + blank-line separator.
+ * Mirrors the Phase 32 `UniswapV3Decoded.multicall` recursive shape.
  */
 export type UniswapV3LpDecoded =
   | {
@@ -2621,6 +2626,10 @@ export type UniswapV3LpDecoded =
   | {
       kind: "uniswap-v3-lp-burn";
       tokenId: bigint;
+    }
+  | {
+      kind: "uniswap-v3-lp-composite-multicall";
+      subCalls: readonly UniswapV3LpDecoded[];
     };
 
 /**
@@ -2723,5 +2732,114 @@ export function buildUniswapV3LpDecodedArgsBlock(
         "{TOKEN_ID}",
         decoded.tokenId.toString(),
       );
+    case "uniswap-v3-lp-composite-multicall": {
+      // Plan 33-03 composite arm. Mirror Phase 32's
+      // buildUniswapV3DecodedArgsBlock multicall recursion (blocks.ts ~L2331)
+      // — each inner sub-call renders with 2-space indent + blank-line
+      // separator. The header note enumerates step count + outer selector.
+      const total = decoded.subCalls.length;
+      const renderedSteps = decoded.subCalls
+        .map((sub, idx) => {
+          const stepHeader = `  Step ${idx + 1} of ${total}: ${innerSelectorLabel(sub.kind)}`;
+          const subBlock = buildUniswapV3LpDecodedArgsBlock(sub)
+            .split("\n")
+            .map((line) => `  ${line}`)
+            .join("\n");
+          return `${stepHeader}\n${subBlock}`;
+        })
+        .join("\n\n");
+      return DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_COMPOSITE_MULTICALL
+        .replace("{TOTAL_STEPS}", total.toString())
+        .replace("{SUB_CALLS_RENDERED}", renderedSteps);
+    }
   }
 }
+
+/**
+ * Inner-call kind → "selector (verb label)" for the composite step-header line.
+ * Used by the `uniswap-v3-lp-composite-multicall` arm of
+ * `buildUniswapV3LpDecodedArgsBlock`.
+ */
+function innerSelectorLabel(kind: UniswapV3LpDecoded["kind"]): string {
+  switch (kind) {
+    case "uniswap-v3-lp-mint":
+      return "0x88316456 (mint)";
+    case "uniswap-v3-lp-increase-liquidity":
+      return "0x219f5d17 (increaseLiquidity)";
+    case "uniswap-v3-lp-decrease-liquidity":
+      return "0x0c49ccbe (decreaseLiquidity)";
+    case "uniswap-v3-lp-collect":
+      return "0xfc6f7865 (collect)";
+    case "uniswap-v3-lp-burn":
+      return "0x42966c68 (burn)";
+    case "uniswap-v3-lp-composite-multicall":
+      // Recursion depth: 1 in practice (Plan 33-03 rebalance is 3 leaf calls).
+      // A composite-within-composite would render here for completeness.
+      return "0xac9650d8 (multicall)";
+  }
+}
+
+// =============================================================================
+// Phase 33 — Plan 33-03 additive extensions (APPEND-ONLY).
+// =============================================================================
+//
+// `UNISWAP_V3_LP_REBALANCE_PREPARE_RECEIPT_TEMPLATE` records ONLY the composite
+// intent (CONTEXT.md D-06): chain + tokenId + new tick range (server-snapped
+// from agent-supplied prices). Inner-step args decode at preview time via the
+// composite-multicall DECODED ARGS arm + CHECKS PERFORMED block.
+//
+// `DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_COMPOSITE_MULTICALL` is the outer wrapper
+// the `buildUniswapV3LpDecodedArgsBlock` composite arm fills in — header
+// declares "Composite multicall — N inner calls / selector 0xac9650d8 / target
+// NPM"; sub-call body is rendered by the case arm (one block per step, 2-space
+// indented + blank-line separated).
+//
+// APPEND-ONLY discipline preserves the byte-identity of every upstream template;
+// Plan 33-02's 10 templates above stay unchanged.
+
+/**
+ * PREPARE RECEIPT template for `prepare_uniswap_v3_rebalance` (Plan 33-03 UNI-09).
+ * Slots:
+ *   `{CHAIN}`, `{NPM}`, `{TOKEN_ID}`,
+ *   `{NEW_PRICE_LOWER}` (verbatim agent input),
+ *   `{NEW_PRICE_UPPER}` (verbatim agent input),
+ *   `{NEW_TICK_LOWER}` (server-snapped),
+ *   `{NEW_TICK_UPPER}` (server-snapped),
+ *   `{SLIPPAGE_BPS}`, `{DEADLINE}`.
+ *
+ * Per CONTEXT.md D-06: the receipt records ONLY composite intent. Inner-step
+ * args (decreaseLiquidity / collect / mint params) decode at preview time via
+ * the composite-multicall DECODED ARGS arm — DO NOT bake them into the receipt
+ * template (the agent's RECEIPT relay is the cryptographic-binding contract;
+ * recording inner-step values here would cement them as "agent intent" when
+ * they are server-derived).
+ */
+export const UNISWAP_V3_LP_REBALANCE_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT — Uniswap V3 rebalance (NonfungiblePositionManager, composite multicall)",
+  "  chain:              {CHAIN}",
+  "  npm:                {NPM}",
+  "  tokenId:            {TOKEN_ID}",
+  "  newPriceLower:      {NEW_PRICE_LOWER}",
+  "  newPriceUpper:      {NEW_PRICE_UPPER}",
+  "  newTickLower:       {NEW_TICK_LOWER}",
+  "  newTickUpper:       {NEW_TICK_UPPER}",
+  "  slippageBps:        {SLIPPAGE_BPS}",
+  "  deadline:           {DEADLINE}",
+  "",
+  "  Note: composite multicall — decreases ALL liquidity, collects everything, mints new position at new range. Single signature authorizes all 3 steps.",
+].join("\n");
+
+/**
+ * DECODED ARGS template for `NPM.multicall(bytes[])` (Plan 33-03 outer wrapper).
+ * Slots: `{TOTAL_STEPS}`, `{SUB_CALLS_RENDERED}`.
+ *
+ * The body line "Composite multicall — N inner calls / selector 0xac9650d8 /
+ * target NonfungiblePositionManager" pins the outer selector + step count
+ * for the agent's visibility. Sub-calls render via the recursive arm in
+ * `buildUniswapV3LpDecodedArgsBlock`.
+ */
+export const DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_COMPOSITE_MULTICALL: string = [
+  "DECODED ARGS — composite multicall (Uniswap V3 NonfungiblePositionManager)",
+  "  Composite multicall — {TOTAL_STEPS} inner calls / selector 0xac9650d8 / target NonfungiblePositionManager",
+  "{SUB_CALLS_RENDERED}",
+].join("\n");

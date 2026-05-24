@@ -105,6 +105,7 @@ import {
   UNISWAP_V3_SELECTORS,
 } from "../protocols/uniswap-v3.js";
 import {
+  MULTICALL_BYTES_ABI as UNISWAP_V3_LP_MULTICALL_BYTES_ABI,
   NPM_WRITE_ABI as UNISWAP_V3_LP_NPM_WRITE_ABI,
   UNISWAP_V3_LP_SELECTORS,
 } from "../protocols/uniswap-v3-lp.js";
@@ -448,6 +449,10 @@ function decodeUniswapV3Call(data: Hex, sel: Hex): UniswapV3Decoded | null {
  *
  * Exported for reuse by Plan 33-03 `prepare_uniswap_v3_rebalance` composite-
  * multicall arm (Pitfall 7 SOT discipline — one decoder, one home).
+ *
+ * Production callers in this module route through `_npmDecodeShared.decodeSingleNpmCall`
+ * (the ESM spy-affordance indirection) so tests can intercept without
+ * monkey-patching the named export.
  */
 export function decodeSingleNpmCall(
   data: Hex,
@@ -576,6 +581,16 @@ export function decodeSingleNpmCall(
 }
 
 /**
+ * ESM spy-affordance indirection for `decodeSingleNpmCall` — CLAUDE.md §
+ * Conventions. Production callers in this module (the 5-verb NPM arm AND
+ * the Plan 33-03 composite-multicall arm) route through this object so tests
+ * can `vi.spyOn(_npmDecodeShared, "decodeSingleNpmCall")` to intercept the
+ * outer-arm + recursion paths simultaneously (Pitfall 7 SHARED-decoder
+ * discipline anchor).
+ */
+export const _npmDecodeShared = { decodeSingleNpmCall };
+
+/**
  * Serialize an NPM decoded call to JSON-safe form for
  * `structuredContent.decodedArgs`. Bigints → strings.
  */
@@ -627,6 +642,11 @@ function serializeUniswapV3LpDecoded(
       };
     case "uniswap-v3-lp-burn":
       return { kind: d.kind, tokenId: d.tokenId.toString() };
+    case "uniswap-v3-lp-composite-multicall":
+      return {
+        kind: d.kind,
+        subCalls: d.subCalls.map(serializeUniswapV3LpDecoded),
+      };
   }
 }
 
@@ -1196,8 +1216,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
               } else if (npmAddrForBurn && record.tx.to === npmAddrForBurn) {
                 // Phase 33 Plan 33-02 — NPM burn route (collision resolution
                 // via tx.to dispatch). Plan 33-02 Task 3 wires the shared
-                // helper.
-                uniswapV3LpDecoded = decodeSingleNpmCall(
+                // helper. Plan 33-03 routes via _npmDecodeShared indirection
+                // for ESM spy-affordance (Pitfall 7).
+                uniswapV3LpDecoded = _npmDecodeShared.decodeSingleNpmCall(
                   record.tx.data as Hex,
                   sel,
                 );
@@ -1243,13 +1264,59 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                 record.tx.chainId as ChainId,
               );
               if (npmAddr && record.tx.to === npmAddr) {
-                uniswapV3LpDecoded = decodeSingleNpmCall(
+                uniswapV3LpDecoded = _npmDecodeShared.decodeSingleNpmCall(
                   record.tx.data as Hex,
                   sel,
                 );
               }
               // tx.to !== NPM → fall through; the existing Phase 31 arms
               // already routed rETH.burn correctly when sel === 0x42966c68.
+            } else if (sel === UNISWAP_V3_LP_SELECTORS.multicallBytes) {
+              // Phase 33 Plan 33-03 — composite-multicall outer arm (UNI-09
+              // `prepare_uniswap_v3_rebalance`). (tx.to, selector) TUPLE
+              // dispatch — selector 0xac9650d8 is the bytes-only multicall
+              // overload (NPM-only; NEVER conflate with Phase 32's deadline-
+              // overload 0x5ae401dc on SwapRouter02). Route to NPM ONLY when
+              // tx.to === NPM SOT; selector-only routing would mis-classify
+              // any IMulticall-inheriting contract.
+              //
+              // SHARED decoder helper (Pitfall 7 SOT discipline): each inner
+              // call recurses through `decodeSingleNpmCall` — the same helper
+              // the outer 5-verb arm uses. Drift between the outer-arm path
+              // and this composite-recursion path is the bug class Pitfall 7
+              // anchors against; if a future verb is added to NPM, only
+              // `decodeSingleNpmCall` needs to know — both paths pick it up
+              // automatically.
+              const npmAddrForComposite =
+                _getUniswapV3NonfungiblePositionManagerAddress(
+                  record.tx.chainId as ChainId,
+                );
+              if (npmAddrForComposite && record.tx.to === npmAddrForComposite) {
+                try {
+                  const decodedOuter = decodeFunctionData({
+                    abi: UNISWAP_V3_LP_MULTICALL_BYTES_ABI,
+                    data: record.tx.data as Hex,
+                  });
+                  const [calls] = decodedOuter.args as [readonly Hex[]];
+                  const subCalls: UniswapV3LpDecoded[] = [];
+                  for (const innerCall of calls) {
+                    const innerSel = innerCall
+                      .slice(0, 10)
+                      .toLowerCase() as Hex;
+                    const sub = _npmDecodeShared.decodeSingleNpmCall(
+                      innerCall,
+                      innerSel,
+                    );
+                    if (sub !== null) subCalls.push(sub);
+                  }
+                  uniswapV3LpDecoded = {
+                    kind: "uniswap-v3-lp-composite-multicall",
+                    subCalls,
+                  };
+                } catch {
+                  // ABI decode error — fall through to unknown.
+                }
+              }
             }
           }
         }
