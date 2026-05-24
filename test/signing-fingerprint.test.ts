@@ -61,6 +61,12 @@ import {
   encodeMulticallWithDeadline,
   encodeUnwrapWeth9,
 } from "../src/protocols/uniswap-v3.js";
+import {
+  MAX_UINT128,
+  UNISWAP_V3_LP_SELECTORS,
+  _uniswapV3LpProtocol,
+} from "../src/protocols/uniswap-v3-lp.js";
+import { getUniswapV3NonfungiblePositionManagerAddress } from "../src/config/contracts.js";
 import { encodeV3Path } from "../src/signing/uniswap-path.js";
 
 describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
@@ -707,6 +713,169 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     // amountIn slot from the multicall preimage) fires this Set-size assertion.
     const distinct = new Set([FIXTURE_UNI_A_FP, FIXTURE_UNI_B_FP, FIXTURE_UNI_C_FP]);
     expect(distinct.size).toBe(3);
+  });
+
+  // ===========================================================================
+  // Phase 33 Plan 33-02 — Fixtures UNI-LP-A / UNI-LP-B / UNI-LP-C / UNI-LP-D /
+  // UNI-LP-E (NPM mint / increase / decrease / collect / burn)
+  // ===========================================================================
+  //
+  // Five canonical NPM calldata shapes anchored as hardcoded 0x...
+  // payloadFingerprint literals per CLAUDE.md cryptographic-binding fixture
+  // discipline ("NO `beforeAll`-snapshot"). Each fixture's preimage flows
+  // through SOT getters + _uniswapV3LpProtocol encoders — NEVER inlined.
+  // Each fixture asserts the verb selector BEFORE the fingerprint assertion
+  // so encoder drift fires before preimage drift.
+  //
+  // FIXTURE_NPM_PERSONA = Anvil account 1 — matches the canonical persona
+  // literal in the Phase 32 UNI-A/B/C fixtures + the prepare-uniswap-v3-*
+  // test fixtures (test/prepare-uniswap-v3-{mint,increase,decrease,collect,
+  // burn}.test.ts). Re-anchoring across personas in test/integration-
+  // uniswap-v3-lp.test.ts (Plan 33-03) proves `from`-dependence end-to-end
+  // (T-FROM-DEPENDENT-FP-LP — accepted per threat register, re-anchored).
+
+  const FIXTURE_UNI_LP_A_FP =
+    "0x48582b81fff9879239bb673f583461b3b1900e51c32d63dc68bda1bf3918d1bb";
+  const FIXTURE_UNI_LP_B_FP =
+    "0xe3e347366d50dd65201363c649314386157f784e0696b7b65d8edd856e1d7b56";
+  const FIXTURE_UNI_LP_C_FP =
+    "0xc2a64d14f74e88eb84a6468fd5f8bdd076078dbdc846bdfcad2c33cc17aa3df0";
+  const FIXTURE_UNI_LP_D_FP =
+    "0x4c8a7833209aa8659a6de2aac5d4bde61306df51dd715eb834805efdcc7c73c7";
+  const FIXTURE_UNI_LP_E_FP =
+    "0x9a3f61d8a80fdcbb0718466b1c4e92057e6dc261317858ef47957bb7b29feaa8";
+
+  const FIXTURE_NPM_PERSONA = getAddress(
+    "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+  );
+  const FIXTURE_NPM_DEADLINE = 1748707200n;
+
+  it("Fixture UNI-LP-A — NPM.mint(USDC/WETH 0.05%, 100 USDC + 0.05 WETH, tick [-60, 60]) fingerprint (hardcoded literal anchor, Phase 33 Plan 33-02)", () => {
+    const npm = getUniswapV3NonfungiblePositionManagerAddress(1)!;
+    const USDC = getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48");
+    const WETH = getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2");
+    const data = _uniswapV3LpProtocol.encodeMint({
+      token0: USDC,
+      token1: WETH,
+      fee: 500,
+      tickLower: -60,
+      tickUpper: 60,
+      amount0Desired: 100_000000n,
+      amount1Desired: 50_000_000_000_000_000n,
+      amount0Min: 99_500000n,
+      amount1Min: 49_750_000_000_000_000n,
+      recipient: FIXTURE_NPM_PERSONA,
+      deadline: FIXTURE_NPM_DEADLINE,
+    });
+    // Selector pin BEFORE fingerprint pin (Phase 32 line-537 discipline).
+    expect(data.slice(0, 10).toLowerCase()).toBe(
+      UNISWAP_V3_LP_SELECTORS.mint,
+    );
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: npm,
+      valueWei: 0n,
+      data,
+    });
+    expect(fp).toBe(FIXTURE_UNI_LP_A_FP);
+  });
+
+  it("Fixture UNI-LP-B — NPM.increaseLiquidity(tokenId=12345, 100 USDC + 0.05 WETH) fingerprint (hardcoded literal anchor, Phase 33 Plan 33-02)", () => {
+    const npm = getUniswapV3NonfungiblePositionManagerAddress(1)!;
+    const data = _uniswapV3LpProtocol.encodeIncreaseLiquidity({
+      tokenId: 12345n,
+      amount0Desired: 100_000000n,
+      amount1Desired: 50_000_000_000_000_000n,
+      amount0Min: 99_500000n,
+      amount1Min: 49_750_000_000_000_000n,
+      deadline: FIXTURE_NPM_DEADLINE,
+    });
+    expect(data.slice(0, 10).toLowerCase()).toBe(
+      UNISWAP_V3_LP_SELECTORS.increaseLiquidity,
+    );
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: npm,
+      valueWei: 0n,
+      data,
+    });
+    expect(fp).toBe(FIXTURE_UNI_LP_B_FP);
+  });
+
+  it("Fixture UNI-LP-C — NPM.decreaseLiquidity(tokenId=12345, liquidity=1000) fingerprint (hardcoded literal anchor, Phase 33 Plan 33-02)", () => {
+    const npm = getUniswapV3NonfungiblePositionManagerAddress(1)!;
+    const data = _uniswapV3LpProtocol.encodeDecreaseLiquidity({
+      tokenId: 12345n,
+      liquidity: 1000n,
+      amount0Min: 0n,
+      amount1Min: 0n,
+      deadline: FIXTURE_NPM_DEADLINE,
+    });
+    expect(data.slice(0, 10).toLowerCase()).toBe(
+      UNISWAP_V3_LP_SELECTORS.decreaseLiquidity,
+    );
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: npm,
+      valueWei: 0n,
+      data,
+    });
+    expect(fp).toBe(FIXTURE_UNI_LP_C_FP);
+  });
+
+  it("Fixture UNI-LP-D — NPM.collect(tokenId=12345, recipient=persona, MAX_UINT128, MAX_UINT128) fingerprint (hardcoded literal anchor, Phase 33 Plan 33-02)", () => {
+    const npm = getUniswapV3NonfungiblePositionManagerAddress(1)!;
+    const data = _uniswapV3LpProtocol.encodeCollect({
+      tokenId: 12345n,
+      recipient: FIXTURE_NPM_PERSONA,
+      amount0Max: MAX_UINT128,
+      amount1Max: MAX_UINT128,
+    });
+    expect(data.slice(0, 10).toLowerCase()).toBe(
+      UNISWAP_V3_LP_SELECTORS.collect,
+    );
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: npm,
+      valueWei: 0n,
+      data,
+    });
+    expect(fp).toBe(FIXTURE_UNI_LP_D_FP);
+  });
+
+  it("Fixture UNI-LP-E — NPM.burn(tokenId=12345) fingerprint (hardcoded literal anchor, Phase 33 Plan 33-02)", () => {
+    const npm = getUniswapV3NonfungiblePositionManagerAddress(1)!;
+    const data = _uniswapV3LpProtocol.encodeBurn(12345n);
+    // Selector 0x42966c68 COLLIDES with Phase 31 rETH.burn — preview_send
+    // (tx.to, selector) tuple-dispatches. The cryptographic-binding chain
+    // is `to`-independent here in the sense that the SAME selector + tokenId
+    // calldata on a DIFFERENT tx.to produces a DIFFERENT fingerprint; this
+    // fixture pins the (tx.to = NPM SOT) preimage.
+    expect(data.slice(0, 10).toLowerCase()).toBe(
+      UNISWAP_V3_LP_SELECTORS.burn,
+    );
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: npm,
+      valueWei: 0n,
+      data,
+    });
+    expect(fp).toBe(FIXTURE_UNI_LP_E_FP);
+  });
+
+  it("Fixtures UNI-LP-A..E produce 5 distinct fingerprints", () => {
+    // Each verb has its own calldata shape; the 5 fingerprints MUST differ.
+    // A regression that collapses calldata-shape distinguishability (e.g.
+    // accidentally dropping a struct field from a preimage) fires this Set-
+    // size assertion.
+    const distinct = new Set([
+      FIXTURE_UNI_LP_A_FP,
+      FIXTURE_UNI_LP_B_FP,
+      FIXTURE_UNI_LP_C_FP,
+      FIXTURE_UNI_LP_D_FP,
+      FIXTURE_UNI_LP_E_FP,
+    ]);
+    expect(distinct.size).toBe(5);
   });
 
   it("invalid `to` (not a 0x-prefixed 20-byte hex) → throws via viem.hexToBytes", () => {

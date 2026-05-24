@@ -104,7 +104,14 @@ import {
   SWAP_ROUTER_02_ABI as UNISWAP_SWAP_ROUTER_02_ABI,
   UNISWAP_V3_SELECTORS,
 } from "../protocols/uniswap-v3.js";
-import { getUniswapV3SwapRouter02Address as _getUniswapV3SwapRouter02Address } from "../config/contracts.js";
+import {
+  NPM_WRITE_ABI as UNISWAP_V3_LP_NPM_WRITE_ABI,
+  UNISWAP_V3_LP_SELECTORS,
+} from "../protocols/uniswap-v3-lp.js";
+import {
+  getUniswapV3SwapRouter02Address as _getUniswapV3SwapRouter02Address,
+  getUniswapV3NonfungiblePositionManagerAddress as _getUniswapV3NonfungiblePositionManagerAddress,
+} from "../config/contracts.js";
 import { _solanaSpl } from "../protocols/solana-spl.js";
 import { _solanaSystem } from "../protocols/solana-system.js";
 import { _tronStake } from "../protocols/tron-stake.js";
@@ -121,6 +128,7 @@ import {
   LEDGER_NOTICE_EIGENLAYER_DEPOSIT_TEMPLATE,
   LEDGER_NOTICE_ROCKETPOOL_TEMPLATE,
   LEDGER_NOTICE_UNISWAP_V3_TEMPLATE,
+  LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE,
   LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
   build4byteBlock,
@@ -133,11 +141,13 @@ import {
   buildRocketPoolDecodedArgsBlock,
   buildSimulationBlock,
   buildUniswapV3DecodedArgsBlock,
+  buildUniswapV3LpDecodedArgsBlock,
   chunkHex,
   type EigenLayerDecoded,
   type LidoDecoded,
   type RocketPoolDecoded,
   type UniswapV3Decoded,
+  type UniswapV3LpDecoded,
 } from "../signing/blocks.js";
 import "../chains/bitcoin/types.js"; // ensure initEccLib(tinySecp256k1) fires
 import "../chains/litecoin/types.js"; // ensure initEccLib fires for LTC address derivation
@@ -419,6 +429,204 @@ function decodeUniswapV3Call(data: Hex, sel: Hex): UniswapV3Decoded | null {
     }
   } catch {
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 33 Plan 33-02 — Uniswap V3 NonfungiblePositionManager (NPM)
+// (to, selector) tuple dispatch decoder. SHARED with Plan 33-03 per
+// Pitfall 7 — Plan 33-03's composite-multicall arm recurses inner calls via
+// this same `decodeSingleNpmCall` helper (single source of truth for inner-
+// call decoding; drift between outer-dispatch and recursion is the bug
+// class the shared helper prevents).
+// ---------------------------------------------------------------------------
+
+/**
+ * Decode a single NPM verb calldata into a `UniswapV3LpDecoded` discriminated
+ * union. Returns null when the selector doesn't match any of the 5 NPM verbs
+ * OR when the ABI decode fails (defensive — caller falls through).
+ *
+ * Exported for reuse by Plan 33-03 `prepare_uniswap_v3_rebalance` composite-
+ * multicall arm (Pitfall 7 SOT discipline — one decoder, one home).
+ */
+export function decodeSingleNpmCall(
+  data: Hex,
+  sel: Hex,
+): UniswapV3LpDecoded | null {
+  try {
+    switch (sel) {
+      case UNISWAP_V3_LP_SELECTORS.mint: {
+        const decoded = decodeFunctionData({
+          abi: UNISWAP_V3_LP_NPM_WRITE_ABI,
+          data,
+        });
+        const [params] = decoded.args as [
+          {
+            token0: Address;
+            token1: Address;
+            fee: number;
+            tickLower: number;
+            tickUpper: number;
+            amount0Desired: bigint;
+            amount1Desired: bigint;
+            amount0Min: bigint;
+            amount1Min: bigint;
+            recipient: Address;
+            deadline: bigint;
+          },
+        ];
+        return {
+          kind: "uniswap-v3-lp-mint",
+          token0: params.token0,
+          token1: params.token1,
+          fee: params.fee,
+          tickLower: params.tickLower,
+          tickUpper: params.tickUpper,
+          amount0Desired: params.amount0Desired,
+          amount1Desired: params.amount1Desired,
+          amount0Min: params.amount0Min,
+          amount1Min: params.amount1Min,
+          recipient: params.recipient,
+          deadline: params.deadline,
+        };
+      }
+      case UNISWAP_V3_LP_SELECTORS.increaseLiquidity: {
+        const decoded = decodeFunctionData({
+          abi: UNISWAP_V3_LP_NPM_WRITE_ABI,
+          data,
+        });
+        const [params] = decoded.args as [
+          {
+            tokenId: bigint;
+            amount0Desired: bigint;
+            amount1Desired: bigint;
+            amount0Min: bigint;
+            amount1Min: bigint;
+            deadline: bigint;
+          },
+        ];
+        return {
+          kind: "uniswap-v3-lp-increase-liquidity",
+          tokenId: params.tokenId,
+          amount0Desired: params.amount0Desired,
+          amount1Desired: params.amount1Desired,
+          amount0Min: params.amount0Min,
+          amount1Min: params.amount1Min,
+          deadline: params.deadline,
+        };
+      }
+      case UNISWAP_V3_LP_SELECTORS.decreaseLiquidity: {
+        const decoded = decodeFunctionData({
+          abi: UNISWAP_V3_LP_NPM_WRITE_ABI,
+          data,
+        });
+        const [params] = decoded.args as [
+          {
+            tokenId: bigint;
+            liquidity: bigint;
+            amount0Min: bigint;
+            amount1Min: bigint;
+            deadline: bigint;
+          },
+        ];
+        return {
+          kind: "uniswap-v3-lp-decrease-liquidity",
+          tokenId: params.tokenId,
+          liquidity: params.liquidity,
+          amount0Min: params.amount0Min,
+          amount1Min: params.amount1Min,
+          deadline: params.deadline,
+        };
+      }
+      case UNISWAP_V3_LP_SELECTORS.collect: {
+        const decoded = decodeFunctionData({
+          abi: UNISWAP_V3_LP_NPM_WRITE_ABI,
+          data,
+        });
+        const [params] = decoded.args as [
+          {
+            tokenId: bigint;
+            recipient: Address;
+            amount0Max: bigint;
+            amount1Max: bigint;
+          },
+        ];
+        return {
+          kind: "uniswap-v3-lp-collect",
+          tokenId: params.tokenId,
+          recipient: params.recipient,
+          amount0Max: params.amount0Max,
+          amount1Max: params.amount1Max,
+        };
+      }
+      case UNISWAP_V3_LP_SELECTORS.burn: {
+        const decoded = decodeFunctionData({
+          abi: UNISWAP_V3_LP_NPM_WRITE_ABI,
+          data,
+        });
+        const [tokenId] = decoded.args as [bigint];
+        return { kind: "uniswap-v3-lp-burn", tokenId };
+      }
+      default:
+        return null;
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Serialize an NPM decoded call to JSON-safe form for
+ * `structuredContent.decodedArgs`. Bigints → strings.
+ */
+function serializeUniswapV3LpDecoded(
+  d: UniswapV3LpDecoded,
+): Record<string, unknown> {
+  switch (d.kind) {
+    case "uniswap-v3-lp-mint":
+      return {
+        kind: d.kind,
+        token0: d.token0,
+        token1: d.token1,
+        fee: d.fee,
+        tickLower: d.tickLower,
+        tickUpper: d.tickUpper,
+        amount0Desired: d.amount0Desired.toString(),
+        amount1Desired: d.amount1Desired.toString(),
+        amount0Min: d.amount0Min.toString(),
+        amount1Min: d.amount1Min.toString(),
+        recipient: d.recipient,
+        deadline: d.deadline.toString(),
+      };
+    case "uniswap-v3-lp-increase-liquidity":
+      return {
+        kind: d.kind,
+        tokenId: d.tokenId.toString(),
+        amount0Desired: d.amount0Desired.toString(),
+        amount1Desired: d.amount1Desired.toString(),
+        amount0Min: d.amount0Min.toString(),
+        amount1Min: d.amount1Min.toString(),
+        deadline: d.deadline.toString(),
+      };
+    case "uniswap-v3-lp-decrease-liquidity":
+      return {
+        kind: d.kind,
+        tokenId: d.tokenId.toString(),
+        liquidity: d.liquidity.toString(),
+        amount0Min: d.amount0Min.toString(),
+        amount1Min: d.amount1Min.toString(),
+        deadline: d.deadline.toString(),
+      };
+    case "uniswap-v3-lp-collect":
+      return {
+        kind: d.kind,
+        tokenId: d.tokenId.toString(),
+        recipient: d.recipient,
+        amount0Max: d.amount0Max.toString(),
+        amount1Max: d.amount1Max.toString(),
+      };
+    case "uniswap-v3-lp-burn":
+      return { kind: d.kind, tokenId: d.tokenId.toString() };
   }
 }
 
@@ -826,6 +1034,7 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     let eigenLayerDecoded: EigenLayerDecoded | null = null;
     let rocketPoolDecoded: RocketPoolDecoded | null = null;
     let uniswapV3Decoded: UniswapV3Decoded | null = null;
+    let uniswapV3LpDecoded: UniswapV3LpDecoded | null = null;
     if (decodedArgs.kind === "unknown") {
       const aave = _aaveProtocols.decodeAaveV3Call(record.tx.data);
       if (aave.kind !== "unknown") {
@@ -964,11 +1173,14 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
             } else if (sel === ROCKETPOOL_SELECTORS.burn) {
               // Phase 31 Plan 31-03 — Rocket Pool burn DECODED ARGS arm.
               // Pitfall 2: selector 0x42966c68 is the GENERIC OpenZeppelin
-              // ERC20Burnable selector. (tx.to, selector) tuple check —
-              // route to Rocket Pool ONLY when tx.to === SOT rETH. Other
-              // contracts with the OZ Burnable mixin fall through to the
-              // existing generic-decode path.
+              // ERC20Burnable selector. Phase 33 Plan 33-02 — NPM.burn shares
+              // this selector too. (tx.to, selector) tuple check — route to
+              // Rocket Pool when tx.to === SOT rETH; to NPM when tx.to ===
+              // SOT NPM; otherwise fall through to generic-decode path.
               const rethAddr = _getRocketPoolRethAddress(record.tx.chainId as ChainId);
+              const npmAddrForBurn = _getUniswapV3NonfungiblePositionManagerAddress(
+                record.tx.chainId as ChainId,
+              );
               if (rethAddr && record.tx.to === rethAddr) {
                 try {
                   const { args: [amount] } = decodeFunctionData({
@@ -981,6 +1193,14 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                     amountWei: amount as bigint,
                   };
                 } catch { /* ABI decode error — fall through to unknown */ }
+              } else if (npmAddrForBurn && record.tx.to === npmAddrForBurn) {
+                // Phase 33 Plan 33-02 — NPM burn route (collision resolution
+                // via tx.to dispatch). Plan 33-02 Task 3 wires the shared
+                // helper.
+                uniswapV3LpDecoded = decodeSingleNpmCall(
+                  record.tx.data as Hex,
+                  sel,
+                );
               }
             } else if (
               sel === UNISWAP_V3_SELECTORS.multicallWithDeadline ||
@@ -1005,6 +1225,31 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
               // tx.to !== SwapRouter02 (e.g. UniversalRouter call with same
               // 0x5ae401dc multicall selector) → fall through; existing
               // handling (no Uniswap V3 arm rendered). Defense per Pitfall 4.
+            } else if (
+              sel === UNISWAP_V3_LP_SELECTORS.mint ||
+              sel === UNISWAP_V3_LP_SELECTORS.increaseLiquidity ||
+              sel === UNISWAP_V3_LP_SELECTORS.decreaseLiquidity ||
+              sel === UNISWAP_V3_LP_SELECTORS.collect ||
+              sel === UNISWAP_V3_LP_SELECTORS.burn
+            ) {
+              // Phase 33 Plan 33-02 — Uniswap V3 NonfungiblePositionManager
+              // (NPM) DECODED ARGS arm. (tx.to, selector) TUPLE dispatch —
+              // load-bearing per T-SELECTOR-COLLISION-BURN: NPM.burn selector
+              // 0x42966c68 ALSO matches Phase 31 rETH.burn AND the generic
+              // ERC-20 Burnable mixin. Route to NPM ONLY when tx.to === NPM
+              // SOT; the Phase 31 rETH.burn arm earlier in this if-chain
+              // catches the rETH case via its OWN (tx.to === rETH SOT) guard.
+              const npmAddr = _getUniswapV3NonfungiblePositionManagerAddress(
+                record.tx.chainId as ChainId,
+              );
+              if (npmAddr && record.tx.to === npmAddr) {
+                uniswapV3LpDecoded = decodeSingleNpmCall(
+                  record.tx.data as Hex,
+                  sel,
+                );
+              }
+              // tx.to !== NPM → fall through; the existing Phase 31 arms
+              // already routed rETH.burn correctly when sel === 0x42966c68.
             }
           }
         }
@@ -1209,7 +1454,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                   ? buildRocketPoolDecodedArgsBlock(rocketPoolDecoded)
                   : uniswapV3Decoded !== null
                     ? buildUniswapV3DecodedArgsBlock(uniswapV3Decoded)
-                    : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
+                    : uniswapV3LpDecoded !== null
+                      ? buildUniswapV3LpDecodedArgsBlock(uniswapV3LpDecoded)
+                      : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
 
     // Phase 6 — Plan 06-02: wide eth_call simulation. DF-1 LOCKED. Runs for
     // ALL tx shapes including native sends (defense-in-depth uniform per
@@ -1294,6 +1541,13 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // (tx.to, selector) tuple gate is upstream when populating uniswapV3Decoded.
     const isUniswapV3 = uniswapV3Decoded !== null;
 
+    // Phase 33 Plan 33-02 — LEDGER NOTICE for Uniswap V3 NonfungiblePosition
+    // Manager (T-LEDGER-BLIND-SIGN-NPM, UNCONDITIONAL per RESEARCH § Topic 10).
+    // The NPM contract has NO ERC-7730 clear-sign coverage; every mint /
+    // increase / decrease / collect / burn blind-signs at the device. SHARED
+    // template with prepare-side emission (LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE).
+    const isUniswapV3Lp = uniswapV3LpDecoded !== null;
+
     const ledgerNoticeBlock: string | null = isWethUnwrap
       ? LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE
       : isCompoundComet
@@ -1304,7 +1558,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
             ? LEDGER_NOTICE_ROCKETPOOL_TEMPLATE
             : isUniswapV3
               ? LEDGER_NOTICE_UNISWAP_V3_TEMPLATE
-              : null;
+              : isUniswapV3Lp
+                ? LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE
+                : null;
 
     // Filter empty decoded-args block (unknown-kind / native sends) so the
     // text-array join doesn't emit a stray empty block alongside the 4byte
@@ -1415,7 +1671,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                       }
                   : uniswapV3Decoded !== null
                     ? serializeUniswapV3Decoded(uniswapV3Decoded)
-                    : decodedArgs.kind === "transfer"
+                    : uniswapV3LpDecoded !== null
+                      ? serializeUniswapV3LpDecoded(uniswapV3LpDecoded)
+                      : decodedArgs.kind === "transfer"
                 ? { kind: "transfer" as const, to: decodedArgs.to, amount: decodedArgs.amount.toString() }
                 : decodedArgs.kind === "approve"
                   ? {
@@ -1462,7 +1720,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                 ? ("rocketpool-blind-sign" as const)
                 : isUniswapV3
                   ? ("uniswap-v3-blind-sign" as const)
-                  : null,
+                  : isUniswapV3Lp
+                    ? ("uniswap-v3-lp-blind-sign" as const)
+                    : null,
         // Plan 09-05 (SEC-36) — WC session topic surface for user cross-check
         // against Ledger Live → Settings → Connected Apps. `null` in demo
         // mode (no WC session); real-mode carries the last-8-chars of the WC
