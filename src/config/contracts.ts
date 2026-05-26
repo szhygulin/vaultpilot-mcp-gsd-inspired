@@ -791,6 +791,242 @@ export function getUniswapV3NonfungiblePositionManagerAddress(
 }
 
 // ---------------------------------------------------------------------------
+// Curve Finance per-chain SOT — Phase 34 Plan 34-01.
+// ---------------------------------------------------------------------------
+//
+// Sibling sub-table (NOT a widening of `ContractsForChain`) per Phase 28/29/30/31/32/33
+// precedent. Curve ships a curated registry of 11 pools on Ethereum mainnet:
+//   - 1 legacy stETH/ETH pool (separate LP-token ERC-20)
+//   - 10 stable_ng plain pools (lpToken === pool.address for all stable_ng pools)
+//
+// Coverage at v2.4: stETH/ETH legacy pool + top-10 stable_ng plain pools by TVL
+// on Ethereum (2026-05-26 Curve API snapshot). Multi-chain Curve deferred to v2.4.x.
+//
+// Provenance (research date 2026-05-26 — Curve API live snapshot):
+//   - api.curve.finance/v1/getPools/ethereum/factory-stable-ng (stable_ng top-10)
+//   - api.curve.finance/v1/getPools/ethereum/main (legacy stETH/ETH)
+// All addresses cross-verified. coinDecimals verified against on-chain token.decimals()
+// snapshot; T-CURVE-REGISTRY-DECIMALS-1 regression anchors literal-vs-literal.
+//
+// Per-pool `lpToken` discipline:
+//   - stable_ng: lpToken === pool.address (pool IS its own LP ERC-20 — confirmed
+//     from Curve API + Vyper source totalSupply/balanceOf built into pool contract)
+//   - legacy stETH/ETH: lpToken = 0x06325440D014e39736583c165C2963BA99fAf14E
+//     (separate ERC-20 — Pitfall 3 anchor from RESEARCH.md)
+//
+// Each literal `getAddress`-wrapped at the literal site so a corrupted snapshot
+// — single hex digit flipped at rest — throws EIP-55 at module load.
+// T-CURVE-SPENDER-DRIFT-1 cross-view: KNOWN_SPENDERS_ETHEREUM promotion is
+// done via a SOT-getter loop (NOT 11 hand-written literals) so drift between
+// the registry view and the spender view is impossible by construction.
+
+/**
+ * ABI version discriminator for Curve pool calldata dispatch. Phase 34 ships
+ * two generations:
+ *   - `"legacy"` — stETH/ETH archetype. `exchange(int128,int128,uint256,uint256)` payable.
+ *   - `"stable_ng"` — factory-stable-ng archetype. `exchange(int128,int128,uint256,uint256,address)`.
+ * The `abiVersion` tag is the load-bearing dispatch discriminator in
+ * `prepare_curve_swap` (Plan 34-03). NEVER probe the ABI at call time.
+ */
+export type CurvePoolAbiVersion = "legacy" | "stable_ng";
+
+/**
+ * Per-pool Curve registry entry. The `abiVersion` tag drives calldata dispatch.
+ * Every pool's `lpToken` is authoritative for `get_curve_positions` balance
+ * reads — for stable_ng pools this equals `address`; for the legacy stETH pool
+ * it is a separate ERC-20.
+ *
+ * Format-fanout-sentinel: every `address` and `lpToken` literal is
+ * `getAddress()`-checksummed at the literal site. `coins` entries likewise.
+ */
+export interface CurvePoolEntry {
+  address: Address;
+  abiVersion: CurvePoolAbiVersion;
+  coins: Address[];
+  coinDecimals: number[];
+  lpToken: Address;     // pool address === lpToken for stable_ng; separate for legacy
+  displayName: string;  // human-readable label in preview blocks
+}
+
+const CURVE_POOLS_RAW: Partial<Record<ChainId, CurvePoolEntry[]>> = {
+  1: [
+    // ---------------------------------------------------------------------------
+    // LEGACY: stETH/ETH pool — Phase 34 Plan 34-01
+    // Source: Curve API (api.curve.finance/v1/getPools/ethereum/main) 2026-05-26
+    // ---------------------------------------------------------------------------
+    {
+      address: getAddress("0xDC24316b9AE028F1497c275EB9192a3Ea0f67022"),
+      abiVersion: "legacy",
+      coins: [
+        getAddress("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE"), // ETH sentinel (coin 0; i=0 → ETH-in; payable)
+        getAddress("0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84"), // stETH (coin 1)
+      ],
+      coinDecimals: [18, 18],
+      // Separate LP token ERC-20 (Pitfall 3 anchor — NOT the pool address).
+      lpToken: getAddress("0x06325440D014e39736583c165C2963BA99fAf14E"),
+      displayName: "stETH/ETH (legacy)",
+    },
+    // ---------------------------------------------------------------------------
+    // STABLE_NG top-10 plain pools — Phase 34 Plan 34-01
+    // Source: Curve API (api.curve.finance/v1/getPools/ethereum/factory-stable-ng)
+    // snapshot 2026-05-26. For all stable_ng pools: lpToken === pool.address
+    // (pool IS its own LP ERC-20 — verified from Curve API isMetaPool=false).
+    // ---------------------------------------------------------------------------
+    // Rank 1 — Spark.fi PYUSD Reserve (~$100M TVL)
+    {
+      address: getAddress("0xA632D59b9B804a956BfaA9b48Af3A1b74808FC1f"),
+      abiVersion: "stable_ng",
+      coins: [
+        getAddress("0x6c3ea9036406852006290770BEdFcAbA0e23A0e8"), // PYUSD (6 dec)
+        getAddress("0xdC035D45d973E3EC169d2276DDab16f1e407384F"), // USDS (18 dec)
+      ],
+      coinDecimals: [6, 18],
+      lpToken: getAddress("0xA632D59b9B804a956BfaA9b48Af3A1b74808FC1f"),
+      displayName: "PYUSD/USDS (stable_ng)",
+    },
+    // Rank 2 — RLUSD/USDC (~$74M TVL)
+    {
+      address: getAddress("0xD001aE433f254283FeCE51d4ACcE8c53263aa186"),
+      abiVersion: "stable_ng",
+      coins: [
+        getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), // USDC (6 dec)
+        getAddress("0x8292Bb45bf1Ee4d140127049757C2E0fF06317eD"), // RLUSD (18 dec)
+      ],
+      coinDecimals: [6, 18],
+      lpToken: getAddress("0xD001aE433f254283FeCE51d4ACcE8c53263aa186"),
+      displayName: "USDC/RLUSD (stable_ng)",
+    },
+    // Rank 3 — OETH/WETH (~$59M TVL)
+    {
+      address: getAddress("0xcc7d5785AD5755B6164e21495E07aDb0Ff11C2A8"),
+      abiVersion: "stable_ng",
+      coins: [
+        getAddress("0x856c4Efb76C1D1AE02e20CEB03A2A6a08b0b8dC3"), // OETH (18 dec)
+        getAddress("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"), // WETH (18 dec)
+      ],
+      coinDecimals: [18, 18],
+      lpToken: getAddress("0xcc7d5785AD5755B6164e21495E07aDb0Ff11C2A8"),
+      displayName: "OETH/WETH (stable_ng)",
+    },
+    // Rank 4 — DOLA/sUSDe (~$59M TVL)
+    {
+      address: getAddress("0x744793B5110f6ca9cC7CDfe1CE16677c3Eb192ef"),
+      abiVersion: "stable_ng",
+      coins: [
+        getAddress("0x865377367054516e17014CcdED1e7d814EDC9ce4"), // DOLA (18 dec)
+        getAddress("0x9D39A5DE30e57443BfF2A8307A4256c8797A3497"), // sUSDe (18 dec)
+      ],
+      coinDecimals: [18, 18],
+      lpToken: getAddress("0x744793B5110f6ca9cC7CDfe1CE16677c3Eb192ef"),
+      displayName: "DOLA/sUSDe (stable_ng)",
+    },
+    // Rank 5 — FRAXUSDe (~$55M TVL)
+    {
+      address: getAddress("0x5dc1BF6f1e983C0b21EfB003c105133736fA0743"),
+      abiVersion: "stable_ng",
+      coins: [
+        getAddress("0x853d955aCEf822Db058eb8505911ED77F175b99e"), // FRAX (18 dec)
+        getAddress("0x4c9EDD5852cd905f086C759E8383e09bff1E68B3"), // USDe (18 dec)
+      ],
+      coinDecimals: [18, 18],
+      lpToken: getAddress("0x5dc1BF6f1e983C0b21EfB003c105133736fA0743"),
+      displayName: "FRAX/USDe (stable_ng)",
+    },
+    // Rank 6 — PayPool PYUSD/USDC (~$51M TVL)
+    {
+      address: getAddress("0x383E6b4437b59fff47B619CBA855CA29342A8559"),
+      abiVersion: "stable_ng",
+      coins: [
+        getAddress("0x6c3ea9036406852006290770BEdFcAbA0e23A0e8"), // PYUSD (6 dec)
+        getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), // USDC (6 dec)
+      ],
+      coinDecimals: [6, 6],
+      lpToken: getAddress("0x383E6b4437b59fff47B619CBA855CA29342A8559"),
+      displayName: "PYUSD/USDC (stable_ng)",
+    },
+    // Rank 7 — Spark.fi USDT Reserve (sUSDS/USDT) (~$50M TVL)
+    {
+      address: getAddress("0x00836Fe54625BE242BcFA286207795405ca4fD10"),
+      abiVersion: "stable_ng",
+      coins: [
+        getAddress("0xa3931d71877C0E7a3148CB7Eb4463524FEc27fbD"), // sUSDS (18 dec)
+        getAddress("0xdAC17F958D2ee523a2206206994597C13D831ec7"), // USDT (6 dec)
+      ],
+      coinDecimals: [18, 6],
+      lpToken: getAddress("0x00836Fe54625BE242BcFA286207795405ca4fD10"),
+      displayName: "sUSDS/USDT (stable_ng)",
+    },
+    // Rank 8 — apxUSD-USDC (~$40M TVL)
+    {
+      address: getAddress("0xE1B96555BbecA40E583BbB41a11C68Ca4706A414"),
+      abiVersion: "stable_ng",
+      coins: [
+        getAddress("0x98A878b1Cd98131B271883B390f68D2c90674665"), // apxUSD (18 dec)
+        getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), // USDC (6 dec)
+      ],
+      coinDecimals: [18, 6],
+      lpToken: getAddress("0xE1B96555BbecA40E583BbB41a11C68Ca4706A414"),
+      displayName: "apxUSD/USDC (stable_ng)",
+    },
+    // Rank 9 — AUSD/USDC (~$25M TVL)
+    // Note: AUSD token has an unusual zero-prefixed address — valid; getAddress()
+    // checksums correctly.
+    {
+      address: getAddress("0xE79C1C7E24755574438A26D5e062Ad2626C04662"),
+      abiVersion: "stable_ng",
+      coins: [
+        getAddress("0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"), // USDC (6 dec)
+        getAddress("0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a"), // AUSD (6 dec)
+      ],
+      coinDecimals: [6, 6],
+      lpToken: getAddress("0xE79C1C7E24755574438A26D5e062Ad2626C04662"),
+      displayName: "USDC/AUSD (stable_ng)",
+    },
+    // Rank 10 — crvUSD/frxUSD (~$18M TVL)
+    {
+      address: getAddress("0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1"),
+      abiVersion: "stable_ng",
+      coins: [
+        getAddress("0xCAcd6fd266aF91b8AeD52aCCc382b4e165586E29"), // frxUSD (18 dec)
+        getAddress("0xf939E0A03FB07F59A73314E73794Be0E57ac1b4E"), // crvUSD (18 dec)
+      ],
+      coinDecimals: [18, 18],
+      lpToken: getAddress("0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1"),
+      displayName: "frxUSD/crvUSD (stable_ng)",
+    },
+  ],
+};
+
+/**
+ * Get every Curve pool registered on `chainId`. Returns `[]` (NOT undefined /
+ * throw) for chains absent from `CURVE_POOLS_RAW` — Phase 34 ships Ethereum
+ * (chainId=1) only; other chains return empty by construction. Consumed by:
+ *   - Plan 34-01 canonical-dispatch Curve arm (pool addresses → allowlist).
+ *   - Plan 34-02 `get_curve_positions` (LP-balance multicall fan-out).
+ *   - Plan 34-03 `prepare_curve_swap` / `prepare_curve_add_liquidity` (pool lookup).
+ */
+export function getAllCurvePoolsForChain(chainId: ChainId): CurvePoolEntry[] {
+  const row = CURVE_POOLS_RAW[chainId];
+  if (!row) return [];
+  return [...row]; // defensive copy
+}
+
+/**
+ * Get a specific Curve pool by its address on `chainId`. Applies `getAddress()`
+ * normalization before equality check so unchecksummed / lowercase input matches.
+ * Returns `undefined` when the address is not in the curated registry (the caller
+ * should refuse with `INVALID_INPUT + "pool not in registry"` per Plan 34-03).
+ */
+export function getCurvePoolByAddress(
+  chainId: ChainId,
+  poolAddress: Address,
+): CurvePoolEntry | undefined {
+  return CURVE_POOLS_RAW[chainId]?.find(
+    (p) => p.address === getAddress(poolAddress),
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Known-spender table — PREP-30 surface for approval-class DECODED ARGS.
 // ---------------------------------------------------------------------------
 
@@ -977,6 +1213,25 @@ export const KNOWN_SPENDERS_ETHEREUM: readonly KnownSpender[] = [
     label: "WETH9 (canonical wETH)",
     source: "src/tools/get_portfolio_summary.ts:17 (consolidated in Plan 06-04)",
   },
+  // Phase 34 Plan 34-01 — Curve pool KNOWN_SPENDERS promotion.
+  // Each Curve pool address is a spender target: users approve the pool
+  // contract for ERC-20 `transferFrom` before `exchange` / `add_liquidity`.
+  //
+  // PROMOTION STRATEGY: SOT-getter loop (D-13a pattern from Phase 32) — NOT
+  // 11 hand-written literal objects. The loop sources every address from
+  // `getAllCurvePoolsForChain(1)` so the spender view is byte-identical to the
+  // registry view by construction. T-CURVE-SPENDER-DRIFT-1 regression anchors
+  // this cross-view invariant.
+  //
+  // The `!` non-null assertion on `.address` is safe: `getAllCurvePoolsForChain(1)`
+  // returns a non-empty typed array (11 entries populated above). The SOT is
+  // established before KNOWN_SPENDERS_ETHEREUM is initialized — module-scope
+  // ordering is top-to-bottom in this file.
+  ...getAllCurvePoolsForChain(1).map((pool) => ({
+    address: pool.address,
+    label: `Curve ${pool.displayName}`,
+    source: "https://curve.finance",
+  })),
 ];
 
 /**

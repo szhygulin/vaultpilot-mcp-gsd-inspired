@@ -60,6 +60,7 @@ import { getAddress, type Address } from "viem";
 import {
   getAaveV3PoolAddress,
   getAllCompoundCometsForChain,
+  getAllCurvePoolsForChain,
   getAllEigenLayerStrategiesForChain,
   getEigenLayerStrategyManagerAddress,
   getLidoStethAddress,
@@ -196,6 +197,12 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
         (a): a is Address => !!a && a !== "0x0000000000000000000000000000000000000000",
       )
     : [];
+  // Phase 34 — Curve pool dispatch allowlist arm (Ethereum arm only).
+  // Each pool address is BOTH a dispatch target (tx.to for exchange/add_liquidity)
+  // AND a spender (ERC-20 approval via transferFrom at the pool contract).
+  // Non-Ethereum chains: getAllCurvePoolsForChain returns [] → spread adds nothing.
+  const curvePools = getAllCurvePoolsForChain(chainId);
+  const curveEntries: Address[] = curvePools.map((p) => p.address);
   return new Set<Address>([
     getAaveV3PoolAddress(chainId),
     getWethAddress(chainId),
@@ -209,6 +216,7 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
     ...rocketEntries,
     ...uniswapEntries,
     ...uniswapV3LpEntries,
+    ...curveEntries,
   ]);
 }
 
