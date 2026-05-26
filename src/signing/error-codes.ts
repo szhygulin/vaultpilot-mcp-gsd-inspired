@@ -248,7 +248,20 @@ export type ErrorCode =
   //                           Non-error structured exit — analogous to USER_CANCELLED.
   | "LITECOIN_APP_NOT_OPEN"
   | "APPROVAL_TIMEOUT"
-  | "USER_REJECTED";
+  | "USER_REJECTED"
+  //
+  // Phase 35 Plan 35-01 — get_contract_abi / fetchEtherscanAbi ABI fetch
+  // failure (reserved here so Plan 35-02 `read_contract` can reuse the
+  // same code without touching the file in parallel).
+  //
+  //   ABI_NOT_AVAILABLE  — fetchEtherscanAbi returned not-verified, the
+  //                        requested function is missing from the ABI, or
+  //                        the verified contract on Etherscan has an ABI
+  //                        that does not match the request shape. Distinct
+  //                        from INTERNAL_ERROR (which surfaces transient
+  //                        network failure) — ABI_NOT_AVAILABLE is the
+  //                        persistent "we asked, the answer is no ABI".
+  | "ABI_NOT_AVAILABLE";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers
