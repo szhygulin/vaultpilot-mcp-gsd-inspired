@@ -240,7 +240,7 @@ export function decodeCurveCall(
       const outputCoinAddress = pool.coins[j] as Address;
       // ETH-in only when i=0 AND the pool's coin at index 0 is the ETH sentinel.
       const isEthIn =
-        i === 0 && getAddress(pool.coins[0]) === ETH_SENTINEL;
+        i === 0 && getAddress(pool.coins[0] as Address) === ETH_SENTINEL;
       return {
         kind: "exchange-legacy",
         pool,

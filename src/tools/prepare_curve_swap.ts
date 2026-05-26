@@ -291,6 +291,7 @@ registerTool("prepare_curve_swap", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // -----------------------------------------------------------------------
     const fromResult = await resolveFrom({
       rawFrom: typeof args.from === "string" ? args.from : undefined,
+      chainId,
     });
     if (fromResult.kind === "error") {
       return fromResult.result;
@@ -373,12 +374,12 @@ registerTool("prepare_curve_swap", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     const payloadFingerprint = computePayloadFingerprint(tx);
     const handle = createHandle({
       args: {
-        chain: chainName,
-        poolAddress: pool.address,
+        to: pool.address,
+        valueWei: valueWei.toString(),
         inputToken,
         outputToken,
         amount: amountRaw,
-        slippageBps,
+        slippageBps: String(slippageBps),
       },
       tx,
       payloadFingerprint,
