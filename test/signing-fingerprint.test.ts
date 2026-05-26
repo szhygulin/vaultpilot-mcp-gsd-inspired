@@ -68,6 +68,40 @@ import {
 } from "../src/protocols/uniswap-v3-lp.js";
 import { getUniswapV3NonfungiblePositionManagerAddress } from "../src/config/contracts.js";
 import { encodeV3Path } from "../src/signing/uniswap-path.js";
+import {
+  CURVE_LEGACY_EXCHANGE_ABI,
+  CURVE_NG_EXCHANGE_ABI,
+  CURVE_NG_ADD_LIQUIDITY_ABI,
+} from "../src/chains/curve.js";
+import { encodeFunctionData } from "viem";
+
+// ===========================================================================
+// Phase 34 Plan 34-01 — Fixture CRV-A / CRV-B / CRV-C constants
+// ===========================================================================
+//
+// EXPORTED at module scope — Plan 34-03 Task 1 cross-link test imports:
+//   import { FIXTURE_CRV_A_FP, FIXTURE_CRV_B_FP, FIXTURE_CRV_C_FP }
+//     from "./signing-fingerprint"
+//
+// Computed at write-time (2026-05-26) using placeholder-literal workflow:
+// (1) wrote with "0xPLACEHOLDER", (2) ran vitest, (3) copied actual fp,
+// (4) pinned literal, (5) re-ran — green.
+// NO `beforeAll`-snapshot — drift must fail at a SPECIFIC line per CLAUDE.md.
+
+/** Fixture CRV-A: legacy exchange(i=1, j=0, dx=1e18 stETH, min_dy=950e15)
+ * on stETH/ETH pool (0xDC24316b9AE028F1497c275EB9192a3Ea0f67022).
+ * from-INDEPENDENT (no _receiver in calldata). */
+export const FIXTURE_CRV_A_FP = "0xea4f7e878de8e5f570f446d1444786ecb23b16f4c0cdcc3e286af2966fc0be53"; // computed at write-time (2026-05-26) — NO `beforeAll`-snapshot; EXPORTED so Plan 34-03 imports it
+
+/** Fixture CRV-B: stable_ng exchange(i=0, j=1, dx=100e6 PYUSD, min_dy=99e6 USDC,
+ * _receiver=FIXTURE_PERSONA) on PayPool (0x383E6b4437b59fff47B619CBA855CA29342A8559).
+ * from-DEPENDENT (_receiver embedded in calldata). */
+export const FIXTURE_CRV_B_FP = "0x91232f051349d2711e4259458489444ed3d9018073d9277220b3e0c753920c75";
+
+/** Fixture CRV-C: stable_ng add_liquidity([50e6 PYUSD, 50e6 USDC], min_mint=99e18)
+ * on PayPool (0x383E6b4437b59fff47B619CBA855CA29342A8559).
+ * Proves dynamic-array calldata is byte-stable. */
+export const FIXTURE_CRV_C_FP = "0x2762d8badc0a798a9947b77dd56a5127bd4c65eb17b1daf6465590810edc063b";
 
 describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
   it("Fixture A — native send → 0x7e1867b2... byte-for-byte", () => {
@@ -1632,5 +1666,129 @@ describe("computeBtcLifiPayloadFingerprint — Fixture AA (Phase 26 Plan 26-03 B
     expect(_btcLifiFingerprint.computeBtcLifiPayloadFingerprint).toBe(
       computeBtcLifiPayloadFingerprint,
     );
+  });
+});
+
+// ===========================================================================
+// Phase 34 Plan 34-01 — Fixtures CRV-A / CRV-B / CRV-C
+// ===========================================================================
+//
+// Three canonical Curve calldata shapes anchored as hardcoded 0x...
+// payloadFingerprint literals per CLAUDE.md cryptographic-binding fixture
+// discipline ("NO `beforeAll`-snapshot" rule).
+//
+// FIXTURE_PERSONA = Anvil account 1 (0x70997970...) — same as Phase 32 UNI-A/B/C
+// + Phase 30 Fixture W.
+//
+// CRV-A: legacy exchange on stETH/ETH — from-INDEPENDENT (no _receiver in calldata).
+//   Encoders in src/protocols/curve.ts (Plan 34-03) must produce identical bytes.
+//
+// CRV-B: stable_ng exchange with _receiver = FIXTURE_PERSONA — from-DEPENDENT.
+//   If FIXTURE_PERSONA changes, CRV-B literal must be re-anchored.
+//   Integration tests in test/prepare-curve-swap.test.ts prove from-independence
+//   for CRV-A and re-anchor CRV-B against this literal when persona matches.
+//
+// CRV-C: stable_ng add_liquidity([50e6 PYUSD, 50e6 USDC], min_mint_amount=99e18)
+//   on PayPool (2-coin pool) — proves dynamic-array calldata is byte-stable.
+//   Note: CONTEXT.md originally sketched "3-coin pool" but Phase 34 registry
+//   ships only 2-coin pools; the DynArray encoding shape is identical at N=2
+//   and still anchors byte-stability.
+//
+// Fixture constants FIXTURE_CRV_A_FP / FIXTURE_CRV_B_FP / FIXTURE_CRV_C_FP
+// are declared at module scope above with `export const` so Plan 34-03 Task 1
+// can cross-link:
+//   import { FIXTURE_CRV_A_FP, FIXTURE_CRV_B_FP, FIXTURE_CRV_C_FP }
+//     from "./signing-fingerprint"
+
+describe("Phase 34 Plan 34-01 — Fixtures CRV-A / CRV-B / CRV-C", () => {
+  const FIXTURE_PERSONA = getAddress("0x70997970C51812dc3A010C7d01b50e0d17dc79C8");
+  const stEthPool = getAddress("0xDC24316b9AE028F1497c275EB9192a3Ea0f67022");
+  const payPool = getAddress("0x383E6b4437b59fff47B619CBA855CA29342A8559");
+
+  it("Fixture CRV-A — legacy exchange(i=1, j=0, dx=1e18 stETH, min_dy=950e15) on stETH/ETH pool fingerprint (hardcoded literal anchor, Phase 34 Plan 34-01)", () => {
+    // i=1 (stETH-in), j=0 (ETH-out), dx=1 stETH (18 dec), min_dy=0.95 ETH.
+    // valueWei = 0n (j=0 = ETH-OUT, not ETH-IN; legacy ETH-IN is i=0).
+    const data = encodeFunctionData({
+      abi: CURVE_LEGACY_EXCHANGE_ABI,
+      functionName: "exchange",
+      args: [1n, 0n, 1_000000000000000000n, 950_000000000000000n],
+    });
+
+    // Selector assertion BEFORE fingerprint assertion — encoder drift fires first.
+    expect(data.slice(0, 10).toLowerCase()).toBe("0x3df02124");
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: stEthPool,
+      valueWei: 0n,
+      data,
+    });
+
+    // Hardcoded literal — computed at write-time (2026-05-26) per CLAUDE.md
+    // "NO `beforeAll`-snapshot" rule. Drift in preimage assembly for any of
+    // {stEthPool address, exchange args, computePayloadFingerprint shape}
+    // fails THIS exact assertion before downstream regressions surface.
+    //
+    // Fixture CRV-A cross-link: test/prepare-curve-swap.test.ts (Plan 34-03)
+    // re-anchors via this literal. CRV-A is from-INDEPENDENT (no _receiver).
+    expect(fp).toBe(FIXTURE_CRV_A_FP);
+  });
+
+  it("Fixture CRV-B — stable_ng exchange(i=0, j=1, dx=100e6 PYUSD, min_dy=99e6 USDC, _receiver=FIXTURE_PERSONA) on PayPool fingerprint (hardcoded literal anchor, Phase 34 Plan 34-01)", () => {
+    // PayPool (PYUSD/USDC) — 2-coin stable_ng pool, both 6-decimal.
+    // i=0 (PYUSD-in), j=1 (USDC-out), dx=100 PYUSD, min_dy=99 USDC.
+    // _receiver = FIXTURE_PERSONA (from-DEPENDENT — persona embedded in calldata).
+    const data = encodeFunctionData({
+      abi: CURVE_NG_EXCHANGE_ABI,
+      functionName: "exchange",
+      args: [0n, 1n, 100_000000n, 99_000000n, FIXTURE_PERSONA],
+    });
+
+    // Selector assertion BEFORE fingerprint assertion — encoder drift fires first.
+    expect(data.slice(0, 10).toLowerCase()).toBe("0xddc1f59d");
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: payPool,
+      valueWei: 0n,
+      data,
+    });
+
+    // from-DEPENDENT: if FIXTURE_PERSONA changes, this literal must be re-anchored.
+    // Fixture CRV-B cross-link: test/prepare-curve-swap.test.ts (Plan 34-03)
+    // re-anchors via this literal when persona matches FIXTURE_PERSONA.
+    expect(fp).toBe(FIXTURE_CRV_B_FP);
+  });
+
+  it("Fixture CRV-C — stable_ng add_liquidity([50e6 PYUSD, 50e6 USDC], min_mint=99e18) on PayPool fingerprint (hardcoded literal anchor, Phase 34 Plan 34-01)", () => {
+    // PayPool (2-coin): amounts = [50 PYUSD, 50 USDC], min_mint = 99 LP tokens.
+    // LP tokens are 18 decimals for stable_ng regardless of underlying decimals.
+    // 2-coin amounts array proves dynamic DynArray encoding is byte-stable.
+    const data = encodeFunctionData({
+      abi: CURVE_NG_ADD_LIQUIDITY_ABI,
+      functionName: "add_liquidity",
+      args: [[50_000000n, 50_000000n], 99_000000000000000000n],
+    });
+
+    // Selector assertion BEFORE fingerprint assertion.
+    // Must be 0xb72df5de (2-param form), NOT 0xa7256d09 (3-param with _receiver).
+    expect(data.slice(0, 10).toLowerCase()).toBe("0xb72df5de");
+
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: payPool,
+      valueWei: 0n,
+      data,
+    });
+
+    // Hardcoded literal — anchors DynArray calldata byte-stability.
+    // Fixture CRV-C cross-link: test/prepare-curve-add-liquidity.test.ts (Plan 34-03)
+    // re-anchors via this literal.
+    expect(fp).toBe(FIXTURE_CRV_C_FP);
+  });
+
+  it("Fixtures CRV-A / CRV-B / CRV-C produce 3 distinct fingerprints", () => {
+    const distinct = new Set([FIXTURE_CRV_A_FP, FIXTURE_CRV_B_FP, FIXTURE_CRV_C_FP]);
+    expect(distinct.size).toBe(3);
   });
 });
