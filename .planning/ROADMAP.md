@@ -986,13 +986,13 @@ Plans:
   5. Preview surfaces a `[WARN — NON-PROTOCOL TARGET]` block above the standard preview blocks; `payloadFingerprint` over the full tx bytes per v1.x PREP-03 shape
   6. Per-call ABI-decode best-effort surfacing in CHECKS PERFORMED (when ABI fetched via `get_contract_abi`); blind-sign-only when ABI unavailable
 
-**Plans**: 3 plans (estimate)
+**Plans**: 3 plans
 
 Plans:
 
-- [ ] 35-01: `get_contract_abi` + Etherscan ABI client extension (mirrors `src/clients/etherscan.ts` shape — the existing client has the per-chain `chainid` plumbing gap from v1.2, may need widening at planning time)
-- [ ] 35-02: `read_contract` + ABI-driven eth_call helper; `src/chains/contract-read.ts`
-- [ ] 35-03: `prepare_custom_call` + `acknowledgeNonProtocolTarget: true` gate + `[WARN — NON-PROTOCOL TARGET]` block + best-effort ABI-decode at preview; v2.4 milestone close-out
+- [ ] 35-01-PLAN.md — `get_contract_abi` MCP tool + `fetchEtherscanAbi` multi-chain client widening + per-session ABI LRU cache + `check_contract_security` multi-chain widening (free downstream effect lifting Phase 8 FROZEN constraint); appends `ABI_NOT_AVAILABLE` error code (CUSTOM-02)
+- [ ] 35-02-PLAN.md — `read_contract` MCP tool composing fetchEtherscanAbi + view-only stateMutability gate + viem.encodeFunctionData + low-level publicClient.call + viem.decodeFunctionResult; appends `NON_VIEW_FUNCTION` error code; NO blind-call fallback (CUSTOM-03)
+- [ ] 35-03-PLAN.md — `prepare_custom_call` MCP tool + `src/security/canonical-alternatives.ts` selector→tool lookup + canonical-dispatch bypass at EVM-only preview_send site + `[WARN — NON-PROTOCOL TARGET]` block byte-identical across prepare+preview + best-effort ABI-decode at preview + Fixture P hardcoded literal + integration test (persona-cycle from-independence + bypass-flag exclusivity grep-guard); v2.4 milestone close-out (CUSTOM-01)
 
 **Status**: planning; v2.4 verify-phase requires real-Ledger smoke for Uniswap V3 swap + LP mint + Curve swap + escape-hatch custom call.
 
