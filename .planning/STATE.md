@@ -4,7 +4,7 @@ milestone: v2.2
 milestone_name: Bitcoin + Litecoin
 current_plan: 3
 status: verifying
-last_updated: "2026-05-26T09:58:38.796Z"
+last_updated: "2026-05-26T11:10:29.477Z"
 last_activity: 2026-05-26
 progress:
   total_phases: 6
@@ -352,6 +352,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-26T09:58:38.785Z
-Stopped at: Completed 34-03-PLAN.md
-Resume file: None
+Last session: 2026-05-26T11:10:29.465Z
+Stopped at: Phase 35 context gathered
+Resume file: .planning/phases/35-evm-escape-hatch-custom-call-abi-read/35-CONTEXT.md
