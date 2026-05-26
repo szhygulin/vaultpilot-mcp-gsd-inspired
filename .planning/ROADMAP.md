@@ -964,12 +964,13 @@ Plans:
   3. `prepare_curve_add_liquidity({ chain, poolAddress, amounts: [...], slippageBps })` produces an unsigned `add_liquidity` call for stable_ng plain pools (Ethereum first)
   4. Curve pool addresses sourced from `src/config/contracts.ts` curated registry (stETH/ETH legacy + top 10 stable_ng pools at planning time); canonical-dispatch allowlist Curve arm wiring
 
-**Plans**: 2 plans (estimate)
+**Plans**: 3 plans
 
 Plans:
 
-- [ ] 34-01: `src/config/contracts.ts` Curve curated pool registry + `src/chains/curve.ts` (pool decoder + LP balance reader); canonical-dispatch allowlist wiring
-- [ ] 34-02: `prepare_curve_swap` + `prepare_curve_add_liquidity` + `src/protocols/curve.ts`; stable_ng + stETH/ETH legacy support; v0.2 (3-coin meta + metaregistry-driven) explicitly deferred
+- [ ] 34-01-PLAN.md — `src/config/contracts.ts` Curve curated pool registry (1 legacy stETH/ETH + 10 stable_ng) + `KNOWN_SPENDERS_ETHEREUM` per-pool promotion (D-13a SOT-getter pattern) + canonical-dispatch Curve arm (Layer 0.5 allowlist) + `src/chains/curve.ts` (6 parseAbi fragments: legacy/stable_ng exchange + add_liquidity + get_dy + calc_token_amount + LP balanceOf) + `_curveChain` ESM spy-affordance + Fixtures CRV-A (legacy exchange, from-INDEPENDENT) + CRV-B (stable_ng exchange with `_receiver = FIXTURE_PERSONA`, from-DEPENDENT) + CRV-C (stable_ng add_liquidity DynArray) hardcoded payloadFingerprint literals
+- [ ] 34-02-PLAN.md — `get_curve_positions({ wallet, chain? })` LP-balance multicall via `Promise.allSettled` over per-pool `lpToken` (NOT pool address — Pitfall 3) + zero-filter + per-pool composition response + rpcDegraded surfacing + READ-ONLY-by-construction grep guard (no `createHandle` import; Phase 7 simulate_position_change precedent); register-all carve at Plan 34-02 slot
+- [ ] 34-03-PLAN.md — `prepare_curve_swap` per-`abiVersion` dispatch (legacy ETH-in `valueWei = amountIn` when i=0 && coins[0]=ETH_SENTINEL; stable_ng `_receiver = signer` from-DEPENDENT calldata) + on-chain `get_dy` quote + bigint `min_dy = (quotedDy * (10000n - BigInt(slippageBps))) / 10000n` + slippageBps mandatory in [1, 5000] (Pitfall 6 footgun guard); `prepare_curve_add_liquidity` stable_ng-only (legacy refused with INVALID_INPUT "deferred to v2.4.x") + amounts.length === pool.coins.length validation (Pitfall 5) + on-chain `calc_token_amount` quote + bigint min_mint_amount; `src/protocols/curve.ts` selector-dispatch decoder + `_curveProtocol` indirection; `preview_send` ADDITIVE `(tx.to, selector)` tuple-dispatch Curve arm — Selector-alone routing forbidden; `[CURVE SWAP]` / `[CURVE ADD LIQUIDITY]` CHECKS PERFORMED blocks include literal "Sandwich-MEV gate: not applied to Curve (low MEV exposure on stable pools)" asymmetric documentation line; Fixtures CRV-A/B/C cross-link end-to-end at protocols + prepare layers
 
 #### Phase 35: Escape hatch — `prepare_custom_call` + `get_contract_abi` + `read_contract`
 
