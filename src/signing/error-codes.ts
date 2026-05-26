@@ -261,7 +261,20 @@ export type ErrorCode =
   //                        from INTERNAL_ERROR (which surfaces transient
   //                        network failure) — ABI_NOT_AVAILABLE is the
   //                        persistent "we asked, the answer is no ABI".
-  | "ABI_NOT_AVAILABLE";
+  | "ABI_NOT_AVAILABLE"
+  //
+  // Phase 35 Plan 35-02 — read_contract refuses state-mutating function.
+  //
+  //   NON_VIEW_FUNCTION   — read_contract gating: the requested function's
+  //                         ABI entry has stateMutability ∉ {view, pure}.
+  //                         Refusal directs the agent to prepare_custom_call
+  //                         (which bypasses canonical-dispatch and requires
+  //                         the load-bearing acknowledgeNonProtocolTarget
+  //                         flag — Plan 35-03). Distinct from
+  //                         ABI_NOT_AVAILABLE (which is "function not in
+  //                         ABI at all") — NON_VIEW_FUNCTION fires when the
+  //                         function IS in the ABI but is state-mutating.
+  | "NON_VIEW_FUNCTION";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers
