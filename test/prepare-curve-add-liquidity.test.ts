@@ -112,7 +112,13 @@ function setupStdMocks(quotedLp = 100_000000000000000000n): void {
 // ---------------------------------------------------------------------------
 // Setup / teardown
 // ---------------------------------------------------------------------------
+const DEMO_KEY = "VAULTPILOT_DEMO";
+let savedDemo: string | undefined;
+
 beforeEach(() => {
+  // Pin to real-mode deterministically (see commit c537628 / #140).
+  savedDemo = process.env[DEMO_KEY];
+  process.env[DEMO_KEY] = "false";
   _resetHandleStoreForTesting();
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
@@ -122,6 +128,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (savedDemo === undefined) {
+    process.env[DEMO_KEY] = "false";
+  } else {
+    process.env[DEMO_KEY] = savedDemo;
+  }
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
 });

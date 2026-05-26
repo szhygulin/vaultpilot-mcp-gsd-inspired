@@ -129,7 +129,17 @@ function setupStdMocks(quotedDy = 1_000_000_000_000_000_000n): void {
 // ---------------------------------------------------------------------------
 // Test setup / teardown
 // ---------------------------------------------------------------------------
+const DEMO_KEY = "VAULTPILOT_DEMO";
+let savedDemo: string | undefined;
+
 beforeEach(() => {
+  // Pin to real-mode deterministically. `delete` alone is insufficient: the
+  // resolver falls through to readConfigFile() and on fresh CI runners (no
+  // ~/.vaultpilot-mcp/config.json) lands in `auto-demo` → isDemoMode() returns
+  // true and resolveFrom takes the demo branch with a default persona that
+  // does NOT match FIXTURE_PERSONA. Pattern from commit c537628 (#140).
+  savedDemo = process.env[DEMO_KEY];
+  process.env[DEMO_KEY] = "false";
   _resetHandleStoreForTesting();
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
@@ -139,6 +149,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (savedDemo === undefined) {
+    process.env[DEMO_KEY] = "false";
+  } else {
+    process.env[DEMO_KEY] = savedDemo;
+  }
   _resetDemoModeForTesting();
   _resetActivePersonaForTesting();
 });
