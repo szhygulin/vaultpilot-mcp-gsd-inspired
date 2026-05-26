@@ -4,6 +4,7 @@ import "./get_token_balance.js";
 import "./get_token_metadata.js";
 import "./check_contract_security.js";
 import "./get_contract_abi.js"; // Phase 35 Plan 35-01 (CUSTOM-02) — Etherscan V2 verified-ABI fetcher; populates per-session ABI cache for read_contract / prepare_custom_call
+import "./read_contract.js"; // Phase 35 Plan 35-02 (CUSTOM-03) — ABI-driven eth_call with state-mutability gate
 import "./resolve_token.js";
 import "./get_token_allowances.js";
 import "./get_transaction_status.js";
