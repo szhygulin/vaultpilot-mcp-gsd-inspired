@@ -248,7 +248,49 @@ export type ErrorCode =
   //                           Non-error structured exit — analogous to USER_CANCELLED.
   | "LITECOIN_APP_NOT_OPEN"
   | "APPROVAL_TIMEOUT"
-  | "USER_REJECTED";
+  | "USER_REJECTED"
+  //
+  // Phase 35 Plan 35-01 — get_contract_abi / fetchEtherscanAbi ABI fetch
+  // failure (reserved here so Plan 35-02 `read_contract` can reuse the
+  // same code without touching the file in parallel).
+  //
+  //   ABI_NOT_AVAILABLE  — fetchEtherscanAbi returned not-verified, the
+  //                        requested function is missing from the ABI, or
+  //                        the verified contract on Etherscan has an ABI
+  //                        that does not match the request shape. Distinct
+  //                        from INTERNAL_ERROR (which surfaces transient
+  //                        network failure) — ABI_NOT_AVAILABLE is the
+  //                        persistent "we asked, the answer is no ABI".
+  | "ABI_NOT_AVAILABLE"
+  //
+  // Phase 35 Plan 35-02 — read_contract refuses state-mutating function.
+  //
+  //   NON_VIEW_FUNCTION   — read_contract gating: the requested function's
+  //                         ABI entry has stateMutability ∉ {view, pure}.
+  //                         Refusal directs the agent to prepare_custom_call
+  //                         (which bypasses canonical-dispatch and requires
+  //                         the load-bearing acknowledgeNonProtocolTarget
+  //                         flag — Plan 35-03). Distinct from
+  //                         ABI_NOT_AVAILABLE (which is "function not in
+  //                         ABI at all") — NON_VIEW_FUNCTION fires when the
+  //                         function IS in the ABI but is state-mutating.
+  | "NON_VIEW_FUNCTION"
+  //
+  // Phase 35 Plan 35-03 — prepare_custom_call escape-hatch acknowledgment gate.
+  //
+  //   NON_PROTOCOL_TARGET_NOT_ACKNOWLEDGED — prepare_custom_call invoked
+  //                        without `acknowledgeNonProtocolTarget: true`. The
+  //                        JSON-Schema literal-true gate
+  //                        (`{ const: true, type: "boolean" }`) at the
+  //                        dispatch boundary catches `false` BEFORE the
+  //                        handler runs; the handler-side check covers the
+  //                        `undefined` / missing case (defense-in-depth).
+  //                        Refusal text uses NON_PROTOCOL_TARGET_REFUSAL_TEMPLATE
+  //                        and surfaces a canonical-alternative suggestion
+  //                        via `lookupCanonicalAlternative(selector)` when
+  //                        the data's selector matches a known
+  //                        protocol-aware prepare_* tool.
+  | "NON_PROTOCOL_TARGET_NOT_ACKNOWLEDGED";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

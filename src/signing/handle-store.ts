@@ -86,6 +86,16 @@ export interface PrepareArgs {
   sats?: string;
   /** Phase 26 — LTC native amount as raw litoshis decimal string (e.g. "100000"). Populated by `prepare_litecoin_native_send` (Plan 26-02). */
   litoshi?: string;
+  /**
+   * Phase 35 Plan 35-03 — raw calldata hex (0x-prefixed) for
+   * `prepare_custom_call`. Surfaced verbatim in the PREPARE RECEIPT block
+   * (`{DATA}` slot of CUSTOM_CALL_PREPARE_RECEIPT_TEMPLATE) so the agent
+   * cannot rewrite it between the receipt and preview/send. Other prepare_*
+   * tools encode calldata server-side and leave this slot undefined; the
+   * receipt body for those tools renders semantic args (amount, token, etc.)
+   * instead.
+   */
+  data?: string;
 }
 
 /**
@@ -963,6 +973,36 @@ export interface HandleRecord {
    */
   txHash?: string;
   cancelledAt?: number;
+  /**
+   * Phase 35 Plan 35-03 (CUSTOM-01) — escape-hatch bypass flag. Set ONLY by
+   * `src/tools/prepare_custom_call.ts` via the `createHandle` input. Read by
+   * `preview_send` (EVM branch only) to short-circuit the canonical-dispatch
+   * allowlist refusal.
+   *
+   * `acknowledgeNonProtocolTarget` exists on the record (NOT in the
+   * `payloadFingerprint` preimage) — the bypass is a record annotation, not
+   * a fingerprint dimension. Fixture P (test/signing-fingerprint.test.ts)
+   * verifies this: the escape-hatch payload uses the standard PREP-03
+   * envelope unchanged.
+   *
+   * Grep-guard test (test/integration/escape-hatch.test.ts Test 6) asserts
+   * the assignment `acknowledgeNonProtocolTarget: true` appears in EXACTLY
+   * two source files: this type definition AND `prepare_custom_call.ts`.
+   * Adding a third assignment site = test failure.
+   *
+   * Type is `?: true` (not `?: boolean`) — the field exists or it doesn't;
+   * an explicit `false` would be a spec-shape contradiction.
+   */
+  acknowledgeNonProtocolTarget?: true;
+  /**
+   * Phase 35 Plan 35-03 — origin tool selector for the `preview_send`
+   * DECODED ARGS arm. Set to `"prepare_custom_call"` by the escape-hatch
+   * tool; absent on every other prepare_* tool's handle (those are
+   * dispatched by `(tx.to, selector)` tuple in the existing decoder chain).
+   * Optional + opaque string so future prepare_* tools can opt into a
+   * preview-side custom arm without touching the type.
+   */
+  preparedBy?: string;
 }
 
 export type LookupResult =
@@ -992,6 +1032,12 @@ export function createHandle(input: {
   args: PrepareArgs;
   tx: PreparedTx;
   payloadFingerprint: Hex;
+  // Phase 35 Plan 35-03 — escape-hatch fields. Both optional; absent on every
+  // prepare_* tool except `prepare_custom_call`. Spread-on-set so the record
+  // shape stays byte-identical for non-escape-hatch handles (no `undefined`
+  // serialization surprises in structured logs).
+  acknowledgeNonProtocolTarget?: true;
+  preparedBy?: string;
 }): string {
   const handle = crypto.randomUUID();
   const record: HandleRecord = {
@@ -1001,6 +1047,10 @@ export function createHandle(input: {
     payloadFingerprint: input.payloadFingerprint,
     status: "prepared",
     createdAt: Date.now(),
+    ...(input.acknowledgeNonProtocolTarget && {
+      acknowledgeNonProtocolTarget: true,
+    }),
+    ...(input.preparedBy !== undefined && { preparedBy: input.preparedBy }),
   };
   store.set(handle, record);
   return handle;

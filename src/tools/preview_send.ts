@@ -57,6 +57,7 @@ import { _compoundChains } from "../chains/compound-v3.js";
 import { getChainClient } from "../chains/registry.js";
 import { _solanaRegistry } from "../chains/solana/registry.js";
 import { _tronRegistry } from "../chains/tron/registry.js";
+import { getCachedEtherscanAbi } from "../clients/etherscan.js";
 import { lookupSelector } from "../clients/fourbyte.js";
 import {
   chainIdFromName,
@@ -134,6 +135,7 @@ import {
   LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE,
   LEDGER_NOTICE_WETH_UNWRAP_TEMPLATE,
   VERIFY_BEFORE_SIGNING_TEMPLATE,
+  WARN_NON_PROTOCOL_TARGET_TEMPLATE,
   build4byteBlock,
   buildAaveDecodedArgsBlock,
   buildCompoundDecodedArgsBlock,
@@ -778,23 +780,42 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // sends bypass — any `to` is valid for a value transfer per RESEARCH
     // § Topic 6 lines 539-541 lock.
     //
-    // The escape hatch (v2.4 prepare_custom_call with
-    // acknowledgeNonProtocolTarget: true) is OUT OF SCOPE for v1.3 —
-    // protocol-routed prepare_* tools only. Long-tail tokens NOT in
-    // BRIDGED_VARIANTS hit the refusal; user routes via resolve_token /
-    // get_token_metadata to find the canonical address (which lives in
-    // BRIDGED_VARIANTS by design).
+    // Phase 35 Plan 35-03 — escape hatch (CUSTOM-01). The bypass branch
+    // below short-circuits canonical-dispatch when
+    // `record.acknowledgeNonProtocolTarget === true` (set ONLY by
+    // `prepare_custom_call`). The WARN block emits in the custom-call decode
+    // arm further down — defense-in-depth (T-35-03-B mitigation). This
+    // bypass fires AT THE EVM DISPATCH SITE ONLY (Pitfall 1) — Solana/TRON/
+    // BTC dispatch sites (lines 2082, 2811, 2933) do NOT read the flag.
     //
     // Layer order rationale: dispatch-target is a SECURITY GATE — must
     // fire first. Chain-mismatch (Layer 2 below) is a STATE CONSISTENCY
     // check. A refusal that triggers BOTH surfaces DISPATCH_TARGET_REFUSED
     // (the more fundamental issue) — per RESEARCH § Topic 10 layer table.
+    // Phase 35 Plan 35-03 escape hatch — bypass canonical-dispatch when the
+    // user explicitly acknowledged the non-protocol target at prepare time.
+    // The bypass-decision is computed ABOVE the EVM Layer 0.5 block so the
+    // FROZEN snippet body inside `if (record.tx.data !== "0x") { ... }`
+    // stays byte-identical to the pre-12-04 Phase 9 lock (test/preview-send
+    // .solana.test.ts pins the dispatchCheck line shape verbatim — see
+    // "FROZEN EVM body byte-identity (LOAD-BEARING)" describe block).
+    //
+    // The flag is set ONLY by prepare_custom_call.ts; grep-guard test
+    // (test/integration/escape-hatch.test.ts Test 6) asserts EXACTLY TWO
+    // source-file assignment sites. The WARN block re-emits below in the
+    // custom-call decode arm — byte-identical to the prepare-side emission
+    // (T-35-03-G mitigation). Pitfall 1 enforcement (test/preview-send
+    // .custom-call.test.ts): EXACTLY ONE non-comment read of
+    // record.acknowledgeNonProtocolTarget appears in this file — the line
+    // below.
+    const escapeHatchBypassActive =
+      record.acknowledgeNonProtocolTarget === true;
     if (record.tx.data !== "0x") {
       const dispatchCheck = _canonicalDispatch.checkDispatchTarget(
         record.tx.chainId as ChainId,
         record.tx.to,
       );
-      if (dispatchCheck.kind === "refused") {
+      if (dispatchCheck.kind === "refused" && !escapeHatchBypassActive) {
         const chainLabel = `${chainNameFromId(
           record.tx.chainId as ChainId,
         )} (chainId ${record.tx.chainId})`;
@@ -1717,19 +1738,111 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                 ? LEDGER_NOTICE_UNISWAP_V3_LP_TEMPLATE
                 : null;
 
+    // Phase 35 Plan 35-03 (CUSTOM-01) — prepare_custom_call DECODED ARGS arm.
+    // Mirror of the LEDGER NOTICE conditional emission above but composing
+    // TWO blocks at once: a WARN block (prepended above LEDGER BLIND-SIGN
+    // HASH) AND a decode block (in the CHECKS PERFORMED region, replacing
+    // the standard decodedArgsBlock).
+    //
+    // Selector on `record.preparedBy === "prepare_custom_call"` — the
+    // SAME guard that gates the `acknowledgeNonProtocolTarget` bypass at
+    // Layer 0.5 above (this is by design — both flags are set on the same
+    // handle by prepare_custom_call.ts). Best-effort decode via the
+    // per-session ABI cache (populated by Plan 35-01's get_contract_abi
+    // and Plan 35-02's read_contract). Cache HIT → viem.decodeFunctionData
+    // → render `functionName(args...)`. Cache MISS → literal "Blind sign —
+    // no ABI available" text. NO 4byte fallback (Pitfall 4) — absence of
+    // ABI is itself meaningful information for the user.
+    //
+    // WARN block byte-identity: substitutions use the SAME inputs as the
+    // prepare-side emission (chainName/chainId/to + cache state for
+    // {DECODED}). Integration test Test 3 asserts byte-identical string
+    // equality across prepare + preview response text.
+    let customCallWarnBlock: string | null = null;
+    let customCallDecodeBlock = "";
+    if (record.preparedBy === "prepare_custom_call") {
+      const previewChainId = record.tx.chainId as ChainId;
+      const previewChainName = chainNameFromId(previewChainId);
+      const cachedAbiResult = getCachedEtherscanAbi(
+        previewChainId,
+        record.tx.to,
+      );
+      const cacheHit =
+        cachedAbiResult !== null && cachedAbiResult.kind === "ok";
+      // {DECODED} slot text — SAME substitution as prepare_custom_call.ts
+      // at this layer (preview knows the cache state; prepare side uses a
+      // deterministic placeholder). At the integration-test Test 3 byte-
+      // identity assertion, both sides MUST resolve to the same text. We
+      // resolve to "(see DECODED ARGS below)" on HIT and "(no ABI cached
+      // — call get_contract_abi first)" on MISS — prepare side substitutes
+      // "(see preview for ABI decode if available)" so the byte-identity
+      // assertion compares the WARN-block prefix (template body verbatim),
+      // not the {DECODED} substitution. See test/integration/escape-hatch
+      // .test.ts Test 3 for the slice-and-compare implementation.
+      const decodedSlot = cacheHit
+        ? "(see DECODED ARGS below)"
+        : "(no ABI cached — call get_contract_abi first)";
+      customCallWarnBlock = WARN_NON_PROTOCOL_TARGET_TEMPLATE.replace(
+        "{CHAIN}",
+        `${previewChainName} (chainId ${previewChainId})`,
+      )
+        .replace("{TO}", record.tx.to)
+        .replace("{DECODED}", decodedSlot);
+
+      // Decode block — viem.decodeFunctionData on cache HIT; literal Blind
+      // sign text on MISS. NO 4byte fallback (Pitfall 4 enforcement).
+      if (cacheHit) {
+        try {
+          const decoded = decodeFunctionData({
+            abi: cachedAbiResult.abi,
+            data: record.tx.data,
+          });
+          const argText = decoded.args
+            ? (decoded.args as readonly unknown[])
+                .map((a) => (typeof a === "bigint" ? a.toString() : String(a)))
+                .join(", ")
+            : "";
+          customCallDecodeBlock = [
+            "DECODED ARGS — prepare_custom_call (best-effort ABI decode)",
+            `  function: ${decoded.functionName}(${argText})`,
+            "",
+            "  Decoded via per-session ABI cache (populated by get_contract_abi or read_contract).",
+            "  The on-device display shows the raw calldata hash; this decode is advisory.",
+          ].join("\n");
+        } catch {
+          // ABI decode error — fall through to MISS text. Calldata may not
+          // match any function in the cached ABI (selector mismatch); the
+          // ABI cache is a HINT, not a trust anchor.
+          customCallDecodeBlock = `Blind sign — no ABI available. The selector ${record.tx.data.slice(0, 10)} is shown on-device.`;
+        }
+      } else {
+        customCallDecodeBlock = `Blind sign — no ABI available. The selector ${record.tx.data.slice(0, 10)} is shown on-device.`;
+      }
+    }
+
     // Filter empty decoded-args block (unknown-kind / native sends) so the
     // text-array join doesn't emit a stray empty block alongside the 4byte
     // not-applicable surface. The LEDGER NOTICE block (when emitted) goes
     // AT THE TOP so the user reads it BEFORE the hash — actionable
     // prerequisites precede artifacts to verify.
+    //
+    // Phase 35 Plan 35-03 — the WARN block (when emitted) goes ABOVE the
+    // LEDGER NOTICE block (and therefore above LEDGER BLIND-SIGN HASH). The
+    // user reads the bypass warning FIRST. Custom-call decode block replaces
+    // the standard decodedArgsBlock for prepare_custom_call handles.
+    const effectiveDecodedArgsBlock =
+      customCallDecodeBlock !== ""
+        ? customCallDecodeBlock
+        : decodedArgsBlock;
     const blocks: (string | null)[] = [
+      ...(customCallWarnBlock !== null ? [customCallWarnBlock, ""] : []),
       ...(ledgerNoticeBlock !== null ? [ledgerNoticeBlock, ""] : []),
       ledgerBlock,
       "",
       agentBlock,
       "",
       fourbyteBlock,
-      ...(decodedArgsBlock !== "" ? ["", decodedArgsBlock] : []),
+      ...(effectiveDecodedArgsBlock !== "" ? ["", effectiveDecodedArgsBlock] : []),
       "",
       simulationBlock,
       "",

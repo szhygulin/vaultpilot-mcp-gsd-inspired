@@ -356,3 +356,40 @@ describe("check_contract_security — register-all wiring", () => {
     expect(tool?.description).toMatch(/Per-session rate limit/);
   });
 });
+
+// Phase 35 Plan 35-01 Task 2 — multi-chain widening (CUSTOM-02 free downstream
+// effect). The v1.2-Ethereum-only runtime refusal is lifted; all 5 supported
+// chains route through the same Etherscan V2 API via chainid=${N} param.
+describe("check_contract_security — multi-chain widening (Phase 35 Plan 35-01)", () => {
+  const MULTI_CHAIN_TABLE: Array<{ chain: string; chainId: number }> = [
+    { chain: "arbitrum", chainId: 42161 },
+    { chain: "polygon", chainId: 137 },
+    { chain: "base", chainId: 8453 },
+    { chain: "optimism", chainId: 10 },
+  ];
+
+  for (const { chain, chainId } of MULTI_CHAIN_TABLE) {
+    it(`Test 11 — chain="${chain}" no longer refuses; chainid=${chainId} threads into the URL`, async () => {
+      const fetchMock = buildFetch({
+        sourcePayload: sourcePayloadVerified(),
+        creationPayload: creationPayloadVerified(),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await callTool({ chain, address: VERIFIED_ADDRESS });
+
+      // No v1.2 refusal — verified path fires through.
+      expect(result.isError).toBeFalsy();
+      const sc = result.structuredContent as { chain: string; chainId: number };
+      expect(sc.chain).toBe(chain);
+      expect(sc.chainId).toBe(chainId);
+
+      // URLs carry the right chainid param.
+      for (const call of fetchMock.mock.calls) {
+        const url = String(call[0]);
+        expect(url).toContain(`chainid=${chainId}`);
+        expect(url).not.toContain("chainid=1&");
+      }
+    });
+  }
+});
