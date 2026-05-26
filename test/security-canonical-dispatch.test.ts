@@ -21,6 +21,7 @@ import { getAddress, type Address } from "viem";
 import {
   getAaveV3PoolAddress,
   getAllCompoundCometsForChain,
+  getAllCurvePoolsForChain,
   getAllEigenLayerStrategiesForChain,
   getEigenLayerStrategyManagerAddress,
   getMorphoBlueAddress,
@@ -341,7 +342,7 @@ describe("Phase 29 Plan 29-03 — Morpho Blue in Ethereum-arm allowlist", () => 
     }
   });
 
-  it("Ethereum-arm allowlist size grew 29 → 40 after Plans 31-01 + 32-01 + 33-01 (Phase 31 +9 + Phase 32 +1 SwapRouter02 + Phase 33 +1 NPM)", () => {
+  it("Ethereum-arm allowlist size grew 29 → 51 after Plans 31-01 + 32-01 + 33-01 + 34-01 (Phase 31 +9 + Phase 32 +1 SwapRouter02 + Phase 33 +1 NPM + Phase 34 +11 Curve pools)", () => {
     // Hard-pinned count assertion — drift in this number indicates either a
     // missing extension or an unintended addition elsewhere. Updates require
     // an explicit plan commit.
@@ -362,7 +363,10 @@ describe("Phase 29 Plan 29-03 — Morpho Blue in Ethereum-arm allowlist", () => 
     // Phase 33 Plan 33-01: 39 → 40 (+1 net Uniswap V3 NonfungiblePositionManager
     // for the LP verb set — mint / increase / decrease / collect / burn /
     // multicall(bytes[])).
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(40);
+    // Phase 34 Plan 34-01: 40 → 51 (+11 net Curve pool addresses — 1 legacy
+    // stETH/ETH + 10 stable_ng plain pools; none are in BRIDGED_VARIANTS
+    // since they are AMM pool contracts, not token contracts).
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(51);
   });
 
   it("Refused tx.to on Ethereum surfaces the Morpho Blue address in allowlist (verbatim)", () => {
@@ -461,7 +465,8 @@ describe("CANONICAL_DISPATCH_TARGETS — Phase 31 EigenLayer + Rocket Pool entri
     // (read-only per D-13a). NonfungiblePositionManager NOT added (Phase 33 LP-verb
     // dispatch target — pre-populated in SOT but no dispatch arm at Phase 32).
     // Phase 33 Plan 33-01: 39 → 40 (+1 net NPM for the LP verb set).
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(40);
+    // Phase 34 Plan 34-01: 40 → 51 (+11 net Curve pool addresses).
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(51);
   });
 
   it("Refused tx.to on Ethereum surfaces the EigenLayer + Rocket Pool addresses in allowlist (verbatim)", () => {
@@ -517,12 +522,14 @@ describe("CANONICAL_DISPATCH_TARGETS — Phase 32 Uniswap V3 SwapRouter02 entry 
     }
   });
 
-  it("Phase 32 membership delta is exactly +1 net over the Phase 31 baseline (38 → 39); Phase 33 lifts it to 40", () => {
+  it("Phase 32 membership delta is exactly +1 net over the Phase 31 baseline (38 → 39); Phase 33 lifts it to 40; Phase 34 lifts it to 51", () => {
     // Hard-pinned count anchor. Phase 32 added: SwapRouter02 (NOT in
     // BRIDGED_VARIANTS — it's a router, not a token; no de-dupe; net +1).
     // Phase 33 added: NonfungiblePositionManager (also NOT in
-    // BRIDGED_VARIANTS — net +1). Combined post-Phase-33 size: 40.
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(40);
+    // BRIDGED_VARIANTS — net +1). Phase 34 added: 11 Curve pool addresses
+    // (NOT in BRIDGED_VARIANTS — AMM pool contracts, not tokens; net +11).
+    // Combined post-Phase-34 size: 51.
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(51);
   });
 
   it("Refused tx.to on Ethereum surfaces the Uniswap V3 SwapRouter02 address in allowlist (verbatim)", () => {
@@ -567,12 +574,12 @@ describe("CANONICAL_DISPATCH_TARGETS — Phase 33 Uniswap V3 NPM entry (Ethereum
     }
   });
 
-  it("Uniswap_V3_NPM — Phase 33 membership delta is exactly +1 net over the Phase 32 baseline (39 → 40)", () => {
+  it("Uniswap_V3_NPM — Phase 33 membership delta is exactly +1 net over the Phase 32 baseline (39 → 40); Phase 34 lifts it to 51", () => {
     // Direct count anchor. Drift fires the test before downstream allow-pattern
     // regressions surface elsewhere. NPM address 0xC36442b4a4522E871399CD717aBDD847Ab11FE88
     // is NOT in BRIDGED_VARIANTS (it's a position manager contract, not a token),
-    // so no de-dupe — net +1.
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(40);
+    // so no de-dupe — net +1. Phase 34 adds 11 Curve pool addresses (net +11).
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(51);
   });
 
   it("Uniswap_V3_NPM — refused tx.to on Ethereum surfaces NPM address in allowlist (verbatim)", () => {
@@ -581,5 +588,44 @@ describe("CANONICAL_DISPATCH_TARGETS — Phase 33 Uniswap V3 NPM entry (Ethereum
     expect(result.kind).toBe("refused");
     if (result.kind !== "refused") return;
     expect(result.allowlist).toContain(getUniswapV3NonfungiblePositionManagerAddress(1)!);
+  });
+});
+
+// =============================================================================
+// Phase 34 Plan 34-01 — Curve pool dispatch arm
+// =============================================================================
+//
+// Asserts every Curve pool address (chainId=1) appears in
+// CANONICAL_DISPATCH_TARGETS[1]. Non-Ethereum chains must NOT include any
+// chainId=1 Curve pool address.
+
+describe("Curve pool dispatch arm (Phase 34 Plan 34-01)", () => {
+  it("every Curve pool from getAllCurvePoolsForChain(1) is in CANONICAL_DISPATCH_TARGETS[1]", () => {
+    const curvePools = getAllCurvePoolsForChain(1);
+    expect(curvePools.length).toBe(11);
+    for (const pool of curvePools) {
+      expect(
+        CANONICAL_DISPATCH_TARGETS[1].has(pool.address),
+        `Curve pool ${pool.address} (${pool.displayName}) must be in CANONICAL_DISPATCH_TARGETS[1]`,
+      ).toBe(true);
+    }
+  });
+
+  it("legacy stETH/ETH pool is in CANONICAL_DISPATCH_TARGETS[1]", () => {
+    const legacy = getAddress("0xDC24316b9AE028F1497c275EB9192a3Ea0f67022");
+    expect(CANONICAL_DISPATCH_TARGETS[1].has(legacy)).toBe(true);
+  });
+
+  it("Curve pool addresses NOT in non-Ethereum chains (D-03 carve)", () => {
+    const curvePools = getAllCurvePoolsForChain(1);
+    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
+    for (const pool of curvePools) {
+      for (const chainId of otherChains) {
+        expect(
+          CANONICAL_DISPATCH_TARGETS[chainId].has(pool.address),
+          `Curve pool ${pool.address} must NOT be in CANONICAL_DISPATCH_TARGETS[${chainId}]`,
+        ).toBe(false);
+      }
+    }
   });
 });

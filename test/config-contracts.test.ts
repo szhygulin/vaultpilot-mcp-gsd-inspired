@@ -20,6 +20,8 @@ import { describe, expect, it } from "vitest";
 import { getAddress, type Address } from "viem";
 
 import {
+  getAllCurvePoolsForChain,
+  getCurvePoolByAddress,
   KNOWN_SPENDERS_ETHEREUM,
   ROCKET_POOL_MINIMUM_DEPOSIT_FALLBACK_WEI,
   chainIdFromName,
@@ -1155,5 +1157,136 @@ describe("src/config/contracts.ts — Phase 33 Uniswap V3 NPM KNOWN_SPENDERS pro
     );
     expect(row).toBeDefined();
     expect(row!.address).toBe(getAddress(row!.address));
+  });
+});
+
+// =============================================================================
+// Phase 34 — Plan 34-01: Curve pool registry + KNOWN_SPENDERS promotion
+// =============================================================================
+//
+// T-CURVE-SPENDER-DRIFT-1: every entry in getAllCurvePoolsForChain(1) must have
+// exactly one matching KNOWN_SPENDERS_ETHEREUM row with the same address AND
+// label starting with "Curve ". Promotion is done via SOT-getter loop — manual
+// rows cannot drift.
+//
+// T-CURVE-REGISTRY-INTEGRITY-1: exact 11-entry count + abiVersion split +
+// stable_ng lpToken === pool invariant.
+//
+// T-CURVE-REGISTRY-DECIMALS-1: for each pool, each coinDecimals[idx] matches
+// the hardcoded registry literal (purely literal-vs-literal, no RPC needed).
+
+describe("src/config/contracts.ts — Phase 34 Curve pool registry (T-CURVE-REGISTRY-INTEGRITY-1)", () => {
+  it("getAllCurvePoolsForChain(1) returns exactly 11 entries", () => {
+    expect(getAllCurvePoolsForChain(1).length).toBe(11);
+  });
+
+  it("T-CURVE-REGISTRY-INTEGRITY-1a — exactly 1 entry has abiVersion='legacy'", () => {
+    const legacy = getAllCurvePoolsForChain(1).filter((p) => p.abiVersion === "legacy");
+    expect(legacy.length).toBe(1);
+    expect(legacy[0].address).toBe(getAddress("0xDC24316b9AE028F1497c275EB9192a3Ea0f67022"));
+  });
+
+  it("T-CURVE-REGISTRY-INTEGRITY-1b — exactly 10 entries have abiVersion='stable_ng'", () => {
+    const stableNg = getAllCurvePoolsForChain(1).filter((p) => p.abiVersion === "stable_ng");
+    expect(stableNg.length).toBe(10);
+  });
+
+  it("T-CURVE-REGISTRY-INTEGRITY-1c — for every stable_ng entry, lpToken === pool.address", () => {
+    const stableNg = getAllCurvePoolsForChain(1).filter((p) => p.abiVersion === "stable_ng");
+    for (const entry of stableNg) {
+      expect(entry.lpToken).toBe(entry.address);
+    }
+  });
+
+  it("T-CURVE-REGISTRY-INTEGRITY-1d — legacy stETH/ETH pool has distinct lpToken", () => {
+    const legacy = getAllCurvePoolsForChain(1).find((p) => p.abiVersion === "legacy");
+    expect(legacy).toBeDefined();
+    expect(legacy!.lpToken).toBe(getAddress("0x06325440D014e39736583c165C2963BA99fAf14E"));
+    expect(legacy!.lpToken).not.toBe(legacy!.address);
+  });
+
+  it("getAllCurvePoolsForChain(42161) returns [] (Curve is Ethereum-only at Phase 34)", () => {
+    expect(getAllCurvePoolsForChain(42161)).toEqual([]);
+  });
+
+  it("getCurvePoolByAddress case-insensitive lookup — Spark.fi PYUSD Reserve", () => {
+    const entry = getCurvePoolByAddress(1, "0xa632d59b9b804a956bfaa9b48af3a1b74808fc1f" as Address);
+    expect(entry).toBeDefined();
+    expect(entry!.displayName).toBe("PYUSD/USDS (stable_ng)");
+  });
+
+  it("getCurvePoolByAddress returns undefined for unknown pool", () => {
+    expect(getCurvePoolByAddress(1, getAddress("0x0000000000000000000000000000000000000001"))).toBeUndefined();
+  });
+});
+
+describe("src/config/contracts.ts — Phase 34 Curve registry decimals (T-CURVE-REGISTRY-DECIMALS-1)", () => {
+  // Hardcoded-table cross-check: registry coinDecimals vs the expected values
+  // from the RESEARCH.md registry snapshot (no RPC needed — purely literal-vs-literal).
+
+  const EXPECTED_DECIMALS: Array<{ address: string; coinDecimals: number[] }> = [
+    // LEGACY
+    { address: "0xDC24316b9AE028F1497c275EB9192a3Ea0f67022", coinDecimals: [18, 18] },
+    // STABLE_NG 1 — Spark.fi PYUSD Reserve
+    { address: "0xA632D59b9B804a956BfaA9b48Af3A1b74808FC1f", coinDecimals: [6, 18] },
+    // STABLE_NG 2 — RLUSD/USDC
+    { address: "0xD001aE433f254283FeCE51d4ACcE8c53263aa186", coinDecimals: [6, 18] },
+    // STABLE_NG 3 — OETH/WETH
+    { address: "0xcc7d5785AD5755B6164e21495E07aDb0Ff11C2A8", coinDecimals: [18, 18] },
+    // STABLE_NG 4 — DOLA/sUSDe
+    { address: "0x744793B5110f6ca9cC7CDfe1CE16677c3Eb192ef", coinDecimals: [18, 18] },
+    // STABLE_NG 5 — FRAXUSDe
+    { address: "0x5dc1BF6f1e983C0b21EfB003c105133736fA0743", coinDecimals: [18, 18] },
+    // STABLE_NG 6 — PayPool (PYUSD/USDC)
+    { address: "0x383E6b4437b59fff47B619CBA855CA29342A8559", coinDecimals: [6, 6] },
+    // STABLE_NG 7 — Spark.fi USDT Reserve
+    { address: "0x00836Fe54625BE242BcFA286207795405ca4fD10", coinDecimals: [18, 6] },
+    // STABLE_NG 8 — apxUSD-USDC
+    { address: "0xE1B96555BbecA40E583BbB41a11C68Ca4706A414", coinDecimals: [18, 6] },
+    // STABLE_NG 9 — AUSD/USDC
+    { address: "0xE79C1C7E24755574438A26D5e062Ad2626C04662", coinDecimals: [6, 6] },
+    // STABLE_NG 10 — crvUSD/frxUSD
+    { address: "0x13e12BB0E6A2f1A3d6901a59a9d585e89A6243e1", coinDecimals: [18, 18] },
+  ];
+
+  it("T-CURVE-REGISTRY-DECIMALS-1 — coinDecimals matches hardcoded table for all 11 pools", () => {
+    const pools = getAllCurvePoolsForChain(1);
+    for (const expected of EXPECTED_DECIMALS) {
+      const pool = getCurvePoolByAddress(1, expected.address as Address);
+      expect(pool, `pool not found: ${expected.address}`).toBeDefined();
+      expect(pool!.coinDecimals, `decimals mismatch for ${expected.address}`).toEqual(expected.coinDecimals);
+    }
+  });
+});
+
+describe("src/config/contracts.ts — Phase 34 Curve KNOWN_SPENDERS promotion (T-CURVE-SPENDER-DRIFT-1)", () => {
+  it("T-CURVE-SPENDER-DRIFT-1 — every Curve pool has exactly one KNOWN_SPENDERS_ETHEREUM row with matching address and 'Curve ' label prefix", () => {
+    const curvePools = getAllCurvePoolsForChain(1);
+    for (const pool of curvePools) {
+      const matches = KNOWN_SPENDERS_ETHEREUM.filter(
+        (s) => s.address === pool.address && s.label.startsWith("Curve "),
+      );
+      expect(
+        matches.length,
+        `Expected exactly 1 Curve KNOWN_SPENDERS row for pool ${pool.address} (${pool.displayName}), got ${matches.length}`,
+      ).toBe(1);
+    }
+  });
+
+  it("T-CURVE-SPENDER-DRIFT-1b — Curve KNOWN_SPENDERS label matches 'Curve {displayName}'", () => {
+    const curvePools = getAllCurvePoolsForChain(1);
+    for (const pool of curvePools) {
+      const row = KNOWN_SPENDERS_ETHEREUM.find((s) => s.address === pool.address && s.label.startsWith("Curve "));
+      expect(row).toBeDefined();
+      expect(row!.label).toBe(`Curve ${pool.displayName}`);
+    }
+  });
+
+  it("T-CURVE-SPENDER-DRIFT-1c — Curve KNOWN_SPENDERS source is 'https://curve.finance' for all rows", () => {
+    const curvePools = getAllCurvePoolsForChain(1);
+    for (const pool of curvePools) {
+      const row = KNOWN_SPENDERS_ETHEREUM.find((s) => s.address === pool.address && s.label.startsWith("Curve "));
+      expect(row!.source).toBe("https://curve.finance");
+    }
   });
 });

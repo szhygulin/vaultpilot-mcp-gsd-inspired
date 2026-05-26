@@ -4,8 +4,8 @@ milestone: v2.2
 milestone_name: Bitcoin + Litecoin
 current_plan: 3
 status: verifying
-last_updated: "2026-05-26T08:16:48.393Z"
-last_activity: 2026-05-24
+last_updated: "2026-05-26T09:58:38.796Z"
+last_activity: 2026-05-26
 progress:
   total_phases: 6
   completed_phases: 6
@@ -30,7 +30,7 @@ Plan: 3 of 3
 Current Plan: 3
 Total Plans in Phase: 3
 Status: Phase complete — ready for verification
-Last activity: 2026-05-24
+Last activity: 2026-05-26
 
 Prior activity: 2026-05-23 — Phase 32 Plan 32-01 closed code-complete (6 atomic commits f68b305 → 597a1a1 + docs commit a27601f). UniswapV3Contracts SOT + SwapRouter02 KNOWN_SPENDERS row promotion + canonical-dispatch arm + protocols/uniswap-v3.ts + signing/uniswap-path.ts + 2 APPEND-ONLY block templates + Fixtures UNI-A/B/C hardcoded payloadFingerprint literals.
 
@@ -93,6 +93,7 @@ Progress: [██████████] 100%
 | Phase 33 P01 | 32 min | 3 tasks | 20 files |
 | Phase 33 P33-02 | ~33 min | 3 tasks | 17 files |
 | Phase 33 P33-03 | 38 min | 3 tasks | 12 files |
+| Phase 34 P34-03 | 45 | 4 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -149,6 +150,9 @@ Recent decisions affecting current work:
 - [Phase ?]: Phase 33 Plan 33-02: decodeSingleNpmCall exported from preview_send.ts as Pitfall 7 SHARED-decoder SOT for Plan 33-03 composite-multicall reuse
 - [Phase ?]: ESM spy-affordance for shared decoders — add at write time when cross-export internal calls need test interception (Plan 33-03 _npmDecodeShared in preview_send.ts; CLAUDE.md ESM bindings rule)
 - [Phase ?]: Composite-tx preview shape (Plan 33-03 UNI-09) — ONE tool / ONE handle / ONE calldata / single payloadFingerprint over outer multicall; LOAD-BEARING inner-call order in composeRebalanceCalldata; recursive decode via SHARED helper (Pitfall 7 SOT). Canonical reference for v2.5 Safe three-step.
+- [Phase 34]: Legacy add_liquidity refused — deferred to v2.4.x — legacy pool ABI uses fixed-N arrays; structural refusal before amounts validation
+- [Phase 34]: No sandwich-MEV gate for Curve — asymmetric to Phase 32 UniV3 — Documented in CHECKS PERFORMED on both tools and preview_send blocks; slippageBps [1,5000] cap is the only footgun guard
+- [Phase 34]: (tx.to, selector) TUPLE dispatch in preview_send Curve arm — Any Vyper StableSwap pool can share 4-byte selectors; registry gate prevents false decode (T-34-03-C)
 
 ### Pending Todos
 
@@ -348,6 +352,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-26T08:16:48.380Z
-Stopped at: Phase 34 context gathered
-Resume file: .planning/phases/34-evm-curve-swap-add-liquidity/34-CONTEXT.md
+Last session: 2026-05-26T09:58:38.785Z
+Stopped at: Completed 34-03-PLAN.md
+Resume file: None
