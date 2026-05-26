@@ -103,6 +103,19 @@ export const FIXTURE_CRV_B_FP = "0x91232f051349d2711e4259458489444ed3d9018073d92
  * Proves dynamic-array calldata is byte-stable. */
 export const FIXTURE_CRV_C_FP = "0x2762d8badc0a798a9947b77dd56a5127bd4c65eb17b1daf6465590810edc063b";
 
+/** Fixture P (escape-hatch baseline, Phase 35 / Plan 35-03 / CUSTOM-01):
+ * prepare_custom_call({ chain: ethereum, to: 0x0000...DeaDBeef, value: 0,
+ * data: 0xdeadbeef, acknowledgeNonProtocolTarget: true }).
+ *
+ * Anchors the standard PREP-03 envelope shape for escape-hatch calldata —
+ * the bypass flag is a SEPARATE record annotation, NOT a fingerprint
+ * dimension. Persona-cycle integration test re-anchors from-independence
+ * across whale + stable-saver + defi-degen.
+ *
+ * EXPORTED so test/prepare-custom-call.test.ts + test/preview-send.custom-call.test.ts
+ * + test/integration/escape-hatch.test.ts can cross-link. */
+export const FIXTURE_P_FP = "0xb137028a94f1af0a98dc0f96102101ad4efc756784fa54dc0a8fc10d5a8a1701";
+
 describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
   it("Fixture A — native send → 0x7e1867b2... byte-for-byte", () => {
     const fp = computePayloadFingerprint({
@@ -1790,5 +1803,32 @@ describe("Phase 34 Plan 34-01 — Fixtures CRV-A / CRV-B / CRV-C", () => {
   it("Fixtures CRV-A / CRV-B / CRV-C produce 3 distinct fingerprints", () => {
     const distinct = new Set([FIXTURE_CRV_A_FP, FIXTURE_CRV_B_FP, FIXTURE_CRV_C_FP]);
     expect(distinct.size).toBe(3);
+  });
+
+  it("Fixture P — prepare_custom_call escape-hatch baseline (hardcoded literal anchor, Phase 35 / Plan 35-03)", () => {
+    // Same shape as Fixture B/D/E/F — `payloadFingerprint` over the
+    // standard PREP-03 envelope (chainId || to || valueWei || data).
+    // NO escape-hatch-specific dimension — the bypass flag lives on the
+    // record, NOT in the preimage. This fixture verifies byte-identity
+    // with the existing PREP-03 envelope shape and proves from-independence.
+    const TO = "0x00000000000000000000000000000000DeaDBeef" as Address;
+    // Arbitrary non-canonical-protocol calldata. 0xdeadbeef is selector-
+    // shaped (4 bytes); the agent-supplied raw passthrough is what
+    // computePayloadFingerprint hashes verbatim.
+    const escapeData = "0xdeadbeef" as Hex;
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: TO,
+      valueWei: 0n,
+      data: escapeData,
+    });
+
+    // Hardcoded literal anchor (Plan 35-03 — execute-time computation
+    // pinned forever). Cross-linked from test/prepare-custom-call.test.ts,
+    // test/preview-send.custom-call.test.ts, and
+    // test/integration/escape-hatch.test.ts via the exported FIXTURE_P_FP.
+    // Drift in the preimage assembly for escape-hatch shape data breaks
+    // THIS exact assertion at PR-review time.
+    expect(fp).toBe(FIXTURE_P_FP);
   });
 });

@@ -113,6 +113,7 @@ import "./prepare_uniswap_v3_rebalance.js";          // Phase 33 Plan 33-03 (UNI
 import "./get_curve_positions.js";                   // Phase 34 Plan 34-02 (CRV-01) — Curve LP balances multicall + zero-filter + per-pool composition
 import "./prepare_curve_swap.js";                    // Phase 34 Plan 34-03 (CRV-02) — Curve swap per-abiVersion (legacy/stable_ng) + on-chain get_dy quote + min_dy derivation
 import "./prepare_curve_add_liquidity.js";           // Phase 34 Plan 34-03 (CRV-03) — stable_ng add_liquidity + calc_token_amount quote + registry-validated amounts.length
+import "./prepare_custom_call.js";                   // Phase 35 Plan 35-03 (CUSTOM-01) — escape hatch with acknowledgeNonProtocolTarget gate + canonical-dispatch bypass + WARN block
 import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";

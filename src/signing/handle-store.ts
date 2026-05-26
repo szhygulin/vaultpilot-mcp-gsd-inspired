@@ -86,6 +86,16 @@ export interface PrepareArgs {
   sats?: string;
   /** Phase 26 — LTC native amount as raw litoshis decimal string (e.g. "100000"). Populated by `prepare_litecoin_native_send` (Plan 26-02). */
   litoshi?: string;
+  /**
+   * Phase 35 Plan 35-03 — raw calldata hex (0x-prefixed) for
+   * `prepare_custom_call`. Surfaced verbatim in the PREPARE RECEIPT block
+   * (`{DATA}` slot of CUSTOM_CALL_PREPARE_RECEIPT_TEMPLATE) so the agent
+   * cannot rewrite it between the receipt and preview/send. Other prepare_*
+   * tools encode calldata server-side and leave this slot undefined; the
+   * receipt body for those tools renders semantic args (amount, token, etc.)
+   * instead.
+   */
+  data?: string;
 }
 
 /**
