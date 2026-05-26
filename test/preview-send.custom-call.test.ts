@@ -205,22 +205,25 @@ afterEach(() => {
 });
 
 describe("preview_send — canonical-dispatch bypass for prepare_custom_call handles", () => {
-  it("bypass fires when record.acknowledgeNonProtocolTarget === true (no DISPATCH_TARGET_REFUSED)", async () => {
-    // canonical-dispatch would refuse the non-canonical target if invoked —
-    // assert it is NOT consulted.
-    const dispatchSpy = vi
-      .spyOn(_canonicalDispatch, "checkDispatchTarget")
-      .mockReturnValue({
-        kind: "refused",
-        chain: 1,
-        to: CUSTOM_TARGET,
-        allowlist: ["0x1111111111111111111111111111111111111111" as Address],
-      });
+  it("bypass fires when record.acknowledgeNonProtocolTarget === true (DISPATCH_TARGET_REFUSED refusal suppressed)", async () => {
+    // canonical-dispatch would refuse the non-canonical target — assert the
+    // REFUSAL is suppressed under the bypass flag. The check itself may run
+    // (cheap; preserves the FROZEN EVM-body snippet pinned by
+    // test/preview-send.solana.test.ts "FROZEN EVM body byte-identity"); the
+    // refusal arm is short-circuited via !escapeHatchBypassActive.
+    vi.spyOn(_canonicalDispatch, "checkDispatchTarget").mockReturnValue({
+      kind: "refused",
+      chain: 1,
+      to: CUSTOM_TARGET,
+      allowlist: ["0x1111111111111111111111111111111111111111" as Address],
+    });
 
     const handle = seedCustomCallHandle();
     const res = await callPreviewSend({ handle });
     expect(res.isError).toBeFalsy();
-    expect(dispatchSpy).not.toHaveBeenCalled();
+    // Refusal envelope must NOT fire under bypass.
+    const sc = res.structuredContent as { errorCode?: string };
+    expect(sc.errorCode).toBeUndefined();
   });
 
   it("standard handle (no bypass flag) STILL refuses with DISPATCH_TARGET_REFUSED for non-canonical targets", async () => {

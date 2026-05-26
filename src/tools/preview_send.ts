@@ -792,37 +792,45 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // fire first. Chain-mismatch (Layer 2 below) is a STATE CONSISTENCY
     // check. A refusal that triggers BOTH surfaces DISPATCH_TARGET_REFUSED
     // (the more fundamental issue) — per RESEARCH § Topic 10 layer table.
+    // Phase 35 Plan 35-03 escape hatch — bypass canonical-dispatch when the
+    // user explicitly acknowledged the non-protocol target at prepare time.
+    // The bypass-decision is computed ABOVE the EVM Layer 0.5 block so the
+    // FROZEN snippet body inside `if (record.tx.data !== "0x") { ... }`
+    // stays byte-identical to the pre-12-04 Phase 9 lock (test/preview-send
+    // .solana.test.ts pins the dispatchCheck line shape verbatim — see
+    // "FROZEN EVM body byte-identity (LOAD-BEARING)" describe block).
+    //
+    // The flag is set ONLY by prepare_custom_call.ts; grep-guard test
+    // (test/integration/escape-hatch.test.ts Test 6) asserts EXACTLY TWO
+    // source-file assignment sites. The WARN block re-emits below in the
+    // custom-call decode arm — byte-identical to the prepare-side emission
+    // (T-35-03-G mitigation). Pitfall 1 enforcement (test/preview-send
+    // .custom-call.test.ts): EXACTLY ONE non-comment read of
+    // record.acknowledgeNonProtocolTarget appears in this file — the line
+    // below.
+    const escapeHatchBypassActive =
+      record.acknowledgeNonProtocolTarget === true;
     if (record.tx.data !== "0x") {
-      if (record.acknowledgeNonProtocolTarget === true) {
-        // Phase 35 Plan 35-03 escape hatch — bypass canonical-dispatch
-        // because the user explicitly acknowledged the non-protocol target
-        // at prepare time. The flag is set ONLY by prepare_custom_call.ts;
-        // grep-guard test (test/integration/escape-hatch.test.ts Test 6)
-        // asserts EXACTLY TWO source-file assignment sites. The WARN block
-        // re-emits below in the custom-call decode arm — byte-identical to
-        // the prepare-side emission (T-35-03-G mitigation).
-      } else {
-        const dispatchCheck = _canonicalDispatch.checkDispatchTarget(
+      const dispatchCheck = _canonicalDispatch.checkDispatchTarget(
+        record.tx.chainId as ChainId,
+        record.tx.to,
+      );
+      if (dispatchCheck.kind === "refused" && !escapeHatchBypassActive) {
+        const chainLabel = `${chainNameFromId(
           record.tx.chainId as ChainId,
-          record.tx.to,
-        );
-        if (dispatchCheck.kind === "refused") {
-          const chainLabel = `${chainNameFromId(
-            record.tx.chainId as ChainId,
-          )} (chainId ${record.tx.chainId})`;
-          const refusalText = DISPATCH_TARGET_REFUSAL_TEMPLATE
-            .replace("{CHAIN}", chainLabel)
-            .replace("{TO}", dispatchCheck.to)
-            .replace("{ALLOWLIST}", dispatchCheck.allowlist.join("\n    "));
-          return {
-            isError: true,
-            content: [{ type: "text", text: refusalText }],
-            structuredContent: errEnvelope(
-              "DISPATCH_TARGET_REFUSED",
-              `tx.to ${dispatchCheck.to} is not in the v1.3 canonical dispatch allowlist for chain ${record.tx.chainId}`,
-            ),
-          };
-        }
+        )} (chainId ${record.tx.chainId})`;
+        const refusalText = DISPATCH_TARGET_REFUSAL_TEMPLATE
+          .replace("{CHAIN}", chainLabel)
+          .replace("{TO}", dispatchCheck.to)
+          .replace("{ALLOWLIST}", dispatchCheck.allowlist.join("\n    "));
+        return {
+          isError: true,
+          content: [{ type: "text", text: refusalText }],
+          structuredContent: errEnvelope(
+            "DISPATCH_TARGET_REFUSED",
+            `tx.to ${dispatchCheck.to} is not in the v1.3 canonical dispatch allowlist for chain ${record.tx.chainId}`,
+          ),
+        };
       }
     }
 
