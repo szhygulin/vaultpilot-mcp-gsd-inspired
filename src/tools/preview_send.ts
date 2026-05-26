@@ -48,7 +48,7 @@
 // `src/signing/blocks.ts` (Plan 04-05) — NOT inlined here. Format-fanout-
 // sentinel: one helper, one home.
 
-import { decodeFunctionData, erc20Abi, toBytes, type Address, type Hex } from "viem";
+import { decodeFunctionData, erc20Abi, formatUnits, getAddress, toBytes, type Address, type Hex } from "viem";
 import { estimateFeesPerGas, estimateGas, getTransactionCount } from "viem/actions";
 import { Message, Transaction } from "@solana/web3.js";
 import { Psbt as BtcPsbt, Transaction as BtcTransaction } from "bitcoinjs-lib";
@@ -109,9 +109,11 @@ import {
   NPM_WRITE_ABI as UNISWAP_V3_LP_NPM_WRITE_ABI,
   UNISWAP_V3_LP_SELECTORS,
 } from "../protocols/uniswap-v3-lp.js";
+import { CURVE_SELECTORS, _curveProtocol, type CurveDecoded } from "../protocols/curve.js";
 import {
   getUniswapV3SwapRouter02Address as _getUniswapV3SwapRouter02Address,
   getUniswapV3NonfungiblePositionManagerAddress as _getUniswapV3NonfungiblePositionManagerAddress,
+  getCurvePoolByAddress as _getCurvePoolByAddress,
 } from "../config/contracts.js";
 import { _solanaSpl } from "../protocols/solana-spl.js";
 import { _solanaSystem } from "../protocols/solana-system.js";
@@ -1055,6 +1057,7 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     let rocketPoolDecoded: RocketPoolDecoded | null = null;
     let uniswapV3Decoded: UniswapV3Decoded | null = null;
     let uniswapV3LpDecoded: UniswapV3LpDecoded | null = null;
+    let curveDecoded: CurveDecoded | null = null;
     if (decodedArgs.kind === "unknown") {
       const aave = _aaveProtocols.decodeAaveV3Call(record.tx.data);
       if (aave.kind !== "unknown") {
@@ -1317,6 +1320,29 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                   // ABI decode error — fall through to unknown.
                 }
               }
+            } else if (
+              sel === CURVE_SELECTORS.exchangeLegacy ||
+              sel === CURVE_SELECTORS.exchangeNg ||
+              sel === CURVE_SELECTORS.addLiquidityNg
+            ) {
+              // Phase 34 Plan 34-03 — Curve (tx.to, selector) TUPLE dispatch.
+              // ANY Vyper StableSwap pool could share these 4-byte selectors —
+              // routing on (tx.to ∈ curated Curve registry) AND selector prevents
+              // mis-decoding non-Curve contracts that share a selector.
+              // T-34-03-C mitigation: _getCurvePoolByAddress MUST return a
+              // registered pool BEFORE decode is attempted. Non-registry tx.to
+              // never reaches the decoder regardless of selector.
+              const curvePool = _getCurvePoolByAddress(
+                record.tx.chainId as ChainId,
+                record.tx.to as Address,
+              );
+              if (curvePool) {
+                curveDecoded = _curveProtocol.decodeCurveCall(
+                  record.tx.data as Hex,
+                  record.tx.to as Address,
+                  record.tx.chainId as ChainId,
+                );
+              }
             }
           }
         }
@@ -1489,6 +1515,66 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       }
     }
 
+    // Phase 34 Plan 34-03 — Curve decoded-args block builder (inline; parallel to
+    // buildUniswapV3DecodedArgsBlock). Emits [CURVE SWAP] for exchange calls or
+    // [CURVE ADD LIQUIDITY] for add_liquidity calls.
+    // formatUnits import: already available from viem at line 51.
+    function buildCurveDecodedArgsBlock(decoded: CurveDecoded): string {
+      const curvePool = _getCurvePoolByAddress(
+        record.tx.chainId as ChainId,
+        record.tx.to as Address,
+      );
+      if (!curvePool) return "";
+      const MEV_LINE =
+        "Sandwich-MEV gate: not applied to Curve (low MEV exposure on stable pools)";
+      if (
+        decoded.kind === "exchange-legacy" ||
+        decoded.kind === "exchange-stable_ng"
+      ) {
+        const { i, j, dx, minDy } = decoded;
+        const inDec = curvePool.coinDecimals[i] ?? 18;
+        const outDec = curvePool.coinDecimals[j] ?? 18;
+        const lines = [
+          `[CURVE SWAP]`,
+          `  Pool:        ${curvePool.displayName}`,
+          `  abiVersion:  ${curvePool.abiVersion}`,
+          `  Coin in  [${i}]: ${curvePool.coins[i] ?? "?"}`,
+          `  Coin out [${j}]: ${curvePool.coins[j] ?? "?"}`,
+          `  dx:          ${formatUnits(dx, inDec)} (${dx} wei)`,
+          `  minDy:       ${formatUnits(minDy, outDec)} (${minDy} wei)`,
+        ];
+        if (decoded.kind === "exchange-legacy") {
+          const isEthIn =
+            i === 0 &&
+            curvePool.abiVersion === "legacy" &&
+            getAddress(curvePool.coins[0] ?? "0x0") ===
+              getAddress("0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE");
+          lines.push(`  isEthIn:     ${isEthIn}`);
+        }
+        if (decoded.kind === "exchange-stable_ng") {
+          lines.push(`  receiver:    ${decoded.receiver.toLowerCase()}`);
+        }
+        lines.push(`  ${MEV_LINE}`);
+        return lines.join("\n");
+      }
+      if (decoded.kind === "add_liquidity-stable_ng") {
+        const { amounts, minMintAmount } = decoded;
+        const amtLines = amounts.map((a, idx) => {
+          const dec = curvePool.coinDecimals[idx] ?? 18;
+          return `  amounts[${idx}]:  ${formatUnits(a, dec)} (${a} wei)`;
+        });
+        return [
+          `[CURVE ADD LIQUIDITY]`,
+          `  Pool:           ${curvePool.displayName}`,
+          `  abiVersion:     ${curvePool.abiVersion}`,
+          ...amtLines,
+          `  minMintAmount:  ${formatUnits(minMintAmount, 18)} (${minMintAmount} wei)`,
+          `  ${MEV_LINE}`,
+        ].join("\n");
+      }
+      return "";
+    }
+
     // Decoded-args block selection — the Aave path uses a parallel helper, the
     // Compound path uses ITS parallel helper, and the Morpho path uses ITS
     // parallel helper (separate from the others to keep all byte-frozen
@@ -1523,7 +1609,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
                     ? buildUniswapV3DecodedArgsBlock(uniswapV3Decoded)
                     : uniswapV3LpDecoded !== null
                       ? buildUniswapV3LpDecodedArgsBlock(uniswapV3LpDecoded)
-                      : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
+                      : curveDecoded !== null
+                        ? buildCurveDecodedArgsBlock(curveDecoded)
+                        : buildDecodedArgsBlock(decodedArgs, tokenContext, record.tx.to);
 
     // Phase 6 — Plan 06-02: wide eth_call simulation. DF-1 LOCKED. Runs for
     // ALL tx shapes including native sends (defense-in-depth uniform per
