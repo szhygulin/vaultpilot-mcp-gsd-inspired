@@ -274,7 +274,23 @@ export type ErrorCode =
   //                         ABI_NOT_AVAILABLE (which is "function not in
   //                         ABI at all") — NON_VIEW_FUNCTION fires when the
   //                         function IS in the ABI but is state-mutating.
-  | "NON_VIEW_FUNCTION";
+  | "NON_VIEW_FUNCTION"
+  //
+  // Phase 35 Plan 35-03 — prepare_custom_call escape-hatch acknowledgment gate.
+  //
+  //   NON_PROTOCOL_TARGET_NOT_ACKNOWLEDGED — prepare_custom_call invoked
+  //                        without `acknowledgeNonProtocolTarget: true`. The
+  //                        JSON-Schema literal-true gate
+  //                        (`{ const: true, type: "boolean" }`) at the
+  //                        dispatch boundary catches `false` BEFORE the
+  //                        handler runs; the handler-side check covers the
+  //                        `undefined` / missing case (defense-in-depth).
+  //                        Refusal text uses NON_PROTOCOL_TARGET_REFUSAL_TEMPLATE
+  //                        and surfaces a canonical-alternative suggestion
+  //                        via `lookupCanonicalAlternative(selector)` when
+  //                        the data's selector matches a known
+  //                        protocol-aware prepare_* tool.
+  | "NON_PROTOCOL_TARGET_NOT_ACKNOWLEDGED";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

@@ -2843,3 +2843,75 @@ export const DECODED_ARGS_TEMPLATE_UNISWAP_V3_LP_COMPOSITE_MULTICALL: string = [
   "  Composite multicall — {TOTAL_STEPS} inner calls / selector 0xac9650d8 / target NonfungiblePositionManager",
   "{SUB_CALLS_RENDERED}",
 ].join("\n");
+
+// ===========================================================================
+// Phase 35 Plan 35-03 (CUSTOM-01) — prepare_custom_call escape-hatch templates
+// ===========================================================================
+//
+// Three templates land here so the WARN block + PREPARE RECEIPT + structured
+// refusal all live in the single format-fanout-sentinel SOT. `prepare_custom_call`
+// AND `preview_send` BOTH import `WARN_NON_PROTOCOL_TARGET_TEMPLATE` and
+// substitute via `.replace(...)` — drift between the two response paths is a
+// tamper signal asserted by the integration test (byte-identity).
+
+/**
+ * `[WARN — NON-PROTOCOL TARGET]` block. Emitted byte-identically in BOTH
+ * `prepare_custom_call` response AND `preview_send` response. Drift between
+ * the two = test failure (T-35-03-G mitigation; integration test asserts
+ * string equality).
+ *
+ * Slots: `{CHAIN}`, `{TO}`, `{DECODED}`. The `{DECODED}` slot renders either
+ * `(see DECODED ARGS below)` (cache HIT — preview shows the decoded args
+ * block beneath) OR `(no ABI cached — call get_contract_abi first)` (cache
+ * MISS — blind sign). Both call sites consume the same cache state, so the
+ * substituted value is deterministic across the two response paths.
+ */
+export const WARN_NON_PROTOCOL_TARGET_TEMPLATE: string = [
+  "[WARN — NON-PROTOCOL TARGET]",
+  "  chain:    {CHAIN}",
+  "  to:       {TO}",
+  "  decoded:  {DECODED}",
+  "",
+  "  This call BYPASSES the canonical-dispatch allowlist. You explicitly",
+  "  acknowledged this at prepare time (acknowledgeNonProtocolTarget: true).",
+  "  If unsure, decline on-device.",
+].join("\n");
+
+/**
+ * `prepare_custom_call` PREPARE RECEIPT template. Substituted at the
+ * prepare-side response composition. Slots: `{CHAIN}`, `{TO}`, `{VALUE}`,
+ * `{DATA}`. Verbatim agent strings (T-PREP-RCPT-1 invariant — never the
+ * server-checksummed `tx.to`).
+ */
+export const CUSTOM_CALL_PREPARE_RECEIPT_TEMPLATE: string = [
+  "PREPARE RECEIPT",
+  "  operation: custom contract call",
+  "  chain:     {CHAIN}",
+  "  to:        {TO}",
+  "  value:     {VALUE}",
+  "  data:      {DATA}",
+].join("\n");
+
+/**
+ * Structured-refusal text emitted when `prepare_custom_call` is invoked
+ * without `acknowledgeNonProtocolTarget: true`. The schema-level
+ * `{ const: true, type: "boolean" }` literal at the JSON-Schema dispatch
+ * boundary catches `false` BEFORE the handler runs; this template is the
+ * defense-in-depth in-handler refusal for the `undefined` / missing case
+ * (and for the test seam that bypasses the schema layer).
+ *
+ * Slots: `{TO}`, `{SELECTOR}`, `{SUGGESTION}`. `{SUGGESTION}` is filled
+ * from `lookupCanonicalAlternative(selector)` — names the recommended
+ * `prepare_*` tool when a canonical alternative exists, or a category-list
+ * fallback otherwise.
+ */
+export const NON_PROTOCOL_TARGET_REFUSAL_TEMPLATE: string = [
+  "NON-PROTOCOL TARGET — acknowledgment required",
+  "  to:        {TO}",
+  "  selector:  {SELECTOR}",
+  "",
+  "  prepare_custom_call requires acknowledgeNonProtocolTarget: true because",
+  "  it BYPASSES the canonical-dispatch allowlist.",
+  "",
+  "  {SUGGESTION}",
+].join("\n");
