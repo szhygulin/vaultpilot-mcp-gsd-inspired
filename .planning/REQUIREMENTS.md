@@ -346,9 +346,9 @@ Uniswap V3 swap + full LP verb set; Curve swap + add-liquidity (stETH/ETH legacy
 
 #### Curve (CRV-*)
 
-- [ ] **CRV-01**: `get_curve_positions({ wallet, chain? })` returns Curve LP token balances + pool composition (stETH/ETH legacy + stable_ng plain pools only at v2.4)
-- [ ] **CRV-02**: `prepare_curve_swap({ chain, poolAddress, inputToken, outputToken, amount, slippageBps })` produces an unsigned `exchange` call on the named pool
-- [ ] **CRV-03**: `prepare_curve_add_liquidity({ chain, poolAddress, amounts: [...], slippageBps })` produces an unsigned `add_liquidity` call for stable_ng plain pools (Ethereum first); Curve pool addresses sourced from `src/config/contracts.ts` curated registry (stETH/ETH legacy + top 10 stable_ng pools at planning time); v0.2 follow-ups (3-coin meta-pools, Curve metaregistry-driven discovery) deferred per upstream issue [#321](https://github.com/szhygulin/vaultpilot-mcp-gsd-inspired/issues/321) (or equivalent); canonical-dispatch allowlist Curve arm wiring
+- [x] **CRV-01**: `get_curve_positions({ wallet, chain? })` returns Curve LP token balances + pool composition (stETH/ETH legacy + stable_ng plain pools only at v2.4)
+- [x] **CRV-02**: `prepare_curve_swap({ chain, poolAddress, inputToken, outputToken, amount, slippageBps })` produces an unsigned `exchange` call on the named pool
+- [x] **CRV-03**: `prepare_curve_add_liquidity({ chain, poolAddress, amounts: [...], slippageBps })` produces an unsigned `add_liquidity` call for stable_ng plain pools (Ethereum first); Curve pool addresses sourced from `src/config/contracts.ts` curated registry (stETH/ETH legacy + top 10 stable_ng pools at planning time); v0.2 follow-ups (3-coin meta-pools, Curve metaregistry-driven discovery) deferred per upstream issue [#321](https://github.com/szhygulin/vaultpilot-mcp-gsd-inspired/issues/321) (or equivalent); canonical-dispatch allowlist Curve arm wiring
 
 #### Escape hatch (CUSTOM-*)
 

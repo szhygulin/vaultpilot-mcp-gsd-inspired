@@ -968,7 +968,7 @@ Plans:
 
 Plans:
 
-- [ ] 34-01-PLAN.md — `src/config/contracts.ts` Curve curated pool registry (1 legacy stETH/ETH + 10 stable_ng) + `KNOWN_SPENDERS_ETHEREUM` per-pool promotion (D-13a SOT-getter pattern) + canonical-dispatch Curve arm (Layer 0.5 allowlist) + `src/chains/curve.ts` (6 parseAbi fragments: legacy/stable_ng exchange + add_liquidity + get_dy + calc_token_amount + LP balanceOf) + `_curveChain` ESM spy-affordance + Fixtures CRV-A (legacy exchange, from-INDEPENDENT) + CRV-B (stable_ng exchange with `_receiver = FIXTURE_PERSONA`, from-DEPENDENT) + CRV-C (stable_ng add_liquidity DynArray) hardcoded payloadFingerprint literals
+- [x] 34-01-PLAN.md — `src/config/contracts.ts` Curve curated pool registry (1 legacy stETH/ETH + 10 stable_ng) + `KNOWN_SPENDERS_ETHEREUM` per-pool promotion (D-13a SOT-getter pattern) + canonical-dispatch Curve arm (Layer 0.5 allowlist) + `src/chains/curve.ts` (6 parseAbi fragments: legacy/stable_ng exchange + add_liquidity + get_dy + calc_token_amount + LP balanceOf) + `_curveChain` ESM spy-affordance + Fixtures CRV-A (legacy exchange, from-INDEPENDENT) + CRV-B (stable_ng exchange with `_receiver = FIXTURE_PERSONA`, from-DEPENDENT) + CRV-C (stable_ng add_liquidity DynArray) hardcoded payloadFingerprint literals
 - [ ] 34-02-PLAN.md — `get_curve_positions({ wallet, chain? })` LP-balance multicall via `Promise.allSettled` over per-pool `lpToken` (NOT pool address — Pitfall 3) + zero-filter + per-pool composition response + rpcDegraded surfacing + READ-ONLY-by-construction grep guard (no `createHandle` import; Phase 7 simulate_position_change precedent); register-all carve at Plan 34-02 slot
 - [ ] 34-03-PLAN.md — `prepare_curve_swap` per-`abiVersion` dispatch (legacy ETH-in `valueWei = amountIn` when i=0 && coins[0]=ETH_SENTINEL; stable_ng `_receiver = signer` from-DEPENDENT calldata) + on-chain `get_dy` quote + bigint `min_dy = (quotedDy * (10000n - BigInt(slippageBps))) / 10000n` + slippageBps mandatory in [1, 5000] (Pitfall 6 footgun guard); `prepare_curve_add_liquidity` stable_ng-only (legacy refused with INVALID_INPUT "deferred to v2.4.x") + amounts.length === pool.coins.length validation (Pitfall 5) + on-chain `calc_token_amount` quote + bigint min_mint_amount; `src/protocols/curve.ts` selector-dispatch decoder + `_curveProtocol` indirection; `preview_send` ADDITIVE `(tx.to, selector)` tuple-dispatch Curve arm — Selector-alone routing forbidden; `[CURVE SWAP]` / `[CURVE ADD LIQUIDITY]` CHECKS PERFORMED blocks include literal "Sandwich-MEV gate: not applied to Curve (low MEV exposure on stable pools)" asymmetric documentation line; Fixtures CRV-A/B/C cross-link end-to-end at protocols + prepare layers
 
@@ -1168,7 +1168,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 31. EigenLayer + Rocket Pool | v2.3 | 3/3 | Complete    | 2026-05-23 |
 | 32. Uniswap V3 swap (auto-fee-tier, same-chain) | v2.4 | 3/3 | Complete   | 2026-05-23 |
 | 33. Uniswap V3 full LP verb set + `get_lp_positions` with IL estimate | v2.4 | 3/3 | Complete   | 2026-05-24 |
-| 34. Curve swap + add liquidity | v2.4 | 0/2 | Not started | - |
+| 34. Curve swap + add liquidity | v2.4 | 1/3 | In Progress|  |
 | 35. Escape hatch — `prepare_custom_call` + `get_contract_abi` + `read_contract` | v2.4 | 0/3 | Not started | - |
 | 36. Safe positions + Tx Service API integration + `get_safe_positions` | v2.5 | 0/2 | Not started | - |
 | 37. Safe three-step signing flow — propose + approve + execute + submit-signature | v2.5 | 0/3 | Not started | - |
