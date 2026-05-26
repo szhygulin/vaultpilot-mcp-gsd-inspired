@@ -4,7 +4,7 @@ milestone: v2.2
 milestone_name: Bitcoin + Litecoin
 current_plan: 3
 status: verifying
-last_updated: "2026-05-24T08:40:51.317Z"
+last_updated: "2026-05-26T08:16:48.393Z"
 last_activity: 2026-05-24
 progress:
   total_phases: 6
@@ -348,6 +348,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-24T08:40:51.306Z
-Stopped at: Completed 33-03-PLAN.md — Phase 33 v2.4 LP milestone code-complete
-Resume file: None
+Last session: 2026-05-26T08:16:48.380Z
+Stopped at: Phase 34 context gathered
+Resume file: .planning/phases/34-evm-curve-swap-add-liquidity/34-CONTEXT.md
