@@ -32,13 +32,15 @@
 // protocol; crossing the wires breaks the client. The API key is NEVER
 // logged (T-ETHERSCAN-KEY-LEAK-1) — log messages reference the address only.
 
-import { type Address } from "viem";
+import { type Abi, type Address } from "viem";
 
+import { type ChainId } from "../config/contracts.js";
 import { log } from "../diagnostics/logger.js";
 
 const ETHERSCAN_API_URL = "https://api.etherscan.io/v2/api";
 const ETHERSCAN_TIMEOUT_MS = 3000; // 2× fourbyte — Etherscan V2 latency higher.
 const CACHE_MAX_ENTRIES = 256;
+const ABI_CACHE_MAX_ENTRIES = 64;
 const PER_SESSION_CALL_LIMIT = 5;
 
 export type EtherscanResult =
@@ -86,7 +88,10 @@ interface EtherscanApiResponse<T> {
 // Module-scope LRU cache. Process-local; dies with the process by design
 // (no persistence). Insertion-order iteration on `Map` is equivalent to
 // LRU when we never touch entries after insertion.
-const cache = new Map<Address, EtherscanResult>();
+//
+// Phase 35 Plan 35-01 — key widened from `Address` to `${chainId}:${address}`
+// so the cache survives multi-chain dispatch (T-35-01-C mitigation).
+const cache = new Map<string, EtherscanResult>();
 
 // Module-scope per-session counter. Counts network calls only — cached
 // hits don't consume the budget (they return before the counter check).
@@ -191,12 +196,14 @@ function parseAbiForPrivilegedRoles(abiJson: string): {
  * pre-Etherscan indexer coverage) → `ageDays: "unknown"`.
  */
 export async function checkContractSecurity(
+  chainId: ChainId,
   address: Address | null,
   apiKey: string,
 ): Promise<EtherscanResult> {
   if (address === null) return { kind: "not-applicable" };
 
-  const cached = cache.get(address);
+  const cacheKey = `${chainId}:${address}`;
+  const cached = cache.get(cacheKey);
   if (cached) return cached;
 
   // Budget check BEFORE the network call. Cached hits never reach here,
@@ -214,8 +221,13 @@ export async function checkContractSecurity(
 
   // URLs carry the API key in the query string. NEVER log the URL — log
   // the address + error message only. T-ETHERSCAN-KEY-LEAK-1 mitigation.
-  const sourceUrl = `${ETHERSCAN_API_URL}?chainid=1&apikey=${apiKey}&module=contract&action=getsourcecode&address=${address}`;
-  const creationUrl = `${ETHERSCAN_API_URL}?chainid=1&apikey=${apiKey}&module=contract&action=getcontractcreation&contractaddresses=${address}`;
+  //
+  // Phase 35 Plan 35-01 — chainid widened from hardcoded 1 to the agent's
+  // `chain` arg threaded through `chainIdFromName`. Etherscan V2 enforces
+  // the rate limit per API key across all chains (NOT per chain), so the
+  // existing `agentSessionCallCount` global counter stays as-is.
+  const sourceUrl = `${ETHERSCAN_API_URL}?chainid=${chainId}&apikey=${apiKey}&module=contract&action=getsourcecode&address=${address}`;
+  const creationUrl = `${ETHERSCAN_API_URL}?chainid=${chainId}&apikey=${apiKey}&module=contract&action=getcontractcreation&contractaddresses=${address}`;
 
   let result: EtherscanResult;
   try {
@@ -244,7 +256,7 @@ export async function checkContractSecurity(
           message: `Etherscan V2 invalid response shape: ${msg}`,
         };
         log("warn", `Etherscan V2 lookup failed for ${address}: ${result.message}`);
-        cacheInsert(address, result);
+        cacheInsert(cacheKey, result);
         return result;
       }
 
@@ -350,18 +362,18 @@ export async function checkContractSecurity(
     clearTimeout(timer);
   }
 
-  cacheInsert(address, result);
+  cacheInsert(cacheKey, result);
   return result;
 }
 
-function cacheInsert(address: Address, result: EtherscanResult): void {
+function cacheInsert(cacheKey: string, result: EtherscanResult): void {
   if (cache.size >= CACHE_MAX_ENTRIES) {
     // Insertion-order iteration → first key is the oldest. Evict one
     // entry to make room.
     const oldestKey = cache.keys().next().value;
     if (oldestKey !== undefined) cache.delete(oldestKey);
   }
-  cache.set(address, result);
+  cache.set(cacheKey, result);
 }
 
 /**
@@ -380,4 +392,232 @@ export function _resetEtherscanCacheForTesting(): void {
  */
 export function _resetEtherscanRateCounterForTesting(): void {
   agentSessionCallCount = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 35 Plan 35-01 — fetchEtherscanAbi (CUSTOM-02)
+//
+// New surface alongside `checkContractSecurity` for the escape-hatch tools
+// (Plans 35-02 `read_contract` + 35-03 `prepare_custom_call`'s preview-time
+// decode). Mirror of the never-throws / 4-arm DU / LRU pattern from
+// `src/clients/fourbyte.ts`.
+//
+// Rate counter is SHARED with checkContractSecurity — Etherscan V2 enforces
+// rate limit per API key across all chains (T-35-01-B mitigation).
+// Cache key is `${chainId}:${address}` — same address on a different chain
+// fetches independently (T-35-01-C mitigation).
+//
+// `not-applicable` arm is INTENTIONALLY OMITTED: ABI fetch is always
+// applicable when called (the consumer has already validated address shape
+// + supplied a non-null address).
+//
+// Disambiguation (Pitfall 6 / 35-RESEARCH.md): the v2 endpoint returns
+// `status: "0"` for BOTH "not verified" and other failure modes — match on
+// `result === "Contract source code not verified"` exactly to surface the
+// `not-verified` arm; everything else → `error`.
+// ---------------------------------------------------------------------------
+
+export type EtherscanAbiResult =
+  | { kind: "ok"; abi: Abi; rawAbiJson: string; sourceCodeUrl: string }
+  | { kind: "not-verified" }
+  | { kind: "rate-limited"; message: string }
+  | { kind: "error"; message: string };
+
+interface EtherscanGetAbiResponse {
+  status?: string;
+  message?: string;
+  result?: string;
+}
+
+// Module-scope per-chain ABI cache. Keyed by `${chainId}:${address}` so a
+// `(1, 0xUSDC)` lookup never collides with a `(137, 0xUSDC)` proxy on
+// Polygon. Max 64 entries — smaller than the security cache because ABIs
+// are larger (a 256-entry ABI cache could be >5MB for proxy-heavy
+// sessions).
+const abiCache = new Map<string, EtherscanAbiResult>();
+
+/**
+ * Per-chain block-explorer URL table. Inline here (NOT in
+ * `src/config/contracts.ts`) per RESEARCH § A9: this is a client-internal
+ * presentation concern, not a contract-address SOT entry.
+ *
+ * Base + Optimism use distinct domains despite sharing the OP-Stack —
+ * basescan.org and optimistic.etherscan.io are independent explorers.
+ */
+function buildSourceCodeUrl(chainId: ChainId, address: Address): string {
+  switch (chainId) {
+    case 1:
+      return `https://etherscan.io/address/${address}#code`;
+    case 42161:
+      return `https://arbiscan.io/address/${address}#code`;
+    case 137:
+      return `https://polygonscan.com/address/${address}#code`;
+    case 8453:
+      return `https://basescan.org/address/${address}#code`;
+    case 10:
+      return `https://optimistic.etherscan.io/address/${address}#code`;
+  }
+}
+
+/**
+ * Best-effort verified-ABI fetch. Never throws; returns one of the four
+ * `EtherscanAbiResult` arms.
+ *
+ * - 200 OK + status="1" → `ok` with parsed `viem.Abi` (parsed ONCE at this
+ *   layer; consumers never re-parse).
+ * - 200 OK + status="0" + result === "Contract source code not verified"
+ *   → `not-verified`.
+ * - 200 OK + status="0" + any other result → `error` with verbatim
+ *   message (a future contributor cannot accidentally mask a 5xx or
+ *   network failure as `not-verified` — Pitfall 6).
+ * - HTTP 5xx / 4xx / AbortController timeout / network unreachable /
+ *   JSON-parse failure → `error` with verbatim upstream message.
+ * - Per-session call budget exhausted → `rate-limited`.
+ *
+ * Caches all four kinds (LRU with `ABI_CACHE_MAX_ENTRIES = 64`).
+ * Resets at MCP server restart by design.
+ *
+ * URL carries the API key in the query string; NEVER logged
+ * (T-ETHERSCAN-KEY-LEAK-1 mitigation — log address + status only).
+ */
+export async function fetchEtherscanAbi(
+  chainId: ChainId,
+  address: Address,
+  apiKey: string,
+): Promise<EtherscanAbiResult> {
+  const cacheKey = `${chainId}:${address}`;
+  const cached = abiCache.get(cacheKey);
+  if (cached) return cached;
+
+  // Budget check BEFORE the network call. Cached hits never reach here,
+  // so a cached call does NOT consume the budget. Shared counter with
+  // checkContractSecurity (Etherscan V2 limits per API key, not per chain).
+  if (agentSessionCallCount >= PER_SESSION_CALL_LIMIT) {
+    return {
+      kind: "rate-limited",
+      message: `per-session limit (${PER_SESSION_CALL_LIMIT} calls) exceeded; resets at MCP server restart. Free Etherscan tier allows 100k/day; raise via paid plan if needed.`,
+    };
+  }
+  agentSessionCallCount += 1;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ETHERSCAN_TIMEOUT_MS);
+
+  const url = `${ETHERSCAN_API_URL}?chainid=${chainId}&apikey=${apiKey}&module=contract&action=getabi&address=${address}`;
+
+  let result: EtherscanAbiResult;
+  try {
+    const resp = await fetch(url, { signal: controller.signal });
+    if (!resp.ok) {
+      result = {
+        kind: "error",
+        message: `Etherscan V2 returned HTTP ${resp.status}`,
+      };
+      log("warn", `Etherscan V2 ABI lookup failed for ${address}: ${result.message}`);
+    } else {
+      let body: EtherscanGetAbiResponse;
+      try {
+        body = (await resp.json()) as EtherscanGetAbiResponse;
+      } catch (parseErr) {
+        const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+        result = {
+          kind: "error",
+          message: `Etherscan V2 invalid response shape: ${msg}`,
+        };
+        log("warn", `Etherscan V2 ABI lookup failed for ${address}: ${result.message}`);
+        abiCacheInsert(cacheKey, result);
+        return result;
+      }
+
+      if (body.status === "1" && typeof body.result === "string") {
+        // Parse the ABI ONCE at this layer. Cache the parsed `Abi` array on
+        // the result; downstream consumers (read_contract, preview_send
+        // decode) never re-parse. JSON.parse failure → `error` arm (the
+        // ABI string is corrupt — surface verbatim).
+        let parsed: Abi;
+        try {
+          parsed = JSON.parse(body.result) as Abi;
+        } catch (parseErr) {
+          const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+          result = {
+            kind: "error",
+            message: `Etherscan getabi returned unparseable JSON: ${msg}`,
+          };
+          log("warn", `Etherscan V2 ABI lookup failed for ${address}: ${result.message}`);
+          abiCacheInsert(cacheKey, result);
+          return result;
+        }
+        result = {
+          kind: "ok",
+          abi: parsed,
+          rawAbiJson: body.result,
+          sourceCodeUrl: buildSourceCodeUrl(chainId, address),
+        };
+      } else if (
+        body.status === "0" &&
+        typeof body.result === "string" &&
+        body.result === "Contract source code not verified"
+      ) {
+        // Pitfall 6 — match the upstream `result` text EXACTLY. Any other
+        // status="0" payload is a failure mode, NOT a "not verified" answer.
+        result = { kind: "not-verified" };
+      } else {
+        const detail = typeof body.result === "string" ? body.result : JSON.stringify(body.result ?? body.message ?? "");
+        result = {
+          kind: "error",
+          message: `Etherscan getabi failed: ${detail}`,
+        };
+        log("warn", `Etherscan V2 ABI lookup failed for ${address}: ${result.message}`);
+      }
+    }
+  } catch (err) {
+    const errorObj = err as Error;
+    if (errorObj?.name === "AbortError") {
+      result = {
+        kind: "error",
+        message: `Etherscan V2 unreachable (timeout ${ETHERSCAN_TIMEOUT_MS}ms)`,
+      };
+    } else {
+      result = {
+        kind: "error",
+        message: `Etherscan V2 unreachable: ${errorObj?.message ?? String(err)}`,
+      };
+    }
+    log("warn", `Etherscan V2 ABI lookup failed for ${address}: ${result.message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  abiCacheInsert(cacheKey, result);
+  return result;
+}
+
+function abiCacheInsert(cacheKey: string, result: EtherscanAbiResult): void {
+  if (abiCache.size >= ABI_CACHE_MAX_ENTRIES) {
+    const oldestKey = abiCache.keys().next().value;
+    if (oldestKey !== undefined) abiCache.delete(oldestKey);
+  }
+  abiCache.set(cacheKey, result);
+}
+
+/**
+ * Cache-only ABI lookup. Returns the cached `ok` arm if present; otherwise
+ * returns null WITHOUT making a network call. Used by `preview_send` at
+ * the prepare_custom_call DECODED ARGS branch (Plan 35-03) — preview is
+ * a synchronous-budget path that MUST NOT trigger network I/O.
+ */
+export function getCachedEtherscanAbi(
+  chainId: ChainId,
+  address: Address,
+): EtherscanAbiResult | null {
+  const cacheKey = `${chainId}:${address}`;
+  return abiCache.get(cacheKey) ?? null;
+}
+
+/**
+ * Clear the ABI cache. Test-only — production code never calls this.
+ * Mirror of `_resetEtherscanCacheForTesting` + `_resetFourbyteCacheForTesting`.
+ */
+export function _resetEtherscanAbiCacheForTesting(): void {
+  abiCache.clear();
 }

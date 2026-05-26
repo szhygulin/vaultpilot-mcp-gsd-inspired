@@ -134,7 +134,7 @@ describe("checkContractSecurity — not-applicable for null address", () => {
     const fetchMock = buildFetch({});
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await checkContractSecurity(null, "any-key");
+    const result = await checkContractSecurity(1, null, "any-key");
 
     expect(result.kind).toBe("not-applicable");
     expect(fetchMock).toHaveBeenCalledTimes(0);
@@ -149,7 +149,7 @@ describe("checkContractSecurity — happy path verified contract (Test 1)", () =
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await checkContractSecurity(VERIFIED_ADDRESS, "test-key");
+    const result = await checkContractSecurity(1, VERIFIED_ADDRESS, "test-key");
 
     expect(result.kind).toBe("ok");
     if (result.kind === "ok") {
@@ -189,7 +189,7 @@ describe("checkContractSecurity — proxy contract surfacing (T-ETHERSCAN-PROXY-
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await checkContractSecurity(PROXY_ADDRESS, "test-key");
+    const result = await checkContractSecurity(1, PROXY_ADDRESS, "test-key");
 
     expect(result.kind).toBe("ok");
     if (result.kind === "ok") {
@@ -221,7 +221,7 @@ describe("checkContractSecurity — unverified contract (Test 2)", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await checkContractSecurity(UNVERIFIED_ADDRESS, "test-key");
+    const result = await checkContractSecurity(1, UNVERIFIED_ADDRESS, "test-key");
 
     expect(result.kind).toBe("not-verified");
   });
@@ -232,7 +232,7 @@ describe("checkContractSecurity — error for HTTP 5xx (T-ETHERSCAN-MASK-1)", ()
     const fetchMock = buildFetch({ ok: false, status: 503 });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await checkContractSecurity(VERIFIED_ADDRESS, "test-key");
+    const result = await checkContractSecurity(1, VERIFIED_ADDRESS, "test-key");
 
     expect(result.kind).toBe("error");
     if (result.kind === "error") {
@@ -247,7 +247,7 @@ describe("checkContractSecurity — error for AbortController timeout (T-ETHERSC
     const fetchMock = buildFetch({ hang: true });
     vi.stubGlobal("fetch", fetchMock);
 
-    const promise = checkContractSecurity(VERIFIED_ADDRESS, "test-key");
+    const promise = checkContractSecurity(1, VERIFIED_ADDRESS, "test-key");
     await vi.advanceTimersByTimeAsync(3001);
 
     const result = await promise;
@@ -272,12 +272,12 @@ describe("checkContractSecurity — per-session rate-limit (T-ETHERSCAN-RATE-1)"
     for (let i = 0; i < 5; i++) {
       const hex = `0x${i.toString(16).padStart(40, "0")}` as Address;
       addresses.push(hex);
-      const r = await checkContractSecurity(hex, "test-key");
+      const r = await checkContractSecurity(1, hex, "test-key");
       expect(r.kind).toBe("ok");
     }
     // 6th distinct address triggers rate-limit (counter is now 5).
     const sixth = "0x0000000000000000000000000000000000000005" as Address;
-    const result = await checkContractSecurity(sixth, "test-key");
+    const result = await checkContractSecurity(1, sixth, "test-key");
     expect(result.kind).toBe("rate-limited");
     if (result.kind === "rate-limited") {
       expect(result.message).toContain("per-session limit (5 calls) exceeded");
@@ -293,19 +293,19 @@ describe("checkContractSecurity — per-session rate-limit (T-ETHERSCAN-RATE-1)"
 
     const a = "0x0000000000000000000000000000000000000001" as Address;
     // First call increments counter to 1.
-    await checkContractSecurity(a, "test-key");
+    await checkContractSecurity(1, a, "test-key");
     // Second call to same address hits cache → counter stays at 1.
-    await checkContractSecurity(a, "test-key");
+    await checkContractSecurity(1, a, "test-key");
 
     // 4 more distinct addresses — pushes counter to 5.
     for (let i = 2; i <= 5; i++) {
       const hex = `0x${i.toString(16).padStart(40, "0")}` as Address;
-      const r = await checkContractSecurity(hex, "test-key");
+      const r = await checkContractSecurity(1, hex, "test-key");
       expect(r.kind).toBe("ok");
     }
     // 5th DISTINCT call succeeded (counter is now 5). 6th triggers limit.
     const sixth = "0x0000000000000000000000000000000000000099" as Address;
-    const result = await checkContractSecurity(sixth, "test-key");
+    const result = await checkContractSecurity(1, sixth, "test-key");
     expect(result.kind).toBe("rate-limited");
   });
 });
@@ -317,7 +317,7 @@ describe("checkContractSecurity — URL with API key not logged (T-ETHERSCAN-KEY
     const fetchMock = buildFetch({ ok: false, status: 503 });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await checkContractSecurity(VERIFIED_ADDRESS, SECRET_KEY);
+    const result = await checkContractSecurity(1, VERIFIED_ADDRESS, SECRET_KEY);
 
     expect(result.kind).toBe("error");
     // Logger called at least once (warn level on the error path).
@@ -339,8 +339,8 @@ describe("checkContractSecurity — LRU cache hit", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const first = await checkContractSecurity(VERIFIED_ADDRESS, "test-key");
-    const second = await checkContractSecurity(VERIFIED_ADDRESS, "test-key");
+    const first = await checkContractSecurity(1, VERIFIED_ADDRESS, "test-key");
+    const second = await checkContractSecurity(1, VERIFIED_ADDRESS, "test-key");
 
     expect(first).toEqual(second);
     // Promise.all of 2 endpoints = 2 fetches per uncached call.
@@ -367,7 +367,7 @@ describe("checkContractSecurity — ageDays defensive 'unknown' for zero timesta
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await checkContractSecurity(VERIFIED_ADDRESS, "test-key");
+    const result = await checkContractSecurity(1, VERIFIED_ADDRESS, "test-key");
 
     expect(result.kind).toBe("ok");
     if (result.kind === "ok") {
@@ -384,7 +384,7 @@ describe("checkContractSecurity — no console.* writes (stderr-only via logger)
     const fetchMock = buildFetch({ ok: false, status: 503 });
     vi.stubGlobal("fetch", fetchMock);
 
-    const result: EtherscanResult = await checkContractSecurity(VERIFIED_ADDRESS, "test-key");
+    const result: EtherscanResult = await checkContractSecurity(1, VERIFIED_ADDRESS, "test-key");
     expect(result.kind).toBe("error");
 
     expect(consoleLog).not.toHaveBeenCalled();

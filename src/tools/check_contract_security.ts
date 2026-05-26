@@ -165,7 +165,7 @@ registerTool(
         };
       }
 
-      const result = await etherscanCheckContractSecurity(address, apiKey);
+      const result = await etherscanCheckContractSecurity(chainId, address, apiKey);
 
       if (result.kind === "rate-limited") {
         return {
