@@ -543,15 +543,21 @@ registerTool(
         "  Layer 0.5:        bypassed via isSafeExecTransaction sentinel (5 prepare-time invariants asserted above)",
       ].join("\n");
 
+      // WARN block — MUST be byte-identical to preview_send.ts's
+      // safeExecWarnBlock (Plan 37-03 Task 2 site (c)). Integration test
+      // (Task 3) asserts string equality across prepare + preview emissions
+      // to anchor drift detection (mirror of Phase 35 T-35-03-G).
+      const innerSelectorLine =
+        innerOpStr !== null
+          ? `    decoded:    ${innerOpStr}`
+          : `    selector:   ${safeTxData === "0x" ? "(native value transfer)" : safeTxData.slice(0, 10)} (undecoded)`;
       const warnBlock = [
         "[WARN — SAFE EXECUTE COMPOSITE-TX]",
         "  The outer execTransaction(...) calldata encapsulates a sub-operation:",
         `    operation:  ${operationStr}`,
         `    target:     ${safeTxTo}`,
         `    value:      ${formatEth(safeTxValue)}`,
-        innerOpStr !== null
-          ? `    decoded:    ${innerOpStr}`
-          : `    selector:   ${safeTxData.slice(0, 10)} (undecoded)`,
+        innerSelectorLine,
         "  preview_send re-emits this block byte-identical so any drift between",
         "  prepare-side and preview-side decoding fails an integration regression.",
       ].join("\n");
