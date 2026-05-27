@@ -117,6 +117,7 @@ import "./prepare_custom_call.js";                   // Phase 35 Plan 35-03 (CUS
 import "./get_safe_positions.js";                    // Phase 36 Plan 36-02 (SAFE-01) — multi-chain Safe enumeration + on-chain cross-check + Tx Service drift detection
 import "./get_safe_transaction.js";                  // Phase 36 Plan 36-02 (SAFE-02) — single Safe-tx detail + best-effort cached-ABI decode + operation discriminator
 import "./prepare_safe_tx_propose.js";               // Phase 37 Plan 37-01 (SAFE-05) — Safe multisig tx propose + EIP-712 typed-data signing
+import "./prepare_safe_tx_approve.js";               // Phase 37 Plan 37-02 (SAFE-06) — Safe multisig tx approve (co-sign) + EIP-712 typed-data signing
 import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";
