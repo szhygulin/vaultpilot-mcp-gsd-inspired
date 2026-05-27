@@ -300,7 +300,24 @@ export type ErrorCode =
   //                        chainId → cross-chain replay risk. v2.5 explicitly
   //                        refuses these. Recovery hint: re-deploy via the
   //                        Safe UI to v1.3.0+ or use a different Safe.
-  | "UNSUPPORTED_SAFE_VERSION";
+  | "UNSUPPORTED_SAFE_VERSION"
+  //
+  // Phase 37 Plan 37-02 — Safe multisig submit signature refusal codes.
+  //
+  //   INVALID_SIGNATURE_MODE — submit_safe_tx_signature refused: signature's
+  //                        v-byte is in {0, 1} (EIP-1271 contract signature
+  //                        or pre-approved hash mode). Phase 37 accepts ONLY
+  //                        ECDSA (v ∈ {27, 28}) and Safe's eth_sign mode
+  //                        (v ∈ {31, 32}). Contract signatures + pre-approved
+  //                        hashes are deferred to v3.x. T-37-13 mitigation.
+  //   WRONG_HANDLE_KIND     — Reserved for Plan 37-03's send_transaction +
+  //                        preview_send refusal arms when a Safe-typed-data
+  //                        handle is routed through the on-chain dispatch
+  //                        path (off-chain typed-data signatures do NOT
+  //                        broadcast). Plan 37-02 declares the code; Plan
+  //                        37-03 wires the consumers.
+  | "INVALID_SIGNATURE_MODE"
+  | "WRONG_HANDLE_KIND";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

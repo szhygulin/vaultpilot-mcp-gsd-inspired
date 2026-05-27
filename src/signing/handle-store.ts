@@ -1257,3 +1257,37 @@ export function _resetHandleStoreForTesting(): void {
 export function _peekHandleForTesting(handle: string): HandleRecord | undefined {
   return store.get(handle);
 }
+
+/**
+ * Phase 37 Plan 37-02 — find handles by the (chain, safeAddress, safeTxHash)
+ * tuple. Returns every PreparedTxSafeTypedData record whose tx fields match
+ * the supplied tuple (typically 0 or 1 — same SafeTx, same prepare call;
+ * multiple matches only occur if the agent re-prepared without using the
+ * prior handle).
+ *
+ * Iterates the internal Map directly — NO `_handles` ESM-spy-affordance
+ * indirection (CLAUDE.md ESM-spy rule applies to modules whose exports call
+ * each other internally; this is a leaf consumer-facing read and the
+ * one-consumer over-engineering is explicitly resolved in the Plan 37-02 spec).
+ *
+ * State-machine functions (createHandle / lookup / transitionToPreviewed /
+ * transitionToSent / transitionToCancelled) are BYTE-IDENTICAL — this is a
+ * pure ADDITIVE read.
+ */
+export function findHandlesBySafeTxHash(
+  chain: ChainId,
+  safeAddress: Address,
+  safeTxHash: Hex,
+): Array<{ handle: string; record: HandleRecord }> {
+  const matches: Array<{ handle: string; record: HandleRecord }> = [];
+  const lcSafeAddress = safeAddress.toLowerCase();
+  const lcSafeTxHash = safeTxHash.toLowerCase();
+  for (const [handle, record] of store.entries()) {
+    if (record.tx.txType !== "safe-typed-data") continue;
+    if (record.tx.chain !== chain) continue;
+    if (record.tx.safeAddress.toLowerCase() !== lcSafeAddress) continue;
+    if (record.tx.safeTxHash.toLowerCase() !== lcSafeTxHash) continue;
+    matches.push({ handle, record });
+  }
+  return matches;
+}
