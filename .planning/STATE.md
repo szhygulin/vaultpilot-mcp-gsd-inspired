@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.5
 milestone_name: Safe positions + Tx Service
 current_plan: 2
-status: verifying
-last_updated: "2026-05-27T13:55:00.000Z"
-last_activity: 2026-05-27
+status: executing
+last_updated: "2026-05-27T12:47:50.357Z"
+last_activity: 2026-05-27 -- Phase 37 planning complete
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 19
-  completed_plans: 19
-  percent: 100
+  total_phases: 3
+  completed_phases: 0
+  total_plans: 6
+  completed_plans: 2
+  percent: 0
 ---
 
 # Project State
@@ -28,9 +28,9 @@ See: .planning/PROJECT.md (updated 2026-05-12)
 Phase: 36 (safe-positions-tx-service) — code-complete
 Plan: 2 of 2
 Current Plan: 2
-Total Plans in Phase: 2
-Status: Phase complete — ready for v2.5 verify-phase
-Last activity: 2026-05-27
+Total Plans in Phase: 3
+Status: Ready to execute
+Last activity: 2026-05-27 -- Phase 37 planning complete
 
 Prior activity: 2026-05-27 — Phase 36 Plan 36-02 closed code-complete (3 atomic commits 318cc41 → d241db1 + docs commit pending). v2.5 user-visible Safe multisig read surface: `src/chains/safe.ts` Singleton state reader (parseAbi + multicall + module enumeration + `_safeChains` ESM spy seam, named-return discipline Pitfall 10) + `get_safe_positions` (multi-chain Promise.allSettled fan-out + per-chain 10s AbortController timeout + Tx Service enumeration cross-checked against on-chain Singleton multicall + wallet-not-owner silent drop + drift detection with 6 semantic labels + compact pending-tx list capped at 20 + module list sentinel-filtered + truncation flags) + `get_safe_transaction` (single SafeTx detail + best-effort cached-ABI decode via Phase 35's `getCachedEtherscanAbi` cache-only seam + operation discriminator `"call" | "delegatecall"` semantic string for Phase 38 hard-trigger contract + defensive `tx.confirmations ?? []` everywhere per Pitfall 6). FROZEN-area zero-diff held END-TO-END across Plan 36-01 + 36-02 (src/signing/, send_transaction.ts, preview_send.ts, test/signing-*.test.ts untouched — Test 18 acceptance gate). Plan 36-02 test delta: +48 (12 chains-safe + 19 safe-positions + 17 safe-get-transaction). Phase 36 total test delta: +105 (4548 → 4653). Phase 37 surfaces unblocked: EIP-712 typed-data signing flow (consumes `getOnchainSafeInfo.version` for v1.3.0 vs v1.4.1 domain-separator selection); `prepare_safe_tx_propose / _approve / _execute` (consumes the canonical-dispatch Safe arm from Plan 36-01); Phase 38 enableModule + delegateCall hard-trigger (consumes `enabledModules[]` + `operation: "call" | "delegatecall"`).
 
@@ -358,6 +358,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-26T11:10:29.465Z
-Stopped at: Phase 35 context gathered
-Resume file: .planning/phases/35-evm-escape-hatch-custom-call-abi-read/35-CONTEXT.md
+Last session: 2026-05-27T11:37:31.384Z
+Stopped at: Phase 37 context gathered
+Resume file: .planning/phases/37-safe-three-step-signing-flow/37-CONTEXT.md

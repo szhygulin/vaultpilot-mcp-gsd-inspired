@@ -1039,8 +1039,16 @@ Plans:
 
 Plans:
 
+**Wave 1**
+
 - [ ] 37-01: `src/signing/safe-tx-hash.ts` (EIP-712 typed-data digest computation for SafeTx); `prepare_safe_tx_propose` + typed-data signing flow integration with Ledger ETH app
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 37-02: `prepare_safe_tx_approve` + `submit_safe_tx_signature` + Tx Service signature-submission integration
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 37-03: `prepare_safe_tx_execute` + on-chain execution transaction builder; signature-bytes assembly from Tx Service state; full three-step integration test (propose → approve → execute simulated end-to-end)
 
 #### Phase 38: `enableModule` + `delegateCall: true` hard-trigger second-LLM check (Inv #12.5)
