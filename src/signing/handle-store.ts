@@ -24,7 +24,13 @@
 
 import type { Address, Hex } from "viem";
 
+import type { ChainId } from "../config/contracts.js";
 import type { ErrorCode } from "./error-codes.js";
+import type {
+  SafeEIP712TypedData,
+  SafeOperation,
+  SupportedSafeVersion,
+} from "./safe-tx-hash.js";
 
 export const HANDLE_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -937,7 +943,118 @@ export interface PreparedTxBtcLifi {
   payloadFingerprint: Hex;
 }
 
-export type PreparedTx = PreparedTxEvm | PreparedTxSolana | PreparedTxTron | PreparedTxBtc | PreparedTxLtc | PreparedTxBtcLifi;
+// ---------------------------------------------------------------------------
+// Phase 37 Plan 37-01 widening: PreparedTxSafeTypedData.
+// ADDITIVE TYPE SURFACE — state machine + TTL + createHandle + transitionTo*
+// logic BYTE-IDENTICAL (same pattern as Phase 23 PreparedTxBtc / Phase 26
+// PreparedTxLtc / Phase 26 PreparedTxBtcLifi precedents above).
+// ---------------------------------------------------------------------------
+
+/**
+ * Safe EIP-712 typed-data prepared-tx shape. Phase 37 — Plan 37-01 (SAFE-05).
+ *
+ * Off-chain signing flow — `prepare_safe_tx_propose` (and `prepare_safe_tx_approve`
+ * arriving in Plan 37-02) produce this shape. The handle is consumed by
+ * `submit_safe_tx_signature` (Plan 37-02), NOT by `send_transaction`. Routing
+ * `send_transaction(handle)` against a `PreparedTxSafeTypedData` handle is a
+ * structured refusal arm Plan 37-03 wires (WRONG_HANDLE_KIND); Plan 37-01
+ * establishes the type-level impossibility — the new union member's discriminant
+ * `txType: "safe-typed-data"` is distinct from every existing arm.
+ *
+ * Mirrors `PreparedTxBtcLifi` (line 879) sentinel-fields pattern — EVM-shape
+ * sentinel fields (`chainId: 0`, `to: 0x0…`, `valueWei: 0n`, `data: "0x"`)
+ * keep the discriminated union accessible at every EVM call site without
+ * forcing narrowing. The discriminant routes BEFORE any read reaches the
+ * sentinels.
+ *
+ * `txHash` field semantics (RESEARCH Open Question 1): on a Safe-typed-data
+ * handle, the `txHash` field stamped by `transitionToSent` is the SafeTx hash
+ * (the 32-byte EIP-712 digest) — NOT an on-chain tx hash. Same field, different
+ * semantic — matches the BTC `txHash` widening pattern from Plan 12-05
+ * (handle-store.ts:973 — `txHash` widened from `Hex` to `string` for non-EVM
+ * identifiers; Safe typed-data SafeTx hashes are 0x-prefixed 32-byte hex and
+ * fit `Hex`-shape but are SEMANTICALLY off-chain digests).
+ *
+ * FROZEN guard: this interface is ADDITIVE TYPE SURFACE only. The handle-store
+ * state machine + TTL + createHandle + transitionTo* logic is BYTE-IDENTICAL
+ * (Phase 23 PreparedTxBtc precedent at line 537).
+ */
+export interface PreparedTxSafeTypedData {
+  /** Required discriminator — Safe EIP-712 typed-data shape (off-chain signing only). */
+  txType: "safe-typed-data";
+
+  // -----------------------------------------------------------------------
+  // EVM-shape sentinel fields (set to zero / empty values for safe-typed-data
+  // handles). Present to keep the discriminated union accessible by existing
+  // EVM-side consumers without forcing narrowing at every site. EVM call paths
+  // that reach a safe-typed-data handle hit the Layer 0.5 dispatch-target
+  // refusal (or the Plan 37-03 WRONG_HANDLE_KIND arm) before reading these —
+  // the sentinels are defensive, not load-bearing.
+  // -----------------------------------------------------------------------
+  /** Sentinel — Safe typed-data has no EVM chainId at this layer. Always 0. The REAL chain lives in `chain` below. */
+  chainId: number;
+  /** Sentinel — the SafeTx target lives in `safeTxTo`, NOT here. Always the zero address. */
+  to: Address;
+  /** Sentinel — Safe typed-data has no on-chain value transfer at this layer. Always 0n. */
+  valueWei: bigint;
+  /** Sentinel — Safe typed-data has no EVM calldata at this layer. Always "0x". */
+  data: Hex;
+  /** Sentinel — Safe typed-data has no EVM nonce. Always undefined. */
+  nonce?: number;
+  gas?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+
+  // -----------------------------------------------------------------------
+  // Safe-specific cryptographic-binding fields.
+  // Populated by `prepare_safe_tx_propose` (Plan 37-01) and
+  // `prepare_safe_tx_approve` (Plan 37-02); consumed by `submit_safe_tx_signature`
+  // (Plan 37-02) for ECDSA-recovery + payloadFingerprint re-check.
+  // -----------------------------------------------------------------------
+
+  /** Real chain (vs sentinel `chainId` above) — populated by the resolved ChainId. */
+  chain: ChainId;
+  /** Safe proxy address (the verifyingContract of the EIP-712 domain). */
+  safeAddress: Address;
+  /** Safe Smart Account version — pre-v1.3.0 refused upstream (cross-chain replay risk). */
+  safeVersion: SupportedSafeVersion;
+  /** The 32-byte EIP-712 typed-data digest. Byte-identical to Safe's on-chain getTransactionHash. */
+  safeTxHash: Hex;
+  /** SafeTx nonce — the Safe Singleton's `nonce()` value at prepare time. NOT the EVM nonce sentinel above. */
+  safeNonce: bigint;
+  /** Operation discriminator — "call" (Enum 0) or "delegatecall" (Enum 1). Phase 38 hard-trigger keys on this for delegatecall. */
+  operation: "call" | "delegatecall";
+  /** Encapsulated SafeTx target — the address the Safe will call/delegatecall when execTransaction lands. */
+  safeTxTo: Address;
+  /** Encapsulated SafeTx value (wei). */
+  safeTxValue: bigint;
+  /** Encapsulated SafeTx calldata. */
+  safeTxData: Hex;
+  /** Legacy gas-relay field. Safe v1.3.0+ non-relayed convention sets to 0n. */
+  safeTxGas: bigint;
+  /** Legacy gas-relay field. Safe v1.3.0+ non-relayed convention sets to 0n. */
+  baseGas: bigint;
+  /** Legacy gas-relay field. Safe v1.3.0+ non-relayed convention sets to 0n. */
+  gasPrice: bigint;
+  /** Legacy gas-relay field. Safe v1.3.0+ non-relayed convention sets to 0x000…. */
+  gasToken: Address;
+  /** Legacy gas-relay field. Safe v1.3.0+ non-relayed convention sets to 0x000…. */
+  refundReceiver: Address;
+  /**
+   * Full EIP-712 typed-data structure (domain + types + message). Surfaced for
+   * agent inspection / second-LLM cross-verification — the agent can recompute
+   * the digest independently via viem.hashTypedData. No private material; the
+   * structure is what the device will display in clear-sign mode.
+   */
+  typedDataStructure: SafeEIP712TypedData;
+}
+
+// Compile-time check that `SafeOperation` (the 0|1 enum from safe-tx-hash) is
+// the canonical mapping for the "call" | "delegatecall" discriminator above.
+// Unused at runtime — the type system enforces both maps stay in sync.
+type _SafeOperationCheck = SafeOperation;
+
+export type PreparedTx = PreparedTxEvm | PreparedTxSolana | PreparedTxTron | PreparedTxBtc | PreparedTxLtc | PreparedTxBtcLifi | PreparedTxSafeTypedData;
 
 /**
  * Preview-pinned fields, persisted onto the record at `transitionToPreviewed`
