@@ -1112,6 +1112,38 @@ export interface HandleRecord {
    */
   acknowledgeNonProtocolTarget?: true;
   /**
+   * Phase 37 Plan 37-03 (SAFE-08) — Safe execTransaction Layer 0.5 bypass
+   * sentinel. Mirror of `acknowledgeNonProtocolTarget` above — same shape,
+   * narrower scope. Set ONLY by `src/tools/prepare_safe_tx_execute.ts` via
+   * the `createHandle` input. Read by `preview_send.ts` at the EVM Layer
+   * 0.5 dispatch site (line 811-812 region) to short-circuit
+   * canonical-dispatch — the outer `tx.to` is the user's Safe proxy at
+   * `safeAddress` (per-user, NOT globally allowlistable in
+   * `CANONICAL_DISPATCH_TARGETS`).
+   *
+   * The bypass is SERVER-VERIFIED (not user-acknowledged like its Phase 35
+   * sibling), authorized by 5 prepare-time defense-in-depth invariants
+   * enumerated in CONTEXT §prepare_safe_tx_execute lines (1)..(5):
+   *   1. Selector match `0x6a761202` (execTransaction)
+   *   2. On-chain VERSION() ∈ {"1.3.0", "1.4.1"}
+   *   3. getOwners() includes sender + every confirmation's recovered signer
+   *   4. All collected signatures recovered to current owners (no removeOwner drift)
+   *   5. Inner (to, value, data, operation) decoded + WARN emitted at prepare AND preview
+   *
+   * Grep-guard test (Plan 37-03 Task 3) asserts EXACTLY TWO functional
+   * source-file references — one assignment in
+   * `src/tools/prepare_safe_tx_execute.ts` and one read in
+   * `src/tools/preview_send.ts`. The grep pattern matches
+   * `isSafeExecTransaction: true` (assignment) and
+   * `record.isSafeExecTransaction` (read) — the bare type-field declaration
+   * here is not counted. Adding a third functional site → test failure.
+   *
+   * Type is `?: true` (not `?: boolean`) — match the Phase 35 sibling: the
+   * field exists or it doesn't; an explicit `false` would be a spec-shape
+   * contradiction.
+   */
+  isSafeExecTransaction?: true;
+  /**
    * Phase 35 Plan 35-03 — origin tool selector for the `preview_send`
    * DECODED ARGS arm. Set to `"prepare_custom_call"` by the escape-hatch
    * tool; absent on every other prepare_* tool's handle (those are
@@ -1155,6 +1187,12 @@ export function createHandle(input: {
   // serialization surprises in structured logs).
   acknowledgeNonProtocolTarget?: true;
   preparedBy?: string;
+  // Phase 37 Plan 37-03 (SAFE-08) — Safe execTransaction Layer 0.5 bypass
+  // sentinel. Optional; absent on every prepare_* tool except
+  // `prepare_safe_tx_execute`. Spread-on-set so the record shape stays
+  // byte-identical for non-Safe handles. Mirror of the
+  // `acknowledgeNonProtocolTarget` conditional-spread directly above.
+  isSafeExecTransaction?: true;
 }): string {
   const handle = crypto.randomUUID();
   const record: HandleRecord = {
@@ -1166,6 +1204,9 @@ export function createHandle(input: {
     createdAt: Date.now(),
     ...(input.acknowledgeNonProtocolTarget && {
       acknowledgeNonProtocolTarget: true,
+    }),
+    ...(input.isSafeExecTransaction && {
+      isSafeExecTransaction: true,
     }),
     ...(input.preparedBy !== undefined && { preparedBy: input.preparedBy }),
   };

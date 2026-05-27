@@ -317,7 +317,27 @@ export type ErrorCode =
   //                        broadcast). Plan 37-02 declares the code; Plan
   //                        37-03 wires the consumers.
   | "INVALID_SIGNATURE_MODE"
-  | "WRONG_HANDLE_KIND";
+  | "WRONG_HANDLE_KIND"
+  //
+  // Phase 37 Plan 37-03 — Safe multisig execute refusal codes.
+  //
+  //   INSUFFICIENT_SIGNATURES — prepare_safe_tx_execute refused: the number
+  //                        of collected confirmations from the Tx Service is
+  //                        strictly less than the current on-chain threshold.
+  //                        Client-side early refusal so the user does not
+  //                        pay gas for a guaranteed on-chain revert.
+  //                        Hint: "Need {N} more signatures. Use
+  //                        prepare_safe_tx_approve to collect more."
+  //   STALE_SIGNATURE      — prepare_safe_tx_execute refused: one of the
+  //                        confirmations ECDSA-recovers to an address that
+  //                        is no longer in on-chain getOwners(). Defends
+  //                        against owner-set drift (a `removeOwner` ops tx
+  //                        landed between approve and execute). Hint:
+  //                        "Confirmation by {addr} no longer maps to a
+  //                        current Safe owner. Re-collect signatures via
+  //                        prepare_safe_tx_approve."
+  | "INSUFFICIENT_SIGNATURES"
+  | "STALE_SIGNATURE";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers
