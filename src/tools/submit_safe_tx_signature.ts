@@ -210,8 +210,8 @@ registerTool(
           safeTxHash,
         );
         let cancelledHandle: string | null = null;
-        if (matches.length > 0) {
-          const target = matches[0];
+        const target = matches[0];
+        if (target !== undefined) {
           const result = transitionToCancelled(target.handle);
           if (result.ok) {
             cancelledHandle = target.handle;
@@ -375,8 +375,8 @@ registerTool(
       );
       let matchedHandleId: string | null = null;
       let matchedTx: PreparedTxSafeTypedData | null = null;
-      if (matches.length > 0) {
-        const target = matches[0];
+      const target = matches[0];
+      if (target !== undefined) {
         matchedHandleId = target.handle;
         // Narrow the discriminated union — findHandlesBySafeTxHash guarantees
         // safe-typed-data discriminator.
