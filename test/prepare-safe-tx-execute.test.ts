@@ -490,7 +490,12 @@ describe("prepare_safe_tx_execute — pre-flight refusals", () => {
     expect(result.isError).toBe(true);
     const sc = result.structuredContent as Record<string, unknown>;
     expect(sc.errorCode).toBe("STALE_SIGNATURE");
-    expect(String(sc.message)).toContain(ACCT2_ADDR);
+    // Case-insensitive contains — the impl emits the EIP-55-checksummed
+    // address from recoverAddress while the test fixture address is the
+    // lowercase keccak-derived form.
+    expect(String(sc.message).toLowerCase()).toContain(
+      ACCT2_ADDR.toLowerCase(),
+    );
   });
 });
 
@@ -608,7 +613,9 @@ describe("prepare_safe_tx_execute — composite-tx preview (CHECKS PERFORMED)", 
     );
     const result = await callTool(COMMON_ARGS);
     const text = (result.content[0] as { text: string }).text;
-    expect(text).toContain("Encapsulated operation");
+    // Encapsulated operation surfaces via the CHECKS PERFORMED "Encapsulated:"
+    // line (and the WARN block's "operation:"/"target:" lines).
+    expect(text).toMatch(/Encapsulated/);
     expect(text).toContain(FIXTURE_SAFE_A_INPUT.to);
   });
 
