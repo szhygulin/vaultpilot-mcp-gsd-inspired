@@ -223,6 +223,13 @@ import {
 import { _tronPresign } from "../signing/presign-hash-tron.js";
 import { _solanaPresign } from "../signing/presign-hash-solana.js";
 import { computePresignHash } from "../signing/presign-hash.js";
+// Phase 37 Plan 37-03 (SAFE-08) site (c) — composite-tx decode arm for the
+// Safe execTransaction selector. SHARED decoder; same module is consumed by
+// src/tools/prepare_safe_tx_execute.ts at prepare time.
+import {
+  EXEC_TRANSACTION_SELECTOR,
+  decodeSingleSafeExecTransaction,
+} from "../signing/safe-exec-decode.js";
 import { _simulationSolana } from "../signing/simulation-solana.js";
 import { _simulationTron, type TronSimulationResult } from "../signing/simulation-tron.js";
 import { _simulation } from "../signing/simulation.js";
@@ -749,6 +756,32 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     }
     const record = lookupResult.record;
 
+    // Phase 37 Plan 37-03 (SAFE-08) — site (a): safe-typed-data refusal gate.
+    // PreparedTxSafeTypedData handles are off-chain typed-data signatures;
+    // they do NOT route through preview_send. The agent signs them via
+    // eth_signTypedData_v4 over WalletConnect, then calls
+    // submit_safe_tx_signature directly. The runtime defense-in-depth arm
+    // catches the case where the agent erroneously routes a typed-data
+    // handle through the EVM dispatch path.
+    //
+    // Additive-arms-only invariant (CONTEXT §FROZEN-area lines 132-141):
+    // this is one of THREE additive sites in this file for Phase 37. The
+    // existing dispatch switch + Layer 0.5 gate + dispatch arms below stay
+    // BYTE-IDENTICAL.
+    if (record.tx.txType === "safe-typed-data") {
+      const refusalMsg =
+        "preview_send does not handle Safe typed-data handles. " +
+        "The typed-data structure was already returned by " +
+        "prepare_safe_tx_propose / prepare_safe_tx_approve; sign it via " +
+        "eth_signTypedData_v4 over WalletConnect, then call " +
+        "submit_safe_tx_signature to publish the signature.";
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${refusalMsg}` }],
+        structuredContent: errEnvelope("WRONG_HANDLE_KIND", refusalMsg),
+      };
+    }
+
     // Phase 12 — Plan 12-04 — dispatch on txType discriminator. EVM branch
     // (the Phase 4-9 byte-identical FROZEN region below) handles every
     // existing handle (txType absent OR "evm"). Solana branch routes to the
@@ -808,8 +841,25 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // .custom-call.test.ts): EXACTLY ONE non-comment read of
     // record.acknowledgeNonProtocolTarget appears in this file — the line
     // below.
+    //
+    // Phase 37 Plan 37-03 (SAFE-08) — site (b): additive `||` extension for
+    // the Safe execTransaction Layer 0.5 bypass sentinel. The user's Safe
+    // proxy at `tx.to` is per-user (NOT globally allowlistable in
+    // CANONICAL_DISPATCH_TARGETS); the sentinel `record.isSafeExecTransaction
+    // === true` short-circuits the refusal IFF prepare_safe_tx_execute set
+    // the flag, authorized server-side by the 5 prepare-time defense-in-depth
+    // invariants enumerated in CONTEXT §prepare_safe_tx_execute lines (1)..(5):
+    //   (1) outer selector === 0x6a761202
+    //   (2) on-chain VERSION() ∈ {"1.3.0", "1.4.1"}
+    //   (3) getOwners() includes sender + every recovered signer
+    //   (4) all signatures recovered to current owners (no removeOwner drift)
+    //   (5) inner (to, value, data, operation) decoded + WARN emitted prepare- AND preview-side
+    // Grep-guard test (Plan 37-03 Task 3) asserts EXACTLY TWO functional
+    // source-file references to `isSafeExecTransaction` — one assignment in
+    // prepare_safe_tx_execute.ts, one read RIGHT HERE.
     const escapeHatchBypassActive =
-      record.acknowledgeNonProtocolTarget === true;
+      record.acknowledgeNonProtocolTarget === true ||
+      record.isSafeExecTransaction === true;
     if (record.tx.data !== "0x") {
       const dispatchCheck = _canonicalDispatch.checkDispatchTarget(
         record.tx.chainId as ChainId,
@@ -1820,6 +1870,104 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       }
     }
 
+    // Phase 37 Plan 37-03 (SAFE-08) — site (c): composite-tx decode arm for
+    // Safe execTransaction calldata. Selector-based dispatch
+    // (record.tx.data.slice(0, 10) === EXEC_TRANSACTION_SELECTOR) — `tx.to`
+    // is the user's Safe proxy (per-user, NOT globally allowlistable), so
+    // selector match is the load-bearing discriminator. Best-effort inner
+    // sub-decode via the existing per-session ABI cache (mirror of the
+    // custom-call arm above).
+    //
+    // The WARN block (safeExecWarnBlock) re-emits the SAME prose shape
+    // emitted by prepare_safe_tx_execute at prepare time — Plan 37-03 Task 3
+    // integration test asserts BYTE-IDENTICAL string equality across prepare
+    // + preview to anchor drift detection (mirror of Phase 35 T-35-03-G).
+    //
+    // Composite preview is rendering-only; payloadFingerprint stays over
+    // the OUTER execTransaction calldata (unchanged from the PREP-03 envelope).
+    let safeExecDecodeBlock = "";
+    let safeExecWarnBlock: string | null = null;
+    if (
+      record.tx.data !== "0x" &&
+      record.tx.data.slice(0, 10) === EXEC_TRANSACTION_SELECTOR
+    ) {
+      try {
+        const innerDecoded = decodeSingleSafeExecTransaction(record.tx.data);
+        const operationStr =
+          innerDecoded.operation === 1 ? "delegatecall" : "call";
+        const previewChainId = record.tx.chainId as ChainId;
+        // Inner data sub-decode (best-effort via per-session ABI cache).
+        let innerOpStr: string | null = null;
+        if (
+          innerDecoded.data !== "0x" &&
+          innerDecoded.data.length >= 10
+        ) {
+          const innerCached = getCachedEtherscanAbi(
+            previewChainId,
+            innerDecoded.to,
+          );
+          if (innerCached !== null && innerCached.kind === "ok") {
+            try {
+              const innerDecodedFn = decodeFunctionData({
+                abi: innerCached.abi,
+                data: innerDecoded.data,
+              });
+              const innerArgText = innerDecodedFn.args
+                ? (innerDecodedFn.args as readonly unknown[])
+                    .map((a) =>
+                      typeof a === "bigint" ? a.toString() : String(a),
+                    )
+                    .join(", ")
+                : "";
+              innerOpStr = `${innerDecodedFn.functionName}(${innerArgText})`;
+            } catch {
+              innerOpStr = null;
+            }
+          }
+        }
+        const formatEth = (wei: bigint): string => {
+          const whole = wei / 10n ** 18n;
+          const frac = wei % 10n ** 18n;
+          if (frac === 0n) return `${whole.toString()} ETH`;
+          const fracStr = frac
+            .toString()
+            .padStart(18, "0")
+            .slice(0, 6)
+            .replace(/0+$/, "");
+          return `${whole.toString()}.${fracStr || "0"} ETH`;
+        };
+        safeExecDecodeBlock = [
+          "DECODED ARGS — Safe execTransaction (composite-tx preview)",
+          `  step 1 / 1: execTransaction → ${operationStr} to ${innerDecoded.to} with value ${formatEth(innerDecoded.value)}`,
+          ...(innerOpStr !== null
+            ? [`  Inner:        ${innerOpStr}`]
+            : [
+                `  Inner:        (undecoded — selector ${innerDecoded.data === "0x" ? "(none — native value transfer)" : innerDecoded.data.slice(0, 10)} shown on-device; call get_contract_abi for richer decode)`,
+              ]),
+          "",
+          "  Composite preview is rendering-only; payloadFingerprint commits to the OUTER execTransaction calldata.",
+        ].join("\n");
+        safeExecWarnBlock = [
+          "[WARN — SAFE EXECUTE COMPOSITE-TX]",
+          "  The outer execTransaction(...) calldata encapsulates a sub-operation:",
+          `    operation:  ${operationStr}`,
+          `    target:     ${innerDecoded.to}`,
+          `    value:      ${formatEth(innerDecoded.value)}`,
+          innerOpStr !== null
+            ? `    decoded:    ${innerOpStr}`
+            : `    selector:   ${innerDecoded.data === "0x" ? "(native value transfer)" : innerDecoded.data.slice(0, 10)} (undecoded)`,
+          "  preview_send re-emits this block byte-identical so any drift between",
+          "  prepare-side and preview-side decoding fails an integration regression.",
+        ].join("\n");
+      } catch {
+        // Decode failure — fall through to standard decodedArgsBlock. The
+        // SHARED decoder throws on selector mismatch / operation outside
+        // {0, 1}; either is a malformed-handle bug (would not survive
+        // prepare-side Invariant #1 sanity check), so a graceful fallback
+        // is the safe choice.
+      }
+    }
+
     // Filter empty decoded-args block (unknown-kind / native sends) so the
     // text-array join doesn't emit a stray empty block alongside the 4byte
     // not-applicable surface. The LEDGER NOTICE block (when emitted) goes
@@ -1833,9 +1981,12 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     const effectiveDecodedArgsBlock =
       customCallDecodeBlock !== ""
         ? customCallDecodeBlock
-        : decodedArgsBlock;
+        : safeExecDecodeBlock !== ""
+          ? safeExecDecodeBlock
+          : decodedArgsBlock;
     const blocks: (string | null)[] = [
       ...(customCallWarnBlock !== null ? [customCallWarnBlock, ""] : []),
+      ...(safeExecWarnBlock !== null ? [safeExecWarnBlock, ""] : []),
       ...(ledgerNoticeBlock !== null ? [ledgerNoticeBlock, ""] : []),
       ledgerBlock,
       "",
