@@ -45,6 +45,12 @@ import {
   getRocketPoolDepositPoolAddress,
   getRocketPoolDepositSettingsAddress,
   getRocketPoolRethAddress,
+  getSafeCompatibilityFallbackHandlerAddresses,
+  getSafeMultiSendAddresses,
+  getSafeMultiSendCallOnlyAddresses,
+  getSafeProxyFactoryAddresses,
+  getSafeSignMessageLibAddresses,
+  getSafeSingletonAddresses,
   getUniswapV3NonfungiblePositionManagerAddress,
   getUniswapV3QuoterV2Address,
   getUniswapV3SwapRouter02Address,
@@ -1287,6 +1293,147 @@ describe("src/config/contracts.ts — Phase 34 Curve KNOWN_SPENDERS promotion (T
     for (const pool of curvePools) {
       const row = KNOWN_SPENDERS_ETHEREUM.find((s) => s.address === pool.address && s.label.startsWith("Curve "));
       expect(row!.source).toBe("https://curve.finance");
+    }
+  });
+});
+
+// =============================================================================
+// Phase 36 — Plan 36-01: SafeContracts SOT
+// =============================================================================
+//
+// Coverage:
+//   - Test 1: shape — getSafeSingletonAddresses returns 4-length Address[]
+//             for each supported chain
+//   - Test 2: all 5 supported chains populated
+//   - Test 3: T-SAFE-CANONICAL-ACROSS-EIP155 — same address set per chain
+//   - Test 4: every Safe contract literal is EIP-55 checksummed (corrupted-
+//             snapshot guard via getAddress at literal site)
+//   - Test 5: spot-check the 4 mainnet singleton variants against the
+//             RESEARCH § lines 870-886 literals (regression anchor)
+//   - Test 6: getSafeSingletonAddresses(1) returns exactly the 4 expected
+//             variants
+//   - Test 7: getSafeSingletonAddresses for unconfigured chain returns []
+//   - Test 8: per-role getters return Address[] (2 entries each)
+//   - Test 9: the 4 singletons within a chain are DISTINCT (Set of 4)
+
+const SAFE_CHAIN_IDS: readonly ChainId[] = [1, 10, 137, 8453, 42161] as const;
+
+describe("SafeContracts SOT — Phase 36 Plan 36-01", () => {
+  it("Test 1 — getSafeSingletonAddresses returns Address[] of length 4 for each supported chain", () => {
+    for (const chainId of SAFE_CHAIN_IDS) {
+      const singletons = getSafeSingletonAddresses(chainId);
+      expect(singletons.length).toBe(4);
+    }
+  });
+
+  it("Test 2 — SAFE_CONTRACTS_RAW covers all 5 supported chains", () => {
+    for (const chainId of SAFE_CHAIN_IDS) {
+      const singletons = getSafeSingletonAddresses(chainId);
+      expect(singletons.length).toBeGreaterThan(0);
+      const proxyFactories = getSafeProxyFactoryAddresses(chainId);
+      expect(proxyFactories.length).toBe(2);
+    }
+  });
+
+  it("Test 3 — T-SAFE-CANONICAL-ACROSS-EIP155 — same address set per chain", () => {
+    // safe-deployments canonical-across-eip155: every supported chain shares
+    // the SAME Safe address set per role. Pairwise check across the 5 chains.
+    const reference = {
+      singletons: getSafeSingletonAddresses(1),
+      proxyFactory: getSafeProxyFactoryAddresses(1),
+      multiSend: getSafeMultiSendAddresses(1),
+      multiSendCallOnly: getSafeMultiSendCallOnlyAddresses(1),
+      signMessageLib: getSafeSignMessageLibAddresses(1),
+      compatFallback: getSafeCompatibilityFallbackHandlerAddresses(1),
+    };
+    for (const chainId of SAFE_CHAIN_IDS) {
+      expect(getSafeSingletonAddresses(chainId)).toEqual(reference.singletons);
+      expect(getSafeProxyFactoryAddresses(chainId)).toEqual(reference.proxyFactory);
+      expect(getSafeMultiSendAddresses(chainId)).toEqual(reference.multiSend);
+      expect(getSafeMultiSendCallOnlyAddresses(chainId)).toEqual(reference.multiSendCallOnly);
+      expect(getSafeSignMessageLibAddresses(chainId)).toEqual(reference.signMessageLib);
+      expect(getSafeCompatibilityFallbackHandlerAddresses(chainId)).toEqual(reference.compatFallback);
+    }
+  });
+
+  it("Test 4 — EIP-55 checksum integrity (corrupted-snapshot guard via getAddress)", () => {
+    // Every address surfaced via the per-role getters round-trips through
+    // getAddress unchanged. A corrupted hex literal would have already thrown
+    // at module load — this is the runtime regression anchor.
+    for (const chainId of SAFE_CHAIN_IDS) {
+      const allAddrs = [
+        ...getSafeSingletonAddresses(chainId),
+        ...getSafeProxyFactoryAddresses(chainId),
+        ...getSafeMultiSendAddresses(chainId),
+        ...getSafeMultiSendCallOnlyAddresses(chainId),
+        ...getSafeSignMessageLibAddresses(chainId),
+        ...getSafeCompatibilityFallbackHandlerAddresses(chainId),
+      ];
+      for (const addr of allAddrs) {
+        expect(addr).toBe(getAddress(addr));
+      }
+    }
+  });
+
+  it("Test 5 — singleton variant pins — RESEARCH § 870-886 mainnet literals", () => {
+    // Regression anchor: any address drift in SAFE_CANONICAL surfaces here as
+    // a value mismatch. The 4 variants on chainId=1 match the RESEARCH table
+    // verbatim.
+    const singletons = getSafeSingletonAddresses(1);
+    expect(singletons).toEqual([
+      getAddress("0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552"), // v1.3.0-L1
+      getAddress("0x3E5c63644E683549055b9Be8653de26E0B4CD36E"), // v1.3.0-L2
+      getAddress("0x41675C099F32341bf84BFc5382aF534df5C7461a"), // v1.4.1-L1
+      getAddress("0x29fcB43b46531BcA003ddC8FCB67FFE91900C762"), // v1.4.1-L2
+    ]);
+  });
+
+  it("Test 6 — getSafeSingletonAddresses(1) returns exactly the 4-variant array", () => {
+    const result = getSafeSingletonAddresses(1);
+    expect(result.length).toBe(4);
+    // All entries pass EIP-55 round-trip (Test 4 ensures, but explicit here too).
+    for (const addr of result) {
+      expect(addr).toBe(getAddress(addr));
+      expect(addr.length).toBe(42); // 0x + 40 hex
+    }
+  });
+
+  it("Test 7 — getSafeSingletonAddresses for unconfigured chain returns []", () => {
+    // Compile-time the union prevents passing 999 directly. Cast to exercise
+    // the runtime null-guard inside the getter (Partial<Record> arm).
+    const result = getSafeSingletonAddresses(999 as ChainId);
+    expect(result).toEqual([]);
+  });
+
+  it("Test 8 — per-role getters return Address[] of length 2", () => {
+    for (const chainId of SAFE_CHAIN_IDS) {
+      expect(getSafeProxyFactoryAddresses(chainId).length).toBe(2);
+      expect(getSafeMultiSendAddresses(chainId).length).toBe(2);
+      expect(getSafeMultiSendCallOnlyAddresses(chainId).length).toBe(2);
+      expect(getSafeSignMessageLibAddresses(chainId).length).toBe(2);
+      expect(getSafeCompatibilityFallbackHandlerAddresses(chainId).length).toBe(2);
+    }
+  });
+
+  it("Test 9 — the 4 singletons within a chain are DISTINCT addresses", () => {
+    // L1 ≠ L2 within a version; v1.3.0 ≠ v1.4.1 within a layer.
+    const singletons = getSafeSingletonAddresses(1);
+    const uniqueSet = new Set(singletons);
+    expect(uniqueSet.size).toBe(4);
+  });
+
+  it("Test 10 — per-role pairs are DISTINCT within a chain (v130 ≠ v141)", () => {
+    // Each per-role pair must carry two distinct addresses (a single-address
+    // pair would silently fold v1.3.0 + v1.4.1 dispatches into one allowlist
+    // entry — defensible only if the deployment is intentionally shared,
+    // which is NOT the case for these Safe contracts).
+    for (const chainId of SAFE_CHAIN_IDS) {
+      const proxyFactory = getSafeProxyFactoryAddresses(chainId);
+      expect(proxyFactory[0]).not.toBe(proxyFactory[1]);
+      const multiSend = getSafeMultiSendAddresses(chainId);
+      expect(multiSend[0]).not.toBe(multiSend[1]);
+      const multiSendCallOnly = getSafeMultiSendCallOnlyAddresses(chainId);
+      expect(multiSendCallOnly[0]).not.toBe(multiSendCallOnly[1]);
     }
   });
 });
