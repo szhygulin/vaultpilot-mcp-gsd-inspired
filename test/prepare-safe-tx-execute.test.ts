@@ -161,7 +161,7 @@ beforeEach(() => {
   _resetHandleStoreForTesting();
   _resetActivePersonaForTesting();
   delete process.env["VAULTPILOT"];
-  delete process.env["VAULTPILOT_DEMO"];
+  process.env["VAULTPILOT_DEMO"] = "false";
   _resetDemoModeForTesting();
   getStatusSpy.mockResolvedValue(PAIRED_STATUS_ACCT0);
 });
