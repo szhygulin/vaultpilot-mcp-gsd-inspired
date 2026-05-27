@@ -82,7 +82,17 @@ Three distinct named tools that surface the Safe multisig signing lifecycle to t
 - Builds `execTransaction` calldata: `execTransaction(to, value, data, operation, safeTxGas, baseGas, gasPrice, gasToken, refundReceiver, signatures)` — all fields read from the Tx Service SafeTx record (same fields that went into the SafeTx hash + the assembled signatures).
 - Returns standard `PreparedTxEvm` handle. Composite-tx preview shape (Phase 33 precedent — `prepare_uniswap_v3_rebalance`): the `decodedAction` block surfaces the encapsulated `to/value/data/operation` so the user sees what the Safe will execute (not just "execTransaction(…)").
 - `payloadFingerprint` uses the existing `VaultPilot-txverify-v1:` tag (execTransaction is a normal EVM tx).
-- Canonical-dispatch allowlist: target = Safe Singleton (already wired in Phase 36's `SAFE_SINGLETON_DISPATCH_ALLOWLIST`). Layer 0.5 gate passes by construction.
+- **Outer dispatch target is the user's Safe proxy at `safeAddress`** — NOT the Singleton. (Safe proxies delegatecall to the Singleton; calling Singleton directly would revert because the Singleton's own storage has no owner slots.) Per-user Safe proxies cannot be globally allowlisted in `CANONICAL_DISPATCH_TARGETS`.
+- **Layer 0.5 dispatch routing — sentinel-flag bypass (Phase 35 `prepare_custom_call` precedent).** `prepare_safe_tx_execute` sets a NEW sentinel flag `isSafeExecTransaction: true` on the `PreparedTxEvm` record. `preview_send.ts` reads this flag at the EVM dispatch site and bypasses `CANONICAL_DISPATCH_TARGETS` lookup IFF the flag is set. Mirror of the existing `acknowledgeNonProtocolTarget` bypass (`src/tools/preview_send.ts:811-812`) — same shape, narrower scope, server-verified (NOT user-acknowledged) trust source.
+- **Defense-in-depth replacing Layer 0.5** (prepare-time invariants the bypass relies on):
+  1. Selector match: outer calldata starts with `0x6a761202` (`execTransaction(...)` selector).
+  2. On-chain `VERSION()` returned by `safeAddress` is in `{"1.3.0", "1.4.1"}` (proves `safeAddress` IS a real Safe proxy delegatecalling to an allowlisted Singleton).
+  3. On-chain `getOwners()` includes the requesting wallet AND every confirmation's recovered signer.
+  4. All collected signatures recovered to current owners (defends against `removeOwner` drift).
+  5. Inner `(to, value, data, operation)` decoded + surfaced in composite-tx preview block + WARN block at preview time (mirror of `prepare_custom_call`'s WARN emission).
+  Each of (1)..(5) is a load-bearing assertion at `prepare_safe_tx_execute` time — failure produces a structured refusal, not a bypass.
+- **`SAFE_SINGLETON_DISPATCH_ALLOWLIST` re-purpose** — Phase 36's per-chain Singleton allowlist becomes the validation seed for the `VERSION()` check above: a `safeAddress` is a valid Safe proxy IFF its on-chain `VERSION()` reads succeed AND the version is supported. The Singleton-address allowlist is informational (`get_safe_positions` cross-check); not the on-chain dispatch target.
+- The sentinel flag is set ONLY by `prepare_safe_tx_execute.ts` (asserted by a grep-guard test — exactly two source-file assignment sites: prepare-side + preview-side read).
 
 ### Three-step flow naming + agent-routing discipline
 - Tool descriptions explicitly name the lifecycle stage:
@@ -120,10 +130,14 @@ Three distinct named tools that surface the Safe multisig signing lifecycle to t
 - Sequential waves only — no plan-level parallelism in Phase 37 (each plan depends on artifacts from the prior plan).
 
 ### FROZEN-area zero-diff invariant
-- `src/signing/send_transaction.ts` UNTOUCHED in Plans 37-01 + 37-02. Plan 37-03 extends `send_transaction` only via the existing `PreparedTxEvm` path (no new branches; execTransaction is a normal EVM tx).
-- `src/signing/preview_send.ts` UNTOUCHED in Plans 37-01 + 37-02. Plan 37-03 reuses unchanged.
-- Existing canonical fixtures (A/B/C/D/E/F/G/H/CRV-A/B/C/UNI-A/B/C/LP-A/B/C/COMP-A/B/Lido-A/B/C/D/EL-A/B/RP-A/B/CompV3-A/B/P/CUSTOM-A/B etc.) FROZEN. Phase 37 only ADDS SAFE-A/B/C/D — does not modify existing fixtures.
-- Acceptance gate Test 18-equivalent: `git diff` of `src/signing/send_transaction.ts` + `src/signing/preview_send.ts` is zero across Plan 37-01 + 37-02 commits.
+- Authoritative paths: `src/tools/send_transaction.ts` + `src/tools/preview_send.ts` (CONTEXT first draft incorrectly named `src/signing/...` — Phase 37 land aligns on the correct `src/tools/...` paths).
+- **Plans 37-01 + 37-02 zero-diff**: NO modifications to `src/tools/send_transaction.ts` + `src/tools/preview_send.ts`. Acceptance gate (Test 18-equivalent): `git diff origin/main -- src/tools/send_transaction.ts src/tools/preview_send.ts` is empty across all 37-01 + 37-02 commits.
+- **Plan 37-03 additive-arms-only invariant**: existing EVM dispatch + state-machine branches BYTE-IDENTICAL; permitted additions:
+  - `src/tools/send_transaction.ts` — exactly ONE new arm in the `txType` switch routing to a `WRONG_HANDLE_KIND` structured refusal when handle is `txType: "safe-typed-data"` (off-chain handle does not broadcast). Mirror the EVM-handle-only refusal arm precedent.
+  - `src/tools/preview_send.ts` — exactly TWO additions: (a) the same `WRONG_HANDLE_KIND` refusal for `txType: "safe-typed-data"` handles; (b) the `isSafeExecTransaction` sentinel-flag read at the EVM Layer 0.5 dispatch site (mirror of the existing `acknowledgeNonProtocolTarget` bypass at line 811-812 — same shape, additive `||` extension, no diff to the existing escape-hatch read).
+  - `src/signing/handle-store.ts` — additive `PreparedTxSafeTypedData` discriminant on the `PreparedTx` union + additive `isSafeExecTransaction?: boolean` sentinel field on `PreparedTxEvm`. Existing state-machine functions (`createHandle` / `lookup` / `transitionToPreviewed` / `transitionToSent`) byte-identical bodies.
+- **Existing canonical fixtures FROZEN**: A/B/C/D/E/F/G/H/CRV-A/B/C/UNI-A/B/C/LP-A/B/C/COMP-A/B/Lido-A/B/C/D/EL-A/B/RP-A/B/CompV3-A/B/P/CUSTOM-A/B etc. Phase 37 only ADDS SAFE-A/B/C/D — does not modify existing fixtures.
+- **Phase 35 precedent**: this additive-arms-only model directly mirrors how Phase 35's `prepare_custom_call` introduced the `acknowledgeNonProtocolTarget` sentinel + WARN arm without re-shaping existing EVM dispatch branches. Phase 37 follows the same architectural discipline.
 
 ### Claude's Discretion
 - Internal helper names (`SafeTxHashCalculator`, `assembleSafeSignatures`, `recoverSafeSigner`, etc.) — executor's call.

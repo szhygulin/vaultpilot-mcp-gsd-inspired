@@ -732,32 +732,34 @@ export async function postSignature(input: {
 | A6 | `execTransaction` 4-byte selector is `0x6a761202` | Pattern 3 + §4 | Wrong selector breaks the composite-tx preview dispatch. Verifiable trivially via 4byte.directory lookup or `keccak256("execTransaction(address,uint256,bytes,uint8,uint256,uint256,uint256,address,address,bytes)").slice(0, 10)`. Mitigation: anchor the selector in a test fixture. |
 | A7 | Safe v1.3.0 and v1.4.1 share identical SAFE_TX_TYPEHASH and DOMAIN_SEPARATOR_TYPEHASH bytes | §1 | If wrong, the digest function must branch on version. Mitigation: VERIFIED at both Safe source files; cross-confirmed via typehash byte values. Low risk. |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+All five questions resolved at plan-time (2026-05-27); resolutions flow into the 3 PLAN.md files.
 
 1. **Should `submit_safe_tx_signature`'s handle-store transition update `txHash` to the `safeTxHash` or leave it null?**
    - What we know: existing `transitionToSent` requires a `txHash` argument; the field name `txHash` carries the historical EVM connotation but was widened to `string` in Phase 12 for cross-chain.
    - What's unclear: whether storing the SafeTx hash here (which is NOT an on-chain tx hash) confuses downstream consumers like `get_tx_verification`.
-   - Recommendation: pass the `safeTxHash` (the EIP-712 digest) as `txHash` to `transitionToSent`. Document in `PreparedTxSafeTypedData` doc-comment that "txHash on a Safe-typed-data handle is the SafeTx hash, NOT an on-chain tx hash." Same field, different semantic — matches the BTC `txHash` widening pattern.
+   - RESOLVED: pass the `safeTxHash` (the EIP-712 digest) as `txHash` to `transitionToSent`. Document in `PreparedTxSafeTypedData` doc-comment that "txHash on a Safe-typed-data handle is the SafeTx hash, NOT an on-chain tx hash." Same field, different semantic — matches the BTC `txHash` widening pattern.
 
 2. **Should the `LEDGER DISPLAY` block be one block or two (clear-sign + blind-sign subsections)?**
    - What we know: CONTEXT.md says executor's call; default to single block with both subsections.
    - What's unclear: whether the agent can intelligently route based on CAL coverage (no — no public API).
-   - Recommendation: single block with both subsections. The user sees both possible displays and can match whichever the Ledger actually shows. Matches Phase 35 `prepare_custom_call`'s `LEDGER BLIND-SIGN HASH` precedent.
+   - RESOLVED: single block with both subsections. The user sees both possible displays and can match whichever the Ledger actually shows. Matches Phase 35 `prepare_custom_call`'s `LEDGER BLIND-SIGN HASH` precedent.
 
 3. **Should `prepare_safe_tx_execute` re-ECDSA-recover every confirmation at prepare time, or trust the Tx Service?**
    - What we know: Stale signatures after `removeOwner` are a real attack class — CONTEXT explicitly says "all signatures recovered to current owners (defends against stale signatures after removeOwner)".
    - What's unclear: cost of recovery for high-threshold Safes (a 5-of-7 means 5 recoveries; negligible compute).
-   - Recommendation: re-recover every confirmation. Anchor in CHECKS PERFORMED. The cost is zero in latency (no I/O), the defense is real.
+   - RESOLVED: re-recover every confirmation. Anchor in CHECKS PERFORMED. The cost is zero in latency (no I/O), the defense is real.
 
 4. **Should `submit_safe_tx_signature` retry on `rate-limited` response, or surface verbatim?**
    - What we know: Phase 36 client never retries; returns the `rate-limited` arm verbatim with `retryAfterMs`.
    - What's unclear: whether write operations (POST) deserve a different retry posture than reads.
-   - Recommendation: surface verbatim. Let the agent decide whether to retry. Matches the "never-throws + never-retries" Phase 36 convention.
+   - RESOLVED: surface verbatim. Let the agent decide whether to retry. Matches the "never-throws + never-retries" Phase 36 convention.
 
 5. **Does the integration test in Plan 37-03 need a co-signer persona to be realistic?**
    - What we know: CONTEXT.md says "propose → submit → approve × N → submit × N → execute, all fetch/multicall-stubbed".
    - What's unclear: whether the integration test ALSO needs to exercise a 2-of-3 threshold (multi-signer signature assembly) vs only a 1-of-1 Safe.
-   - Recommendation: BOTH. 1-of-1 anchors the degenerate case (single signature blob); 2-of-3 anchors the ascending-sort discipline + signer-recovery cross-check. Two test fixtures, one file.
+   - RESOLVED: BOTH. 1-of-1 anchors the degenerate case (single signature blob); 2-of-3 anchors the ascending-sort discipline + signer-recovery cross-check. Two test fixtures, one file.
 
 ## Environment Availability
 
