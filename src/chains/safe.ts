@@ -27,7 +27,7 @@
 // surface `truncated: true` + `nextCursor: <last seen>`. Consumers decide whether
 // to issue a follow-up paginated call (out of scope at Phase 36).
 
-import { type Address, type PublicClient, parseAbi } from "viem";
+import { type Address, type Hex, type PublicClient, parseAbi } from "viem";
 
 import { type ChainId } from "../config/contracts.js";
 
@@ -62,6 +62,14 @@ export const safeSingletonAbi = parseAbi([
   "function nonce() view returns (uint256)",
   "function VERSION() view returns (string)",
   "function getModulesPaginated(address start, uint256 pageSize) view returns (address[] modules, address next)",
+  // Phase 37 Plan 37-01 (SAFE-05) — EIP-712 typed-data signing flow surface.
+  // `domainSeparator()` is the on-chain cross-check feed for the prepare-side
+  // CHECKS PERFORMED block (we re-compute the domain locally via
+  // `viem.hashDomain` and assert byte-equality). `getTransactionHash(...)` is
+  // surfaced for Plan 37-02 / 37-03 integration-test cross-verification of the
+  // local `computeSafeTxHash` result against the on-chain canonical answer.
+  "function domainSeparator() view returns (bytes32)",
+  "function getTransactionHash(address to, uint256 value, bytes data, uint8 operation, uint256 safeTxGas, uint256 baseGas, uint256 gasPrice, address gasToken, address refundReceiver, uint256 _nonce) view returns (bytes32)",
 ]);
 
 /**
@@ -125,13 +133,42 @@ export async function getEnabledModules(
 }
 
 /**
+ * Phase 37 Plan 37-01 (SAFE-05) — read the on-chain EIP-712 `domainSeparator()`
+ * for the prepare-side CHECKS PERFORMED cross-verification. The local digest
+ * path (`safe-tx-hash.ts::computeSafeTxHash` → `viem.hashTypedData`) is the
+ * source-of-truth; this read is informational (a non-matching on-chain value
+ * surfaces as a `domainSeparatorDrift` warning in the prepare response, but
+ * does NOT refuse — the typed-data digest is correct by construction).
+ *
+ * Anti-pattern guard (RESEARCH §Anti-Patterns lines 348-350): the on-chain
+ * value is NEVER substituted for the local digest input. EIP-712 mandates
+ * client-side domain computation from `{chainId, verifyingContract}`.
+ */
+export async function getOnchainDomainSeparator(
+  client: PublicClient,
+  _chainId: ChainId,
+  safe: Address,
+): Promise<Hex> {
+  return (await client.readContract({
+    address: safe,
+    abi: safeSingletonAbi,
+    functionName: "domainSeparator",
+  })) as Hex;
+}
+
+/**
  * ESM spy-affordance per CLAUDE.md "ESM spy-affordance indirection" convention.
- * Consumers (`get_safe_positions.ts`) import `_safeChains` and call
- * `_safeChains.getOnchainSafeInfo(...)` / `_safeChains.getEnabledModules(...)`
+ * Consumers (`get_safe_positions.ts`, Phase 37 `prepare_safe_tx_propose.ts`)
+ * import `_safeChains` and call `_safeChains.getOnchainSafeInfo(...)` /
+ * `_safeChains.getEnabledModules(...)` / `_safeChains.getOnchainDomainSeparator(...)`
  * so tests can `vi.spyOn(_safeChains, ...)` to intercept the RPC calls.
  * Added at write time — ESM named-export bindings are immutable; direct spies
  * on the bare named exports are no-ops for internal calls.
  *
  * Mirror of `_aaveChains` at `src/chains/aave-v3.ts:148`.
  */
-export const _safeChains = { getOnchainSafeInfo, getEnabledModules };
+export const _safeChains = {
+  getOnchainSafeInfo,
+  getEnabledModules,
+  getOnchainDomainSeparator,
+};

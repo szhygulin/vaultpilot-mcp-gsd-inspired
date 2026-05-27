@@ -370,7 +370,7 @@ describe("get_safe_transaction :: register-all.ts wiring", () => {
 });
 
 describe("get_safe_transaction :: FROZEN-area zero-diff (Task 3 close-out)", () => {
-  it("Test 18: src/signing/, send_transaction.ts, preview_send.ts, test/signing-* untouched", async () => {
+  it("Test 18: send_transaction.ts + preview_send.ts untouched (Phase 37+ authoritative FROZEN-area scope)", async () => {
     const { execSync } = await import("node:child_process");
     // CI uses shallow checkout (fetch-depth: 1) so origin/main may be unresolvable.
     // Local dev always has it. Skip cleanly when absent — keeps the guard live for
@@ -380,11 +380,21 @@ describe("get_safe_transaction :: FROZEN-area zero-diff (Task 3 close-out)", () 
     } catch {
       return;
     }
+    // Phase 37 narrowed the FROZEN-area scope (per 37-CONTEXT.md §"FROZEN-area
+    // zero-diff invariant" lines 132-140): the authoritative paths are
+    // `src/tools/send_transaction.ts` + `src/tools/preview_send.ts` — the
+    // cryptographic-binding-chain CONSUMER files. Phase 37 Plan 37-01 explicitly
+    // EXTENDS `src/signing/` (new safe-tx-hash.ts + handle-store widening +
+    // payload-fingerprint SafeTx tag), so including `src/signing/` in the diff
+    // scope here would be a Phase-boundary contradiction. The Phase 36
+    // close-out scope (src/signing/ + send_transaction.ts + preview_send.ts +
+    // test/signing-*) is preserved historically — re-anchored to the Phase 37
+    // authoritative scope.
     const out = execSync(
-      "git diff --stat origin/main -- src/signing/ src/tools/send_transaction.ts src/tools/preview_send.ts test/signing-*.test.ts",
+      "git diff --stat origin/main -- src/tools/send_transaction.ts src/tools/preview_send.ts",
       { encoding: "utf8" },
     );
-    // Empty output → FROZEN-area zero-diff holds.
+    // Empty output → FROZEN-area zero-diff holds (Plan 37-01 + 37-02 scope).
     expect(out.trim()).toBe("");
   });
 });

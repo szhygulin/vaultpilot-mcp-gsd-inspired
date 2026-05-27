@@ -290,7 +290,17 @@ export type ErrorCode =
   //                        via `lookupCanonicalAlternative(selector)` when
   //                        the data's selector matches a known
   //                        protocol-aware prepare_* tool.
-  | "NON_PROTOCOL_TARGET_NOT_ACKNOWLEDGED";
+  | "NON_PROTOCOL_TARGET_NOT_ACKNOWLEDGED"
+  //
+  // Phase 37 Plan 37-01 — Safe multisig signing-flow refusal codes.
+  //
+  //   UNSUPPORTED_SAFE_VERSION — prepare_safe_tx_propose refused: on-chain
+  //                        Safe.VERSION() is NOT one of "1.3.0" / "1.4.1".
+  //                        Pre-v1.3.0 Safes have an EIP-712 domain WITHOUT
+  //                        chainId → cross-chain replay risk. v2.5 explicitly
+  //                        refuses these. Recovery hint: re-deploy via the
+  //                        Safe UI to v1.3.0+ or use a different Safe.
+  | "UNSUPPORTED_SAFE_VERSION";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

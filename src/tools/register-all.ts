@@ -116,6 +116,7 @@ import "./prepare_curve_add_liquidity.js";           // Phase 34 Plan 34-03 (CRV
 import "./prepare_custom_call.js";                   // Phase 35 Plan 35-03 (CUSTOM-01) — escape hatch with acknowledgeNonProtocolTarget gate + canonical-dispatch bypass + WARN block
 import "./get_safe_positions.js";                    // Phase 36 Plan 36-02 (SAFE-01) — multi-chain Safe enumeration + on-chain cross-check + Tx Service drift detection
 import "./get_safe_transaction.js";                  // Phase 36 Plan 36-02 (SAFE-02) — single Safe-tx detail + best-effort cached-ABI decode + operation discriminator
+import "./prepare_safe_tx_propose.js";               // Phase 37 Plan 37-01 (SAFE-05) — Safe multisig tx propose + EIP-712 typed-data signing
 import "./simulate_position_change.js";
 import "./preview_send.js";
 import "./send_transaction.js";
