@@ -180,6 +180,22 @@ export type SafeTxResult =
   | { kind: "error"; message: string }
   | { kind: "unsupported-chain"; chainId: ChainId };
 
+/**
+ * Phase 37 Plan 37-02 — postSignature 6-arm DU.
+ *
+ * Extends Phase 36's 5-arm read-side shape with `duplicate` for the HTTP 200
+ * idempotent re-post path (vs HTTP 201 first post). Tool layer surfaces
+ * `duplicateRePost: true` informationally — the server-side Tx Service treats
+ * a re-post of an already-stored owner+signature pair as idempotent.
+ */
+export type PostSignatureResult =
+  | { kind: "ok" }
+  | { kind: "duplicate" }
+  | { kind: "not-found" }
+  | { kind: "rate-limited"; message: string; retryAfterMs?: number }
+  | { kind: "error"; message: string }
+  | { kind: "unsupported-chain"; chainId: ChainId };
+
 // ---------------------------------------------------------------------------
 // Module-scope state (process-local; resets at MCP server restart).
 // ---------------------------------------------------------------------------
@@ -617,6 +633,127 @@ export async function getMultisigTransaction(
   }
 
   cacheInsert(safeTxCache, SAFE_TX_CACHE_MAX, cacheKey, result);
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Public API — postSignature (Phase 37 Plan 37-02 — SAFE-06/07)
+// ---------------------------------------------------------------------------
+
+/**
+ * Post a typed-data signature to the Safe Tx Service for an already-proposed
+ * SafeTx. The server stores the (owner, signature) pair after server-side
+ * ECDSA recovery; subsequent confirmations on the same SafeTx accumulate until
+ * the SafeInfo.threshold is reached.
+ *
+ * URL: POST {endpoint}/v1/multisig-transactions/{safeTxHash}/confirmations/
+ *
+ * Trailing slash is required by the Django REST router on the Tx Service side
+ * (RESEARCH §3 lock — Django routers add a trailing-slash redirect for
+ * non-matching URLs but POST redirects DROP the body, so we MUST send with the
+ * canonical slash).
+ *
+ * Body: `{"signature": "0x..."}` ONLY. No `owner` field. No `signatureType`
+ * field. The Tx Service derives owner via server-side ECDSA recovery (T-37-15
+ * mitigation: the client never makes a server-side ownership claim on the
+ * wire).
+ *
+ * Cache invalidation: on `ok` or `duplicate` we drop the `safeTxCache` entry
+ * keyed `${chainId}:${safeTxHash.toLowerCase()}` so subsequent
+ * `getMultisigTransaction` reads pick up the new confirmation. We do NOT
+ * invalidate `safeInfoCache` — the safe info itself doesn't change on
+ * signature post; only the per-SafeTx confirmations list does.
+ *
+ * Never throws — every failure surfaces a DU arm (mirror of Phase 36 client
+ * conventions).
+ */
+export async function postSignature(input: {
+  chain: ChainId;
+  safeTxHash: Hex;
+  signature: Hex;
+}): Promise<PostSignatureResult> {
+  const endpoint = SAFE_TX_SERVICE_ENDPOINTS[input.chain];
+  if (!endpoint) return { kind: "unsupported-chain", chainId: input.chain };
+
+  if (agentSessionCallCount >= PER_SESSION_CALL_LIMIT) {
+    return ceilingExceededArm();
+  }
+  agentSessionCallCount += 1;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SAFE_TX_SERVICE_TIMEOUT_MS);
+
+  let result: PostSignatureResult;
+  try {
+    // Trailing slash on the URL is load-bearing — Django REST router routes
+    // strictly here, and a redirect would drop the POST body (RESEARCH §3).
+    const url = `${endpoint}/v1/multisig-transactions/${input.safeTxHash}/confirmations/`;
+    // Body shape pinned by `test/clients-safe-tx-service.test.ts`: exactly
+    // `{"signature":"0x..."}` — no owner, no signatureType (T-37-15
+    // mitigation). Server-side ECDSA recovery is the authoritative owner check.
+    const body = JSON.stringify({ signature: input.signature });
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { ...buildHeaders(), "Content-Type": "application/json" },
+      body,
+      signal: controller.signal,
+    });
+
+    if (resp.status === 201) {
+      result = { kind: "ok" };
+    } else if (resp.status === 200) {
+      // HTTP 200 = idempotent re-post (RESEARCH §Assumption A3). The tool
+      // layer surfaces `duplicateRePost: true` informationally.
+      result = { kind: "duplicate" };
+    } else if (resp.status === 404) {
+      result = { kind: "not-found" };
+    } else if (resp.status === 429) {
+      const retryAfter = resp.headers.get("retry-after");
+      result = {
+        kind: "rate-limited",
+        message: `Safe Tx Service returned HTTP 429${retryAfter ? ` (retry-after: ${retryAfter})` : ""}`,
+        retryAfterMs: retryAfter ? Number(retryAfter) * 1000 : undefined,
+      };
+    } else if (!resp.ok) {
+      result = {
+        kind: "error",
+        message: `Safe Tx Service returned HTTP ${resp.status}`,
+      };
+    } else {
+      result = {
+        kind: "error",
+        message: `Safe Tx Service postSignature: unexpected status ${resp.status}`,
+      };
+    }
+
+    // Cache invalidation on success. Key shape MUST match the keying logic at
+    // the `getMultisigTransaction` body site — that uses the safeTxHash as-is
+    // (the wire shape preserves whatever case the caller used). We invalidate
+    // BOTH the verbatim-cased key AND the lowercased key so a mixed-case POST
+    // still drops the lowercase-keyed entry primed by a prior lowercase GET.
+    if (result.kind === "ok" || result.kind === "duplicate") {
+      const lcHash = input.safeTxHash.toLowerCase();
+      safeTxCache.delete(`${input.chain}:${input.safeTxHash}`);
+      if (lcHash !== input.safeTxHash) {
+        safeTxCache.delete(`${input.chain}:${lcHash}`);
+      }
+    }
+    if (result.kind === "error") {
+      log(
+        "warn",
+        `Safe Tx Service postSignature failed for chain=${input.chain} txHash=${input.safeTxHash}: ${result.message}`,
+      );
+    }
+  } catch (err) {
+    result = networkErrorToArm(err);
+    log(
+      "warn",
+      `Safe Tx Service postSignature failed for chain=${input.chain} txHash=${input.safeTxHash}: ${result.kind === "error" ? result.message : ""}`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
   return result;
 }
 

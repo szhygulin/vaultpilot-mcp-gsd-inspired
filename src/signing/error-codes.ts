@@ -290,7 +290,54 @@ export type ErrorCode =
   //                        via `lookupCanonicalAlternative(selector)` when
   //                        the data's selector matches a known
   //                        protocol-aware prepare_* tool.
-  | "NON_PROTOCOL_TARGET_NOT_ACKNOWLEDGED";
+  | "NON_PROTOCOL_TARGET_NOT_ACKNOWLEDGED"
+  //
+  // Phase 37 Plan 37-01 — Safe multisig signing-flow refusal codes.
+  //
+  //   UNSUPPORTED_SAFE_VERSION — prepare_safe_tx_propose refused: on-chain
+  //                        Safe.VERSION() is NOT one of "1.3.0" / "1.4.1".
+  //                        Pre-v1.3.0 Safes have an EIP-712 domain WITHOUT
+  //                        chainId → cross-chain replay risk. v2.5 explicitly
+  //                        refuses these. Recovery hint: re-deploy via the
+  //                        Safe UI to v1.3.0+ or use a different Safe.
+  | "UNSUPPORTED_SAFE_VERSION"
+  //
+  // Phase 37 Plan 37-02 — Safe multisig submit signature refusal codes.
+  //
+  //   INVALID_SIGNATURE_MODE — submit_safe_tx_signature refused: signature's
+  //                        v-byte is in {0, 1} (EIP-1271 contract signature
+  //                        or pre-approved hash mode). Phase 37 accepts ONLY
+  //                        ECDSA (v ∈ {27, 28}) and Safe's eth_sign mode
+  //                        (v ∈ {31, 32}). Contract signatures + pre-approved
+  //                        hashes are deferred to v3.x. T-37-13 mitigation.
+  //   WRONG_HANDLE_KIND     — Reserved for Plan 37-03's send_transaction +
+  //                        preview_send refusal arms when a Safe-typed-data
+  //                        handle is routed through the on-chain dispatch
+  //                        path (off-chain typed-data signatures do NOT
+  //                        broadcast). Plan 37-02 declares the code; Plan
+  //                        37-03 wires the consumers.
+  | "INVALID_SIGNATURE_MODE"
+  | "WRONG_HANDLE_KIND"
+  //
+  // Phase 37 Plan 37-03 — Safe multisig execute refusal codes.
+  //
+  //   INSUFFICIENT_SIGNATURES — prepare_safe_tx_execute refused: the number
+  //                        of collected confirmations from the Tx Service is
+  //                        strictly less than the current on-chain threshold.
+  //                        Client-side early refusal so the user does not
+  //                        pay gas for a guaranteed on-chain revert.
+  //                        Hint: "Need {N} more signatures. Use
+  //                        prepare_safe_tx_approve to collect more."
+  //   STALE_SIGNATURE      — prepare_safe_tx_execute refused: one of the
+  //                        confirmations ECDSA-recovers to an address that
+  //                        is no longer in on-chain getOwners(). Defends
+  //                        against owner-set drift (a `removeOwner` ops tx
+  //                        landed between approve and execute). Hint:
+  //                        "Confirmation by {addr} no longer maps to a
+  //                        current Safe owner. Re-collect signatures via
+  //                        prepare_safe_tx_approve."
+  | "INSUFFICIENT_SIGNATURES"
+  | "STALE_SIGNATURE";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers

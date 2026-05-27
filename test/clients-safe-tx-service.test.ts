@@ -28,6 +28,7 @@ import {
   getPendingTransactions,
   getSafeInfo,
   getSafesByOwner,
+  postSignature,
 } from "../src/clients/safe-tx-service.js";
 import * as logger from "../src/diagnostics/logger.js";
 
@@ -730,5 +731,395 @@ describe("Safe Tx Service client — 2-of-3 Safe fixture round-trip", () => {
       expect(result.safe.nonce).toBe("12");
       expect(result.safe.singleton).toBe("0x29fcB43b46531BcA003ddC8FCB67FFE91900C762");
     }
+  });
+});
+
+// ===========================================================================
+// Phase 37 Plan 37-02 — Safe Tx Service client postSignature tests (SAFE-06/07)
+//
+// 6-arm DU (extends Phase 36's 5-arm shape with `duplicate` for the HTTP 200
+// idempotent re-post path):
+//   ok | duplicate | not-found | rate-limited | error | unsupported-chain
+//
+// Cache invalidation: a successful `ok` or `duplicate` POST drops the
+// `safeTxCache` entry keyed `${chainId}:${safeTxHash.toLowerCase()}` so
+// subsequent `getMultisigTransaction` reads pick up the new confirmation.
+//
+// POST body shape: exactly `{"signature":"0x..."}` — no `owner` field, no
+// `signatureType` field on the wire (the Tx Service derives owner via
+// server-side ECDSA recovery — RESEARCH §3 + T-37-15 mitigation).
+//
+// URL: POST {endpoint}/v1/multisig-transactions/{safeTxHash}/confirmations/
+// Trailing slash required by the Django REST router on the Tx Service side.
+// ===========================================================================
+
+const POST_SIG_TX_HASH: Hex =
+  "0xabc1230000000000000000000000000000000000000000000000000000000000";
+// 65-byte ECDSA signature (130 hex chars). v = 0x1b (27) suffix matches
+// the canonical ECDSA mode the agent will submit.
+const POST_SIG_SIGNATURE: Hex = ("0x" + "11".repeat(64) + "1b") as Hex;
+
+describe("Safe Tx Service client — postSignature happy path (HTTP 201 → ok)", () => {
+  it("HTTP 201 returns kind 'ok'; POST URL has trailing slash; POST body is exactly {\"signature\":\"0x...\"}", async () => {
+    const fetchMock = buildFetch({ status: 201, payload: {} });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await postSignature({
+      chain: 1,
+      safeTxHash: POST_SIG_TX_HASH,
+      signature: POST_SIG_SIGNATURE,
+    });
+
+    expect(result.kind).toBe("ok");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const url = String(fetchMock.mock.calls[0][0]);
+    expect(url).toContain(
+      `/v1/multisig-transactions/${POST_SIG_TX_HASH}/confirmations/`,
+    );
+    // Trailing slash — Django REST router requirement (RESEARCH §3).
+    expect(url.endsWith("/")).toBe(true);
+
+    const init = fetchMock.mock.calls[0][1] as {
+      method: string;
+      headers: Record<string, string>;
+      body: string;
+    };
+    expect(init.method).toBe("POST");
+    expect(init.headers["Content-Type"]).toBe("application/json");
+    expect(init.headers.Accept).toBe("application/json");
+    // Body byte-shape — `signature` field ONLY (no owner, no signatureType).
+    expect(init.body).toBe(JSON.stringify({ signature: POST_SIG_SIGNATURE }));
+    // Defense-in-depth — the parsed body has exactly one key.
+    const parsed = JSON.parse(init.body) as Record<string, unknown>;
+    expect(Object.keys(parsed)).toEqual(["signature"]);
+    expect(parsed.signature).toBe(POST_SIG_SIGNATURE);
+  });
+});
+
+describe("Safe Tx Service client — postSignature duplicate arm (HTTP 200)", () => {
+  it("HTTP 200 returns kind 'duplicate' (idempotent re-post)", async () => {
+    const fetchMock = buildFetch({ status: 200, payload: {} });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await postSignature({
+      chain: 1,
+      safeTxHash: POST_SIG_TX_HASH,
+      signature: POST_SIG_SIGNATURE,
+    });
+
+    expect(result.kind).toBe("duplicate");
+  });
+});
+
+describe("Safe Tx Service client — postSignature not-found arm (HTTP 404)", () => {
+  it("HTTP 404 returns kind 'not-found'", async () => {
+    const fetchMock = buildFetch({ ok: false, status: 404 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await postSignature({
+      chain: 1,
+      safeTxHash: POST_SIG_TX_HASH,
+      signature: POST_SIG_SIGNATURE,
+    });
+
+    expect(result.kind).toBe("not-found");
+  });
+});
+
+describe("Safe Tx Service client — postSignature rate-limited arm (HTTP 429)", () => {
+  it("HTTP 429 with retry-after: 5 → retryAfterMs: 5000", async () => {
+    const fetchMock = buildFetch({ ok: false, status: 429, retryAfter: "5" });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await postSignature({
+      chain: 1,
+      safeTxHash: POST_SIG_TX_HASH,
+      signature: POST_SIG_SIGNATURE,
+    });
+
+    expect(result.kind).toBe("rate-limited");
+    if (result.kind === "rate-limited") {
+      expect(result.message).toContain("HTTP 429");
+      expect(result.retryAfterMs).toBe(5000);
+    }
+  });
+});
+
+describe("Safe Tx Service client — postSignature error arm (HTTP 5xx)", () => {
+  it("HTTP 500 returns kind 'error' with verbatim status code", async () => {
+    const fetchMock = buildFetch({ ok: false, status: 500 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await postSignature({
+      chain: 1,
+      safeTxHash: POST_SIG_TX_HASH,
+      signature: POST_SIG_SIGNATURE,
+    });
+
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.message).toBe("Safe Tx Service returned HTTP 500");
+    }
+  });
+});
+
+describe("Safe Tx Service client — postSignature unsupported-chain arm", () => {
+  it("chain not in endpoint table returns kind 'unsupported-chain' WITHOUT calling fetch", async () => {
+    const fetchMock = buildFetch({ status: 201, payload: {} });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await postSignature({
+      // Cast through known ChainId — runtime guard is the test target.
+      chain: 999 as 1,
+      safeTxHash: POST_SIG_TX_HASH,
+      signature: POST_SIG_SIGNATURE,
+    });
+
+    expect(result.kind).toBe("unsupported-chain");
+    if (result.kind === "unsupported-chain") {
+      expect(result.chainId).toBe(999);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe("Safe Tx Service client — postSignature per-session ceiling (30 calls)", () => {
+  it("31st postSignature returns rate-limited without fetch (shared counter)", async () => {
+    const fetchMock = buildFetch({ status: 201, payload: {} });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Exhaust the 30-call budget with distinct hashes.
+    for (let i = 0; i < 30; i++) {
+      const distinctHash = ("0x" + i.toString(16).padStart(64, "0")) as Hex;
+      const r = await postSignature({
+        chain: 1,
+        safeTxHash: distinctHash,
+        signature: POST_SIG_SIGNATURE,
+      });
+      expect(r.kind).toBe("ok");
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(30);
+
+    // 31st call → rate-limited without fetch.
+    const blockedHash = ("0x" + (30).toString(16).padStart(64, "0")) as Hex;
+    const blocked = await postSignature({
+      chain: 1,
+      safeTxHash: blockedHash,
+      signature: POST_SIG_SIGNATURE,
+    });
+    expect(blocked.kind).toBe("rate-limited");
+    if (blocked.kind === "rate-limited") {
+      expect(blocked.message).toMatch(/per-session limit \(30 calls\) exceeded/);
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(30); // NOT incremented
+  });
+});
+
+describe("Safe Tx Service client — postSignature cache invalidation", () => {
+  it("successful postSignature drops safeTxCache entry; subsequent getMultisigTransaction re-fetches", async () => {
+    // Route per-URL: GET multisig-transactions returns the SafeTx; POST
+    // confirmations/ returns 201.
+    const fetchMock = vi.fn(async (input: unknown, init?: { method?: string }) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.includes("/confirmations/")) {
+        return {
+          ok: true,
+          status: 201,
+          headers: { get: () => null },
+          json: async () => ({}),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: async () => MULTISIG_TX_OK_FIXTURE,
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const txHash = MULTISIG_TX_OK_FIXTURE.safeTxHash as Hex;
+
+    // 1. Prime the cache: getMultisigTransaction populates safeTxCache.
+    const r1 = await getMultisigTransaction(1, txHash);
+    expect(r1.kind).toBe("ok");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // 2. Cache HIT — no fetch.
+    await getMultisigTransaction(1, txHash);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // 3. POST — invalidates the cache entry.
+    const postRes = await postSignature({
+      chain: 1,
+      safeTxHash: txHash,
+      signature: POST_SIG_SIGNATURE,
+    });
+    expect(postRes.kind).toBe("ok");
+    expect(fetchMock).toHaveBeenCalledTimes(2); // 1 GET + 1 POST
+
+    // 4. Subsequent GET must hit fetch again (cache miss after invalidation).
+    await getMultisigTransaction(1, txHash);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("duplicate (HTTP 200) arm also invalidates the cache", async () => {
+    const fetchMock = vi.fn(async (input: unknown, init?: { method?: string }) => {
+      const url = String(input);
+      if (init?.method === "POST" && url.includes("/confirmations/")) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          json: async () => ({}),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: async () => MULTISIG_TX_OK_FIXTURE,
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const txHash = MULTISIG_TX_OK_FIXTURE.safeTxHash as Hex;
+
+    await getMultisigTransaction(1, txHash);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const postRes = await postSignature({
+      chain: 1,
+      safeTxHash: txHash,
+      signature: POST_SIG_SIGNATURE,
+    });
+    expect(postRes.kind).toBe("duplicate");
+
+    // Cache miss after duplicate POST.
+    await getMultisigTransaction(1, txHash);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("cache key uses lowercased safeTxHash — mixed-case POST invalidates lowercase-keyed entry", async () => {
+    const fetchMock = vi.fn(async (input: unknown, init?: { method?: string }) => {
+      if (init?.method === "POST") {
+        return {
+          ok: true,
+          status: 201,
+          headers: { get: () => null },
+          json: async () => ({}),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        json: async () => MULTISIG_TX_OK_FIXTURE,
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Note: MULTISIG_TX_OK_FIXTURE.safeTxHash is all-lowercase already; the
+    // assertion is that POST with mixed-case still invalidates the lowercase
+    // cache entry (verifies the `.toLowerCase()` normalization at delete time).
+    const lcHash = MULTISIG_TX_OK_FIXTURE.safeTxHash as Hex;
+    const mixedHash = (lcHash.slice(0, 4) + lcHash.slice(4).toUpperCase()) as Hex;
+
+    // Prime cache via lowercased GET.
+    await getMultisigTransaction(1, lcHash);
+    await getMultisigTransaction(1, lcHash);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // POST with mixed-case hash — must still invalidate the lowercase entry.
+    await postSignature({
+      chain: 1,
+      safeTxHash: mixedHash,
+      signature: POST_SIG_SIGNATURE,
+    });
+
+    // Cache miss after the invalidation.
+    await getMultisigTransaction(1, lcHash);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("Safe Tx Service client — postSignature AbortController timeout", () => {
+  it("hang fetch triggers timeout abort; kind 'error' with timeout message", async () => {
+    vi.useFakeTimers();
+    const fetchMock = buildFetch({ hang: true });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const promise = postSignature({
+      chain: 1,
+      safeTxHash: POST_SIG_TX_HASH,
+      signature: POST_SIG_SIGNATURE,
+    });
+    await vi.advanceTimersByTimeAsync(5_500);
+    const result = await promise;
+
+    expect(result.kind).toBe("error");
+    if (result.kind === "error") {
+      expect(result.message).toContain("timeout 5000ms");
+    }
+  });
+});
+
+describe("Safe Tx Service client — postSignature body shape unchanged across arms", () => {
+  it("ok and duplicate arms send IDENTICAL body bytes for the same signature", async () => {
+    // Two calls — first returns 201, second returns 200 — must both have the
+    // exact same body shape `{"signature":"0x..."}`.
+    let counter = 0;
+    const fetchMock = vi.fn(async () => {
+      counter += 1;
+      return {
+        ok: true,
+        status: counter === 1 ? 201 : 200,
+        headers: { get: () => null },
+        json: async () => ({}),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const r1 = await postSignature({
+      chain: 1,
+      safeTxHash: POST_SIG_TX_HASH,
+      signature: POST_SIG_SIGNATURE,
+    });
+    const r2 = await postSignature({
+      chain: 1,
+      safeTxHash: ("0x" + "ff".repeat(32)) as Hex,
+      signature: POST_SIG_SIGNATURE,
+    });
+
+    expect(r1.kind).toBe("ok");
+    expect(r2.kind).toBe("duplicate");
+
+    const body1 = (fetchMock.mock.calls[0][1] as { body: string }).body;
+    const body2 = (fetchMock.mock.calls[1][1] as { body: string }).body;
+    // Bodies share signature byte-equivalence regardless of arm.
+    const parsed1 = JSON.parse(body1) as Record<string, unknown>;
+    const parsed2 = JSON.parse(body2) as Record<string, unknown>;
+    expect(parsed1.signature).toBe(POST_SIG_SIGNATURE);
+    expect(parsed2.signature).toBe(POST_SIG_SIGNATURE);
+  });
+});
+
+describe("Safe Tx Service client — postSignature lazy bearer auth", () => {
+  it("env key SET → POST headers include Authorization: Bearer <key>", async () => {
+    process.env.SAFE_TX_SERVICE_API_KEY = "test-bearer-token";
+    const fetchMock = buildFetch({ status: 201, payload: {} });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await postSignature({
+      chain: 1,
+      safeTxHash: POST_SIG_TX_HASH,
+      signature: POST_SIG_SIGNATURE,
+    });
+
+    const init = fetchMock.mock.calls[0][1] as {
+      headers: Record<string, string>;
+    };
+    expect(init.headers.Authorization).toBe("Bearer test-bearer-token");
   });
 });

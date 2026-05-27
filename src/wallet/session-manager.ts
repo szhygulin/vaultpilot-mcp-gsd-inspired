@@ -77,7 +77,12 @@ const REQUIRED_NAMESPACES: {
 } = {
   eip155: {
     chains: eip155Chains,
-    methods: ["eth_sendTransaction", "personal_sign"],
+    // Phase 37 Plan 37-01 (SAFE-05) — `eth_signTypedData_v4` added for Safe
+    // multisig typed-data signing (`prepare_safe_tx_propose` + `_approve`).
+    // Pre-Phase-37 paired sessions lack this method; the tool layer surfaces
+    // INVALID_INPUT + hint = "Re-pair Ledger Live..." on first Safe-typed-data
+    // call against a stale session (Plan 37-02 / 37-03 wire the surface).
+    methods: ["eth_sendTransaction", "personal_sign", "eth_signTypedData_v4"],
     events: ["accountsChanged", "chainChanged"],
   },
 };

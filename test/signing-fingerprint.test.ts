@@ -7,8 +7,14 @@ import * as tinySecp256k1 from "tiny-secp256k1";
 
 import {
   FINGERPRINT_DOMAIN_TAG,
+  SAFE_TX_FINGERPRINT_DOMAIN_TAG,
   computePayloadFingerprint,
+  computeSafeTxPayloadFingerprint,
 } from "../src/signing/payload-fingerprint.js";
+import {
+  FIXTURE_SAFE_A_HASH,
+  FIXTURE_SAFE_A_INPUT,
+} from "./signing-safe-tx-hash.test.js";
 import {
   FINGERPRINT_DOMAIN_TAG_BTC,
   _btcFingerprint,
@@ -115,6 +121,25 @@ export const FIXTURE_CRV_C_FP = "0x2762d8badc0a798a9947b77dd56a5127bd4c65eb17b1d
  * EXPORTED so test/prepare-custom-call.test.ts + test/preview-send.custom-call.test.ts
  * + test/integration/escape-hatch.test.ts can cross-link. */
 export const FIXTURE_P_FP = "0xb137028a94f1af0a98dc0f96102101ad4efc756784fa54dc0a8fc10d5a8a1701";
+
+/** Fixture SAFE-D (Phase 37 / Plan 37-01 / SAFE-05):
+ * `VaultPilot-safetx-v1:` payloadFingerprint over the SAFE-A SafeTx
+ * (v1.3.0 call; deterministic inputs from test/signing-safe-tx-hash.test.ts).
+ * Anchors the preimage assembly:
+ *
+ *   tag(22) || chain(uint64 LE 8) || safeAddress(20) ||
+ *   safeVersion(utf-8 "v1.3.0" 6) || safeTxHash(32) || nonce(uint256 BE 32) ||
+ *   operation(uint8 1) || to(20) || value(uint256 BE 32) || keccak(data)(32)
+ *
+ * Endianness pin (RESEARCH §Pitfall A4): `chain` is LITTLE-ENDIAN per CONTEXT
+ * lock. The endianness-distinctness sanity test in this describe block proves
+ * a deliberately-BE encoding produces a DIFFERENT fingerprint — anchors the
+ * executor's correct LE choice at the source line.
+ *
+ * EXPORTED so test/prepare-safe-tx-propose.test.ts (Plan 37-01),
+ * test/submit-safe-tx-signature.test.ts (Plan 37-02), and Plan 37-03's
+ * three-step integration test can cross-link. */
+export const FIXTURE_SAFE_D_FP = "0xbd55bd01d22779249cb10b8ecea6f87c85f511a024175b7dc0aa3ac1c7dad71b";
 
 describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
   it("Fixture A — native send → 0x7e1867b2... byte-for-byte", () => {
@@ -1830,5 +1855,132 @@ describe("Phase 34 Plan 34-01 — Fixtures CRV-A / CRV-B / CRV-C", () => {
     // Drift in the preimage assembly for escape-hatch shape data breaks
     // THIS exact assertion at PR-review time.
     expect(fp).toBe(FIXTURE_P_FP);
+  });
+});
+
+// ===========================================================================
+// Phase 37 Plan 37-01 — Fixture SAFE-D
+// ===========================================================================
+//
+// `VaultPilot-safetx-v1:` payloadFingerprint over the Fixture SAFE-A SafeTx
+// inputs (imported from test/signing-safe-tx-hash.test.ts). Anchors the
+// preimage assembly + the chain(uint64 LE) endianness pin per CONTEXT lock.
+//
+// NO `beforeAll`-snapshot per CLAUDE.md cryptographic-binding rule.
+// Cross-link: test/prepare-safe-tx-propose.test.ts asserts
+//   structuredContent.payloadFingerprint === FIXTURE_SAFE_D_FP.
+
+describe("computeSafeTxPayloadFingerprint — Phase 37 Plan 37-01 / SAFE-05", () => {
+  it("domain tag is 'VaultPilot-safetx-v1:' (21 bytes utf-8) — distinct from EVM tag", () => {
+    // The 21-byte length invariant + the literal value pin the wire-shape of
+    // the cross-flow defense. A typo here = a domain tag collision across
+    // signing flows = a defense regression.
+    expect(SAFE_TX_FINGERPRINT_DOMAIN_TAG).toBe("VaultPilot-safetx-v1:");
+    expect(SAFE_TX_FINGERPRINT_DOMAIN_TAG.length).toBe(21);
+    // The EVM tag is "VaultPilot-txverify-v1:" — 23 bytes (two chars longer).
+    // Cross-flow length distinctness ALONE is enough to make a fingerprint
+    // collision improbable; the tag string ALSO differs at every byte.
+    expect(SAFE_TX_FINGERPRINT_DOMAIN_TAG).not.toBe(FINGERPRINT_DOMAIN_TAG);
+  });
+
+  it("Fixture SAFE-D — VaultPilot-safetx-v1: preimage over SAFE-A inputs → hardcoded literal byte-for-byte", () => {
+    const fp = computeSafeTxPayloadFingerprint({
+      chain: FIXTURE_SAFE_A_INPUT.chain,
+      safeAddress: FIXTURE_SAFE_A_INPUT.safeAddress,
+      safeVersion: FIXTURE_SAFE_A_INPUT.safeVersion,
+      safeTxHash: FIXTURE_SAFE_A_HASH,
+      nonce: FIXTURE_SAFE_A_INPUT.nonce,
+      operation: FIXTURE_SAFE_A_INPUT.operation,
+      to: FIXTURE_SAFE_A_INPUT.to,
+      value: FIXTURE_SAFE_A_INPUT.value,
+      data: FIXTURE_SAFE_A_INPUT.data,
+    });
+    expect(fp).toBe(FIXTURE_SAFE_D_FP);
+  });
+
+  it("endianness pin — encoding `chain` as BIG-ENDIAN produces a DIFFERENT fingerprint (RESEARCH §Pitfall A4 anchor)", () => {
+    // The CONTEXT lock encodes `chain` as uint64 LITTLE-ENDIAN; viem
+    // `numberToBytes` defaults to BIG-ENDIAN, so we reverse explicitly.
+    // This test deliberately uses a chain value whose LE and BE encodings
+    // produce DIFFERENT byte sequences (any value > 255 satisfies this).
+    // Compute a comparison fingerprint that uses BE bytes (manual preimage
+    // assembly) and prove it does NOT match the LE-anchored
+    // FIXTURE_SAFE_D_FP. Any regression that flips the encoder to BE will
+    // make the LE fingerprint match the BE one — caught here.
+    const correctLE = computeSafeTxPayloadFingerprint({
+      chain: FIXTURE_SAFE_A_INPUT.chain,
+      safeAddress: FIXTURE_SAFE_A_INPUT.safeAddress,
+      safeVersion: FIXTURE_SAFE_A_INPUT.safeVersion,
+      safeTxHash: FIXTURE_SAFE_A_HASH,
+      nonce: FIXTURE_SAFE_A_INPUT.nonce,
+      operation: FIXTURE_SAFE_A_INPUT.operation,
+      to: FIXTURE_SAFE_A_INPUT.to,
+      value: FIXTURE_SAFE_A_INPUT.value,
+      data: FIXTURE_SAFE_A_INPUT.data,
+    });
+    // Use a chain value whose BE and LE encodings differ — pick a value
+    // where the high byte is nonzero. chain=1 (the SAFE-A chain) has BE
+    // `0x0000000000000001` and LE `0x0100000000000000` — DIFFERENT.
+    // Re-compute manually with BE bytes for chain to anchor the contrast.
+    // The exact value of the BE-encoded fp doesn't matter — what matters
+    // is that it differs from the LE-encoded fp.
+    // We do this by manually building a preimage with BE chain encoding
+    // and asserting the resulting fingerprint differs from correctLE.
+    const { concat, hexToBytes, keccak256, numberToBytes, toBytes } =
+      // dynamic import equivalent — at top-of-file scope viem is already imported
+      // by the surrounding tests; re-import here keeps the test self-contained.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require("viem") as typeof import("viem");
+    const tag = toBytes(SAFE_TX_FINGERPRINT_DOMAIN_TAG);
+    const chainBE = numberToBytes(FIXTURE_SAFE_A_INPUT.chain, { size: 8 }); // BE (NO .reverse())
+    const safeAddressBytes = hexToBytes(FIXTURE_SAFE_A_INPUT.safeAddress);
+    const versionBytes = toBytes(`v${FIXTURE_SAFE_A_INPUT.safeVersion}`);
+    const safeTxHashBytes = hexToBytes(FIXTURE_SAFE_A_HASH);
+    const nonceBytes = numberToBytes(FIXTURE_SAFE_A_INPUT.nonce, { size: 32 });
+    const operationBytes = numberToBytes(FIXTURE_SAFE_A_INPUT.operation, { size: 1 });
+    const toBytes20 = hexToBytes(FIXTURE_SAFE_A_INPUT.to);
+    const valueBytes = numberToBytes(FIXTURE_SAFE_A_INPUT.value, { size: 32 });
+    const dataKeccak = hexToBytes(keccak256(hexToBytes(FIXTURE_SAFE_A_INPUT.data)));
+    const beFingerprint = keccak256(
+      concat([
+        tag,
+        chainBE,
+        safeAddressBytes,
+        versionBytes,
+        safeTxHashBytes,
+        nonceBytes,
+        operationBytes,
+        toBytes20,
+        valueBytes,
+        dataKeccak,
+      ]),
+    );
+    expect(correctLE).not.toBe(beFingerprint);
+  });
+
+  it("nonce-distinctness — same SafeTx inputs at nonce: 1n vs 2n produce different fingerprints", () => {
+    const a = computeSafeTxPayloadFingerprint({
+      chain: 1,
+      safeAddress: FIXTURE_SAFE_A_INPUT.safeAddress,
+      safeVersion: "1.3.0",
+      safeTxHash: FIXTURE_SAFE_A_HASH,
+      nonce: 1n,
+      operation: 0,
+      to: FIXTURE_SAFE_A_INPUT.to,
+      value: 0n,
+      data: "0x",
+    });
+    const b = computeSafeTxPayloadFingerprint({
+      chain: 1,
+      safeAddress: FIXTURE_SAFE_A_INPUT.safeAddress,
+      safeVersion: "1.3.0",
+      safeTxHash: FIXTURE_SAFE_A_HASH,
+      nonce: 2n,
+      operation: 0,
+      to: FIXTURE_SAFE_A_INPUT.to,
+      value: 0n,
+      data: "0x",
+    });
+    expect(a).not.toBe(b);
   });
 });

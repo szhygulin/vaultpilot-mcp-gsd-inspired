@@ -835,3 +835,30 @@ describe("session-manager — post-restart resume (#25 acceptance #1 + #2)", () 
     expect(status?.activeAccount).toBe(MULTI_ACCOUNTS[0]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 37 Plan 37-01 (SAFE-05) — REQUIRED_NAMESPACES.eip155.methods includes
+// eth_signTypedData_v4 for Safe multisig typed-data signing.
+// ---------------------------------------------------------------------------
+
+describe("session-manager — REQUIRED_NAMESPACES.eip155.methods (Phase 37 Plan 37-01)", () => {
+  it("pair() passes a methods array containing 'eth_signTypedData_v4' to client.connect", async () => {
+    const session = buildMockSession({ chainId: 1, address: ADDRESS, topic: TOPIC });
+    const pending = pair();
+    await waitUntilConnectCalled();
+    mockSignClient._simulateApproval(session);
+    await pending;
+
+    const connectArgs = mockSignClient.client.connect.mock.calls[0]?.[0] as {
+      requiredNamespaces: { eip155: { methods: string[] } };
+    };
+    const methods = connectArgs.requiredNamespaces.eip155.methods;
+    // Three entries: original 2 + Phase 37 addition.
+    expect(methods).toEqual([
+      "eth_sendTransaction",
+      "personal_sign",
+      "eth_signTypedData_v4",
+    ]);
+    expect(methods).toContain("eth_signTypedData_v4");
+  });
+});

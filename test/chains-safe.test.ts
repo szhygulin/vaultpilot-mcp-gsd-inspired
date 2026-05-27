@@ -11,12 +11,13 @@
 //   - getEnabledModules — single readContract, SENTINEL filter, truncation flag
 //     (Pitfalls 4 + 5), pageSize=100n, start=SENTINEL
 
-import type { Address, PublicClient } from "viem";
+import type { Address, Hex, PublicClient } from "viem";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   _safeChains,
   getEnabledModules,
+  getOnchainDomainSeparator,
   getOnchainSafeInfo,
   SAFE_SENTINEL_MODULES,
   safeSingletonAbi,
@@ -34,14 +35,41 @@ afterEach(() => {
 });
 
 describe("chains/safe::safeSingletonAbi (parseAbi struct-ref resolution; Pitfall 10 named returns)", () => {
-  it("parses 5 function fragments — all view-state, all named returns", () => {
+  it("parses 7 function fragments — all view-state, all named returns (Phase 37 added domainSeparator + getTransactionHash)", () => {
     expect(Array.isArray(safeSingletonAbi)).toBe(true);
     const fnFragments = safeSingletonAbi.filter((f) => f.type === "function");
-    expect(fnFragments).toHaveLength(5);
+    expect(fnFragments).toHaveLength(7);
     for (const fn of fnFragments) {
       expect(fn.type).toBe("function");
       expect(fn.stateMutability).toBe("view");
     }
+  });
+
+  it("Phase 37 — safeSingletonAbi includes domainSeparator() returns (bytes32)", () => {
+    const fn = safeSingletonAbi.find(
+      (f): f is Extract<typeof safeSingletonAbi[number], { type: "function" }> =>
+        f.type === "function" && f.name === "domainSeparator",
+    );
+    expect(fn).toBeDefined();
+    expect(fn?.inputs).toHaveLength(0);
+    expect(fn?.outputs).toHaveLength(1);
+    expect(fn?.outputs[0]?.type).toBe("bytes32");
+  });
+
+  it("Phase 37 — safeSingletonAbi includes getTransactionHash(10 args) returns (bytes32) — canonical on-chain digest view", () => {
+    const fn = safeSingletonAbi.find(
+      (f): f is Extract<typeof safeSingletonAbi[number], { type: "function" }> =>
+        f.type === "function" && f.name === "getTransactionHash",
+    );
+    expect(fn).toBeDefined();
+    expect(fn?.inputs).toHaveLength(10);
+    expect(fn?.inputs.map((i) => i.type)).toEqual([
+      "address", "uint256", "bytes", "uint8",
+      "uint256", "uint256", "uint256",
+      "address", "address", "uint256",
+    ]);
+    expect(fn?.outputs).toHaveLength(1);
+    expect(fn?.outputs[0]?.type).toBe("bytes32");
   });
 
   it("getModulesPaginated has named returns (modules, next) — Pitfall 10 anchor", () => {
@@ -186,6 +214,26 @@ describe("chains/safe::getEnabledModules — single readContract, SENTINEL filte
   });
 });
 
+describe("chains/safe::getOnchainDomainSeparator — Phase 37 Plan 37-01 (SAFE-05)", () => {
+  it("readContract returns the on-chain bytes32 verbatim", async () => {
+    const fixtureDomainHash =
+      "0x1f5d8f6e3c4a8b9d2e7f6a5c4b3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d" as Hex;
+    const readContract = vi.fn().mockResolvedValue(fixtureDomainHash);
+    const mockClient = { readContract } as unknown as PublicClient;
+
+    const result = await getOnchainDomainSeparator(mockClient, 1, SAFE);
+
+    expect(readContract).toHaveBeenCalledOnce();
+    const call = readContract.mock.calls[0]?.[0] as {
+      address: Address;
+      functionName: string;
+    };
+    expect(call.address).toBe(SAFE);
+    expect(call.functionName).toBe("domainSeparator");
+    expect(result).toBe(fixtureDomainHash);
+  });
+});
+
 describe("chains/safe::_safeChains ESM spy-affordance (CLAUDE.md mandatory convention)", () => {
   it("vi.spyOn(_safeChains, 'getOnchainSafeInfo') intercepts internal calls", async () => {
     const spy = vi.spyOn(_safeChains, "getOnchainSafeInfo").mockResolvedValue({
@@ -216,5 +264,23 @@ describe("chains/safe::_safeChains ESM spy-affordance (CLAUDE.md mandatory conve
     expect(spy).toHaveBeenCalledOnce();
     expect(result.modules).toEqual([MOD_1]);
     expect(result.truncated).toBe(false);
+  });
+
+  it("Phase 37 — vi.spyOn(_safeChains, 'getOnchainDomainSeparator') intercepts internal calls", async () => {
+    const stubDomain =
+      "0xdeadbeef00000000000000000000000000000000000000000000000000000000" as Hex;
+    const spy = vi
+      .spyOn(_safeChains, "getOnchainDomainSeparator")
+      .mockResolvedValue(stubDomain);
+
+    const mockClient = { readContract: vi.fn() } as unknown as PublicClient;
+    const result = await _safeChains.getOnchainDomainSeparator(
+      mockClient,
+      1,
+      SAFE,
+    );
+
+    expect(spy).toHaveBeenCalledOnce();
+    expect(result).toBe(stubDomain);
   });
 });

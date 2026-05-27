@@ -241,6 +241,33 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
     }
     const record = lookupResult.record;
 
+    // Phase 37 Plan 37-03 (SAFE-08) — handle-shape gate. Refuses
+    // PreparedTxSafeTypedData handles with WRONG_HANDLE_KIND BEFORE the
+    // state-machine gate (PREVIEW_REQUIRED / WRONG_STATUS) — type-level
+    // mis-routing is impossible-by-construction (the discriminant gate at the
+    // top of preview_send.ts also fires), but the runtime defense-in-depth
+    // arm catches direct send_transaction invocation on a typed-data handle.
+    // Off-chain typed-data signatures do NOT broadcast — the agent must call
+    // submit_safe_tx_signature to publish the signature to the Safe Tx Service.
+    //
+    // Additive-arms-only invariant (CONTEXT §FROZEN-area lines 132-141): this
+    // is the ONLY Phase-37 modification of this file. The existing EVM /
+    // Solana / TRON / BTC / LTC / BTC-LiFi dispatch arms below stay BYTE-
+    // IDENTICAL. The git-diff acceptance gate in Plan 37-03 Task 3 enforces
+    // additive-only — `git diff origin/main -- src/tools/send_transaction.ts`
+    // contains no deletion markers (^-(?!--)).
+    if (record.tx.txType === "safe-typed-data") {
+      const refusalMsg =
+        "send_transaction does not handle Safe typed-data handles. " +
+        "Use submit_safe_tx_signature to publish your signature to the " +
+        "Safe Tx Service. send_transaction is for on-chain EVM broadcasts only.";
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${refusalMsg}` }],
+        structuredContent: errEnvelope("WRONG_HANDLE_KIND", refusalMsg),
+      };
+    }
+
     // STATE-MACHINE gate (T-STATE-4 / T-PREVIEW-CONSUMED-1). Terminal
     // states refuse with WRONG_STATUS; `prepared` refuses with
     // PREVIEW_REQUIRED to give a more actionable error than
