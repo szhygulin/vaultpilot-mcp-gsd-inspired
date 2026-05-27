@@ -4,13 +4,13 @@ milestone: v2.5
 milestone_name: Safe positions + Tx Service
 current_plan: 2
 status: executing
-last_updated: "2026-05-27T12:47:50.357Z"
-last_activity: 2026-05-27 -- Phase 37 planning complete
+last_updated: "2026-05-27T16:25:00.000Z"
+last_activity: 2026-05-27 -- Phase 37 Plan 37-01 closed code-complete (3 atomic commits 905a95e → 1b26ca8)
 progress:
   total_phases: 3
   completed_phases: 0
   total_plans: 6
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -21,16 +21,18 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-12)
 
 **Core value:** The user trusts what the Ledger screen shows — nothing else. Tampering at any layer between the agent and the device produces a visible mismatch on-screen before signing.
-**Current focus:** Phase 36 done; v2.5 verify pending
+**Current focus:** Phase 37 — safe-three-step-signing-flow
 
 ## Current Position
 
-Phase: 36 (safe-positions-tx-service) — code-complete
-Plan: 2 of 2
+Phase: 37 (safe-three-step-signing-flow) — EXECUTING
+Plan: 2 of 3 (Plan 37-01 complete; Plan 37-02 next)
 Current Plan: 2
 Total Plans in Phase: 3
-Status: Ready to execute
-Last activity: 2026-05-27 -- Phase 37 planning complete
+Status: Executing Phase 37
+Last activity: 2026-05-27 -- Phase 37 Plan 37-01 closed code-complete
+
+Prior activity: 2026-05-27 — Phase 37 Plan 37-01 closed code-complete (3 atomic commits 905a95e → 1b26ca8). v2.5 Safe trust-pipeline foundation: `src/signing/safe-tx-hash.ts` (EIP-712 typed-data digest v1.3.0+v1.4.1 single path via viem.hashTypedData — single digest because byte-identical typehashes per RESEARCH §Pitfall 1; chainId pinned as number per RESEARCH §Pitfall 2) + `payload-fingerprint.ts` extension `SAFE_TX_FINGERPRINT_DOMAIN_TAG = "VaultPilot-safetx-v1:"` + `computeSafeTxPayloadFingerprint` (uint64 LE chain encoding via explicit `.reverse()` per RESEARCH §Pitfall A4) + Fixtures SAFE-A (`0xf5073f…`) / SAFE-B (`0xf198ea…`) / SAFE-C (`0x2f5b39…`) / SAFE-D (`0xbd55bd…`) hardcoded `0x…` literals (NO `beforeAll`-snapshot per CLAUDE.md) + `PreparedTxSafeTypedData` 7th `PreparedTx` union member with sentinel EVM-shape fields + Safe-specific cryptographic-binding fields (chain, safeAddress, safeVersion, safeTxHash, safeNonce, operation, safeTxTo/Value/Data, gas-relay quintet, typedDataStructure) + `prepare_safe_tx_propose` MCP tool (off-chain typed-data sign; refuses pre-v1.3.0 with `UNSUPPORTED_SAFE_VERSION` for cross-chain replay protection; refuses non-owner with `INVALID_INPUT`; surfaces PREPARE RECEIPT + CHECKS PERFORMED with domainSeparator drift detection + LEDGER DISPLAY with both clear-sign + blind-sign expectations) + `eth_signTypedData_v4` added to `REQUIRED_NAMESPACES.eip155.methods` for new WC pairings + `safe.ts` `domainSeparator()` + `getTransactionHash(10-arg)` ABI extensions + `getOnchainDomainSeparator` reader + `_safeChains` ESM seam extension + `UNSUPPORTED_SAFE_VERSION` error code. Test delta: +197 (4653 → 4850; +42 unique tests, remainder from fixture cross-imports in consumer tests — expected). FROZEN-area zero-diff held across all 3 commits per Phase 37 authoritative scope (`src/tools/send_transaction.ts` + `src/tools/preview_send.ts` untouched). One `[Rule 3 - Auto-fix]` deviation: re-scoped Phase 36 Test 18 from `src/signing/` zero-diff to Phase 37 authoritative paths (Phase 36 test scope was Phase-36-bounded; Plan 37-01 explicitly extends `src/signing/`). One `[Rule 1 - Bug]` deviation: lowercased Fixture SAFE-B safeAddress to bypass viem EIP-55 checksum validation. New exports surface for Plans 37-02 + 37-03: `computeSafeTxHash` / `buildSafeEIP712TypedData` / `computeSafeTxPayloadFingerprint` / `PreparedTxSafeTypedData` / `getOnchainDomainSeparator` / `SAFE_TX_FINGERPRINT_DOMAIN_TAG` / `SafeOperation` / `SupportedSafeVersion` / `SafeEIP712TypedData` / `UNSUPPORTED_SAFE_VERSION`. Plan 37-02 unblocked: `prepare_safe_tx_approve` (consumes `computeSafeTxHash` + `buildSafeEIP712TypedData`) + `submit_safe_tx_signature` (consumes `computeSafeTxPayloadFingerprint` for re-check + ECDSA-recover against `safeTxHash`).
 
 Prior activity: 2026-05-27 — Phase 36 Plan 36-02 closed code-complete (3 atomic commits 318cc41 → d241db1 + docs commit pending). v2.5 user-visible Safe multisig read surface: `src/chains/safe.ts` Singleton state reader (parseAbi + multicall + module enumeration + `_safeChains` ESM spy seam, named-return discipline Pitfall 10) + `get_safe_positions` (multi-chain Promise.allSettled fan-out + per-chain 10s AbortController timeout + Tx Service enumeration cross-checked against on-chain Singleton multicall + wallet-not-owner silent drop + drift detection with 6 semantic labels + compact pending-tx list capped at 20 + module list sentinel-filtered + truncation flags) + `get_safe_transaction` (single SafeTx detail + best-effort cached-ABI decode via Phase 35's `getCachedEtherscanAbi` cache-only seam + operation discriminator `"call" | "delegatecall"` semantic string for Phase 38 hard-trigger contract + defensive `tx.confirmations ?? []` everywhere per Pitfall 6). FROZEN-area zero-diff held END-TO-END across Plan 36-01 + 36-02 (src/signing/, send_transaction.ts, preview_send.ts, test/signing-*.test.ts untouched — Test 18 acceptance gate). Plan 36-02 test delta: +48 (12 chains-safe + 19 safe-positions + 17 safe-get-transaction). Phase 36 total test delta: +105 (4548 → 4653). Phase 37 surfaces unblocked: EIP-712 typed-data signing flow (consumes `getOnchainSafeInfo.version` for v1.3.0 vs v1.4.1 domain-separator selection); `prepare_safe_tx_propose / _approve / _execute` (consumes the canonical-dispatch Safe arm from Plan 36-01); Phase 38 enableModule + delegateCall hard-trigger (consumes `enabledModules[]` + `operation: "call" | "delegatecall"`).
 
