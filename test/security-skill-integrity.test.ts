@@ -34,14 +34,15 @@ import {
 } from "../src/security/skill-integrity.js";
 
 // Path to the planning-time SOT (the file whose SHA-256 IS
-// EXPECTED_SKILL_SHA256 by Plan 09-02's fixpoint algorithm). Used to seed
-// the tmp-file fixture for the OK arm test.
+// EXPECTED_SKILL_SHA256). Phase 38 Plan 38-01 (DF-2) replaced the v1.3.x pin
+// with v1.4 — the SOT is now the Phase 38 planning artifact that Plan 38-02
+// copies byte-identically to the sister-repo SKILL.md.
 const TEMPLATE_PATH = join(
   process.cwd(),
   ".planning",
   "phases",
-  "09-hardening-skill-and-verification-tools",
-  "09-01-SKILL-TEMPLATE.md",
+  "38-safe-enable-module-delegate-call-second-llm",
+  "38-02-SKILL-TEMPLATE.md",
 );
 
 // Per-test tmp scratch dir — used to stub `homedir()` via the HOME env var
@@ -249,7 +250,7 @@ describe("consumeSkillIntegrityNotice — state-to-NOTICE mapping", () => {
     expect(notice).toContain("/home/u/.claude/skills/vaultpilot-preflight/SKILL.md");
     expect(notice).toContain("/proj/.claude/skills/vaultpilot-preflight/SKILL.md");
     expect(notice).toContain("git clone https://github.com/szhygulin/vaultpilot-preflight-skill");
-    expect(notice).toContain("git checkout v1.3.0");
+    expect(notice).toContain("git checkout v1.4");
     // Newline-indented join — second path appears after `\n    ` prefix.
     expect(notice).toContain("\n    /proj/.claude/skills/vaultpilot-preflight/SKILL.md");
     // Template starts with the header (raw template byte-identical at the prefix).
@@ -359,10 +360,41 @@ describe("EXPECTED_SKILL_SHA256 — single-SOT discipline (T-SKILL-SHA-PIN-1)", 
     // valid 64-char lowercase hex.
     expect(EXPECTED_SKILL_SHA256).toMatch(/^[a-f0-9]{64}$/);
 
-    // The constant equals the SHA-256 of the post-Step-0-fix planning template
-    // by construction (Plan 09-02 fixpoint substitution).
+    // The constant equals the SHA-256 of the planning template by construction
+    // (Phase 38 Plan 38-01 DF-2: REPLACEMENT pin against
+    // 38-02-SKILL-TEMPLATE.md content).
     const templateContent = fs.readFileSync(TEMPLATE_PATH);
     const independentSha = crypto.createHash("sha256").update(templateContent).digest("hex");
     expect(EXPECTED_SKILL_SHA256).toBe(independentSha);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Phase 38 Plan 38-01 — v1.3.0 → v1.4 prose-update sites (DF-2 satellite)
+// -----------------------------------------------------------------------------
+
+describe("Phase 38 Plan 38-01 — v1.4 prose-update satellite sites", () => {
+  it("Test 13 — zero remaining 'v1.3.0' literals in src/server.ts INSTRUCTIONS + src/signing/blocks.ts notice templates (DF-2 single-coordinated-release discipline)", () => {
+    // Per single-coordinated-release discipline (skill-integrity.ts:17-24),
+    // ALL FOUR sites must move in lockstep with the SHA pin: skill-integrity.ts
+    // constant + server.ts INSTRUCTIONS interpolation + blocks.ts notice-missing
+    // install one-liner + blocks.ts notice-tampered branch (c) "older skill
+    // version" prose.
+    const server = fs.readFileSync("src/server.ts", "utf8");
+    const blocks = fs.readFileSync("src/signing/blocks.ts", "utf8");
+    expect(server.includes("v1.3.0")).toBe(false);
+    expect(blocks.includes("v1.3.0")).toBe(false);
+    // Positive: the v1.4 literal is present (proves the prose updates landed,
+    // not that the lines were merely deleted).
+    expect(server.includes("v1.4")).toBe(true);
+    expect(blocks.includes("v1.4")).toBe(true);
+  });
+
+  it("Test 14 — planning artifact .planning/phases/38-.../38-02-SKILL-TEMPLATE.md exists + contains Step 0.5 + both HARD-TRIGGER block titles (skill-side scan SOT)", () => {
+    expect(fs.existsSync(TEMPLATE_PATH)).toBe(true);
+    const content = fs.readFileSync(TEMPLATE_PATH, "utf8");
+    expect(content).toMatch(/## Step 0\.5 — Inv #12\.5/);
+    expect(content).toContain("[HARD-TRIGGER — MODULE ENABLE]");
+    expect(content).toContain("[HARD-TRIGGER — DELEGATECALL]");
   });
 });

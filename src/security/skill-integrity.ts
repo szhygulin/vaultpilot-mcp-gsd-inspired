@@ -46,19 +46,22 @@ import {
 } from "../signing/blocks.js";
 
 /**
- * Pinned SHA-256 of the v1.3.x companion skill (`SKILL.md` at sister repo
+ * Pinned SHA-256 of the v1.4 companion skill (`SKILL.md` at sister repo
  * `szhygulin/vaultpilot-preflight-skill`, byte-identical to
- * `.planning/phases/09-hardening-skill-and-verification-tools/09-01-SKILL-TEMPLATE.md`).
+ * `.planning/phases/38-safe-enable-module-delegate-call-second-llm/38-02-SKILL-TEMPLATE.md`).
  *
  * Updated as a coordinated bump with each tagged release of the sister repo
- * (Plan 09-02 substituted the placeholder against the post-Step-0-fix template).
+ * (Plan 38-01 REPLACES the v1.3.x pin per DF-2 — single constant, NOT
+ * promoted to a multi-version additive list; the integrity probe enforces
+ * strict equality against the current pinned hex).
+ *
  * Format-fanout-sentinel: `grep -rl "<hex>" src/` returns exactly 2 files —
  * this constant + the `src/server.ts` `INSTRUCTIONS` interpolation. The
  * second occurrence is a template-literal interpolation (`${EXPECTED_SKILL_SHA256}`),
  * not a hardcoded re-declaration, so any change here propagates automatically.
  */
 export const EXPECTED_SKILL_SHA256 =
-  "28d47f34d74c661cee989a3ccc67b911fe59b566d6e2d44c3d03f981516839e2";
+  "8eb8ba90fb4c7a21ac5579a4533d9221cc136b8d188b0daa6b652b5743da9a4f";
 
 /**
  * Probe paths in priority order. Personal scope (`~/.claude/skills/...`) is
