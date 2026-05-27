@@ -4,14 +4,14 @@ milestone: v2.5
 milestone_name: Safe positions + Tx Service
 current_plan: 2
 status: verifying
-last_updated: "2026-05-27T13:55:00.000Z"
+last_updated: "2026-05-27T11:37:31.399Z"
 last_activity: 2026-05-27
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 19
-  completed_plans: 19
-  percent: 100
+  total_phases: 3
+  completed_phases: 0
+  total_plans: 3
+  completed_plans: 2
+  percent: 0
 ---
 
 # Project State
@@ -358,6 +358,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-26T11:10:29.465Z
-Stopped at: Phase 35 context gathered
-Resume file: .planning/phases/35-evm-escape-hatch-custom-call-abi-read/35-CONTEXT.md
+Last session: 2026-05-27T11:37:31.384Z
+Stopped at: Phase 37 context gathered
+Resume file: .planning/phases/37-safe-three-step-signing-flow/37-CONTEXT.md
