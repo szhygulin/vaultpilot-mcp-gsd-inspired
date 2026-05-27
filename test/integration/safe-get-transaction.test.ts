@@ -372,6 +372,14 @@ describe("get_safe_transaction :: register-all.ts wiring", () => {
 describe("get_safe_transaction :: FROZEN-area zero-diff (Task 3 close-out)", () => {
   it("Test 18: src/signing/, send_transaction.ts, preview_send.ts, test/signing-* untouched", async () => {
     const { execSync } = await import("node:child_process");
+    // CI uses shallow checkout (fetch-depth: 1) so origin/main may be unresolvable.
+    // Local dev always has it. Skip cleanly when absent — keeps the guard live for
+    // every author-side run without forcing CI to do a full-history clone.
+    try {
+      execSync("git rev-parse --verify --quiet origin/main", { stdio: "ignore" });
+    } catch {
+      return;
+    }
     const out = execSync(
       "git diff --stat origin/main -- src/signing/ src/tools/send_transaction.ts src/tools/preview_send.ts test/signing-*.test.ts",
       { encoding: "utf8" },
