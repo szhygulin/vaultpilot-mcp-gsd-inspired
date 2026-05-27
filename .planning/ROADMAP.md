@@ -1066,10 +1066,13 @@ Plans:
 
 **Plans**: 2 plans
 
-Plans:
+**Wave 1**
 
-- [ ] 38-01: `enableModule` selector detection at preview + `[HARD-TRIGGER — MODULE ENABLE]` block emission; `operation: 1` detection + `[HARD-TRIGGER — DELEGATECALL]` block; SECURITY.md Inv #12.5 codification
-- [ ] 38-02: Companion-skill Inv #12.5 encoding in sister `vaultpilot-preflight` repo (coordinated bump; mirrors v1.3 09-01 → 09-02 sister-repo coordination pattern); v2.5 milestone close-out
+- [ ] 38-01-PLAN.md — `src/protocols/safe.ts` (NEW per-protocol decoder: `ENABLE_MODULE_SELECTOR = 0x610b5925` + decoder + predicate) + APPEND-ONLY `HARD_TRIGGER_MODULE_ENABLE_TEMPLATE` + `HARD_TRIGGER_DELEGATECALL_TEMPLATE` + `PASTEABLE_BLOCK_TEMPLATE_SAFE` in `src/signing/blocks.ts`; hard-trigger emission at 4 MCP-side sites (REPLACE Phase 37 informational lines at `prepare_safe_tx_propose.ts:538-539` + `_approve.ts:409-413` + `_execute.ts:538-542`; defense-in-depth re-emission inside Phase 37 `isSafeExecTransaction` branch at `preview_send.ts`); A1 `get_verification_artifact` txType dispatch for safe-typed-data handles; DF-2 REPLACEMENT v1.4 SHA pin in `src/security/skill-integrity.ts`; new `.planning/phases/38-.../38-02-SKILL-TEMPLATE.md` planning artifact (SHA SOT for Plan 38-02); SECURITY.md Phase 38 section with Inv #12.5 codification + threat register + v2.5 close-out; Fixture SAFE-G hardcoded literal in `test/protocols-safe.test.ts`
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 38-02-PLAN.md — Sister-repo coordination: clone `szhygulin/vaultpilot-preflight-skill` to transient worktree `/tmp/vaultpilot-preflight-skill-38-02/`, byte-identically copy `38-02-SKILL-TEMPLATE.md` to sister-repo `SKILL.md` (three-way SHA-256 equality: planning artifact === sister-repo SKILL.md === main-repo `EXPECTED_SKILL_SHA256`), update README + CHANGELOG, cut v1.4 release tag. Mirror of Plan 09-01 → 09-02 pattern; carries forward gh OAuth workflow-scope CI deferral (W-1). Task 0 user-action checkpoint confirms A4 sister-repo target; Task 2 user-verify smoke confirms end-to-end SHA pin coupling. **v2.5 milestone close-out signal — Phases 36 + 37 + 38 code-complete.**
 
 **Status**: planning; v2.5 verify-phase requires a real Safe wallet on mainnet + a co-signer + small balance for execution. Could be exercised on a 1-of-1 Safe (single-owner Safes are common for personal use).
 
