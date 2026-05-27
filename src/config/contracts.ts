@@ -1027,6 +1027,194 @@ export function getCurvePoolByAddress(
 }
 
 // ---------------------------------------------------------------------------
+// Safe (Gnosis) per-chain SOT — Phase 36 Plan 36-01.
+// ---------------------------------------------------------------------------
+//
+// Sibling sub-table per Phase 28/29/30/31/32/33/34 precedent. Safe ships FOUR
+// singleton variants in active production use (RESEARCH § Pitfall 2 + § lines
+// 870-886): v1.3.0-L1, v1.3.0-L2, v1.4.1-L1, v1.4.1-L2. The L2 variants
+// (GnosisSafeL2 / SafeL2 — emit per-tx events for L2 indexers) dominate on
+// Polygon / Arbitrum / Base / Optimism; the L1 variants dominate on Ethereum
+// mainnet. Both must be allowlisted (canonical-dispatch arm at Plan 36-01
+// Task 3) because the Safe UI silently creates L2 Safes on L2 chains and
+// users post-2022 on those chains are likely on the L2 variant.
+//
+// Provenance (research date 2026-05-27 — RESEARCH § lines 870-886, verbatim
+// from `safe-deployments@main` JSON files via raw.githubusercontent.com):
+//   - v1.3.0 — github.com/safe-global/safe-deployments@main/src/assets/v1.3.0/*.json
+//   - v1.4.1 — github.com/safe-global/safe-deployments@main/src/assets/v1.4.1/*.json
+// Safe-deployments treats canonical-across-eip155: the SAME singleton +
+// proxyfactory + multisend addresses ship on all 5 supported EVM chains
+// (CREATE2 deterministic addressing + single deployer governance).
+//
+// Cross-chain canonical lock: the SAFE_CANONICAL literal object is referenced
+// by every chainId entry in SAFE_CONTRACTS_RAW. Property test
+// `T-SAFE-CANONICAL-ACROSS-EIP155` asserts deep equality across the 5 chains.
+//
+// Each literal `getAddress`-wrapped at the literal site so a corrupted snapshot
+// — single hex digit flipped at rest — throws EIP-55 at module load (format-
+// fanout-sentinel discipline).
+
+/**
+ * Per-chain Safe contract registry. Surfaces FOUR singleton variants
+ * (v1.3.0-L1, v1.3.0-L2, v1.4.1-L1, v1.4.1-L2) plus per-role address pairs
+ * for v1.3.0 / v1.4.1 (proxyFactory, multiSend, multiSendCallOnly,
+ * signMessageLib, compatibilityFallbackHandler). Phase 36 ships the read-side
+ * foundation; Phase 37 consumes for prepare_safe_tx_propose / approve /
+ * execute; Phase 38 consumes for enableModule hard-trigger detection.
+ *
+ * NOTE: `multiSendCallOnly` is the safer of the two MultiSend variants — it
+ * refuses `delegatecall` operations in the batched payload. Phase 37 routes
+ * batched ops through it by default; Phase 38 surfaces a hard-trigger warning
+ * when a SafeTx targets `multiSend` (non-CallOnly) with `operation=1`.
+ */
+export interface SafeContracts {
+  /** Up to 4 singleton variants. RESEARCH § Pitfall 2. */
+  singletons: {
+    v130L1: Address;
+    v130L2: Address;
+    v141L1: Address;
+    v141L2: Address;
+  };
+  proxyFactoryV130: Address;
+  proxyFactoryV141: Address;
+  multiSendV130: Address;
+  multiSendV141: Address;
+  multiSendCallOnlyV130: Address;
+  multiSendCallOnlyV141: Address;
+  signMessageLibV130: Address;
+  signMessageLibV141: Address;
+  compatibilityFallbackHandlerV130: Address;
+  compatibilityFallbackHandlerV141: Address;
+}
+
+/**
+ * Canonical Safe deployment address set. The same object literal is referenced
+ * by every supported chain in SAFE_CONTRACTS_RAW (canonical-across-eip155 per
+ * safe-deployments). Future deviation (a chain with non-canonical addresses)
+ * would require a per-chain literal — Phase 36's 5 supported chains all share
+ * the canonical set, verified 2026-05-27.
+ */
+const SAFE_CANONICAL: SafeContracts = {
+  singletons: {
+    v130L1: getAddress("0xd9Db270c1B5E3Bd161E8c8503c55cEABeE709552"),
+    v130L2: getAddress("0x3E5c63644E683549055b9Be8653de26E0B4CD36E"),
+    v141L1: getAddress("0x41675C099F32341bf84BFc5382aF534df5C7461a"),
+    v141L2: getAddress("0x29fcB43b46531BcA003ddC8FCB67FFE91900C762"),
+  },
+  proxyFactoryV130: getAddress("0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2"),
+  proxyFactoryV141: getAddress("0x4e1DCf7AD4e460CfD30791CCC4F9c8a4f820ec67"),
+  multiSendV130: getAddress("0xA238CBeb142c10Ef7Ad8442C6D1f9E89e07e7761"),
+  multiSendV141: getAddress("0x38869bf66a61cF6bDB996A6aE40D5853Fd43B526"),
+  multiSendCallOnlyV130: getAddress("0x40A2aCCbd92BCA938b02010E17A5b8929b49130D"),
+  multiSendCallOnlyV141: getAddress("0x9641d764fc13c8B624c04430C7356C1C7C8102e2"),
+  signMessageLibV130: getAddress("0xA65387F16B013cf2Af4605Ad8aA5ec25a2cbA3a2"),
+  signMessageLibV141: getAddress("0xd53cd0aB83D845Ac265BE939c57F53AD838012c9"),
+  compatibilityFallbackHandlerV130: getAddress("0xf48f2B2d2a534e402487b3ee7C18c33Aec0Fe5e4"),
+  compatibilityFallbackHandlerV141: getAddress("0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99"),
+};
+
+/**
+ * Per-chain Safe contracts. All 5 supported chains share the canonical address
+ * set per `safe-deployments` (CREATE2 deterministic + single deployer
+ * governance). Cross-chain byte-identity asserted in
+ * test/config-contracts.test.ts T-SAFE-CANONICAL-ACROSS-EIP155.
+ */
+const SAFE_CONTRACTS_RAW: Partial<Record<ChainId, SafeContracts>> = {
+  1: SAFE_CANONICAL,
+  10: SAFE_CANONICAL,
+  137: SAFE_CANONICAL,
+  8453: SAFE_CANONICAL,
+  42161: SAFE_CANONICAL,
+};
+
+/**
+ * Returns all configured Safe Singleton addresses (up to 4 variants) for the
+ * given chain. Returns `[]` for chains without a SafeContracts SOT entry.
+ *
+ * Consumed by `src/security/canonical-dispatch.ts` (Plan 36-01 Task 3) — every
+ * variant is spread into the per-chain allowlist Set so Phase 37+ prepare-flow
+ * dispatches resolve `ok` regardless of which Singleton variant the user's
+ * Safe was deployed at.
+ *
+ * Property tested (T-SAFE-SINGLETON-DISPATCH-COVERAGE-1):
+ *   `getSafeSingletonAddresses(chainId).every(a =>
+ *      CANONICAL_DISPATCH_TARGETS[chainId].has(a))`
+ */
+export function getSafeSingletonAddresses(chainId: ChainId): Address[] {
+  const c = SAFE_CONTRACTS_RAW[chainId];
+  if (!c) return [];
+  return [
+    c.singletons.v130L1,
+    c.singletons.v130L2,
+    c.singletons.v141L1,
+    c.singletons.v141L2,
+  ];
+}
+
+/**
+ * Returns the Safe ProxyFactory addresses (v1.3.0 + v1.4.1) for the given
+ * chain. Returns `[]` for chains without a SafeContracts SOT entry. Forward-
+ * compat for Phase 37+ — ProxyFactory dispatch is out of scope at Phase 36
+ * (Safe creation via ProxyFactory deferred to v3.x; users create Safes via
+ * the Safe UI per CONTEXT.md deferred-ideas section).
+ */
+export function getSafeProxyFactoryAddresses(chainId: ChainId): Address[] {
+  const c = SAFE_CONTRACTS_RAW[chainId];
+  if (!c) return [];
+  return [c.proxyFactoryV130, c.proxyFactoryV141];
+}
+
+/**
+ * Returns the Safe MultiSend addresses (v1.3.0 + v1.4.1) for the given chain.
+ * Forward-compat for Phase 37+ batched ops + Phase 38 hard-trigger detection
+ * (multiSend with `operation=1` is the delegatecall surface).
+ */
+export function getSafeMultiSendAddresses(chainId: ChainId): Address[] {
+  const c = SAFE_CONTRACTS_RAW[chainId];
+  if (!c) return [];
+  return [c.multiSendV130, c.multiSendV141];
+}
+
+/**
+ * Returns the Safe MultiSendCallOnly addresses (v1.3.0 + v1.4.1) for the given
+ * chain. The CallOnly variant refuses delegatecall in batched payloads —
+ * the safer routing target for Phase 37's prepare_safe_tx_propose.
+ */
+export function getSafeMultiSendCallOnlyAddresses(chainId: ChainId): Address[] {
+  const c = SAFE_CONTRACTS_RAW[chainId];
+  if (!c) return [];
+  return [c.multiSendCallOnlyV130, c.multiSendCallOnlyV141];
+}
+
+/**
+ * Returns the Safe SignMessageLib addresses (v1.3.0 + v1.4.1) for the given
+ * chain. Forward-compat — used by Safe's EIP-1271 message signing flow,
+ * out of scope at Phase 36.
+ */
+export function getSafeSignMessageLibAddresses(chainId: ChainId): Address[] {
+  const c = SAFE_CONTRACTS_RAW[chainId];
+  if (!c) return [];
+  return [c.signMessageLibV130, c.signMessageLibV141];
+}
+
+/**
+ * Returns the Safe CompatibilityFallbackHandler addresses (v1.3.0 + v1.4.1)
+ * for the given chain. Forward-compat — used by Safe's fallback-handler
+ * routing for unknown method selectors.
+ */
+export function getSafeCompatibilityFallbackHandlerAddresses(
+  chainId: ChainId,
+): Address[] {
+  const c = SAFE_CONTRACTS_RAW[chainId];
+  if (!c) return [];
+  return [
+    c.compatibilityFallbackHandlerV130,
+    c.compatibilityFallbackHandlerV141,
+  ];
+}
+
+// ---------------------------------------------------------------------------
 // Known-spender table — PREP-30 surface for approval-class DECODED ARGS.
 // ---------------------------------------------------------------------------
 

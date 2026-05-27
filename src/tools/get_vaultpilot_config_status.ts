@@ -23,6 +23,7 @@ import {
   isDemoMode,
   getBtcEsploraUrl,
   getRpcProvider,
+  getSafeTxServiceApiKey,
   getSolanaRpcUrl,
   getTronRpcUrl,
 } from "../config/env.js";
@@ -124,6 +125,12 @@ registerTool(
     // NEVER appears in the response (asserted by Test 14 in
     // test/get-vaultpilot-config-status.test.ts).
     const etherscanApiKeyPresent = Boolean(process.env.ETHERSCAN_API_KEY);
+    // Phase 36 Plan 36-01 — Safe Tx Service API key presence boolean
+    // (T-SAFE-KEY-LEAK-1 mirror of Plan 07-04 precedent). Uses the lazy
+    // `getSafeTxServiceApiKey()` helper to preserve no-module-load env
+    // coupling — value NEVER surfaced in response (mirror of the
+    // etherscanApiKeyPresent Q-CONFIG-LEAK discipline).
+    const safeTxServiceApiKeyPresent = Boolean(getSafeTxServiceApiKey());
 
     // Plan 08-01 — multi-chain diagnostic surface. The provider NAME is
     // PUBLIC (it's just `infura` / `alchemy`); the API key VALUE is the
@@ -217,6 +224,7 @@ registerTool(
       walletConnectProjectIdPresent,
       ethereumRpcUrlPresent,
       etherscanApiKeyPresent,
+      safeTxServiceApiKeyPresent,
       rpcProvider,
       configuredChains,
       solanaRpcConfigured,
@@ -249,6 +257,7 @@ registerTool(
     lines.push(`  walletConnectProjectIdPresent:   ${walletConnectProjectIdPresent}`);
     lines.push(`  ethereumRpcUrlPresent:           ${ethereumRpcUrlPresent}`);
     lines.push(`  etherscanApiKeyPresent:          ${etherscanApiKeyPresent}`);
+    lines.push(`  safeTxServiceApiKeyPresent:      ${safeTxServiceApiKeyPresent}`);
     lines.push(`  rpcProvider:                     ${rpcProvider ?? "(none)"}`);
     lines.push(
       `  configuredChains:                ethereum=${configuredChains.ethereum} arbitrum=${configuredChains.arbitrum} polygon=${configuredChains.polygon} base=${configuredChains.base} optimism=${configuredChains.optimism}`,

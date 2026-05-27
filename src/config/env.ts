@@ -178,6 +178,21 @@ export function getEtherscanApiKey(): string | undefined {
   return read("ETHERSCAN_API_KEY");
 }
 
+// Phase 36 Plan 36-01 — Safe Tx Service authenticated tier (RESEARCH § Topic 1
+// URL migration). The new `api.safe.global/tx-service/{shortname}/api`
+// endpoints require an `Authorization: Bearer ${key}` header for any
+// non-trivial usage; the unauthenticated tier (2 req/s + 5k/month) is being
+// sunsetted. Lazy reader — env access is at fetch time, never at module load
+// (mirrors `getEtherscanApiKey` lazy-probe shape exactly).
+//
+// Surfaced as `safeTxServiceApiKeyPresent: boolean` in
+// `get_vaultpilot_config_status` (Plan 07-04 `etherscanApiKeyPresent`
+// precedent). T-SAFE-KEY-LEAK-1 mitigation: the VALUE is NEVER logged, NEVER
+// surfaced in any response — only its presence-boolean.
+export function getSafeTxServiceApiKey(): string | undefined {
+  return read("SAFE_TX_SERVICE_API_KEY");
+}
+
 /**
  * Resolution result discriminant. Five arms cover every distinguishable
  * path through the env > config > auto-detect chain — Plan 05-03's NOTICE

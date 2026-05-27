@@ -1,11 +1,11 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.2
-milestone_name: Bitcoin + Litecoin
-current_plan: 3
+milestone: v2.5
+milestone_name: Safe positions + Tx Service
+current_plan: 2
 status: verifying
-last_updated: "2026-05-26T11:10:29.477Z"
-last_activity: 2026-05-26
+last_updated: "2026-05-27T13:55:00.000Z"
+last_activity: 2026-05-27
 progress:
   total_phases: 6
   completed_phases: 6
@@ -21,16 +21,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-12)
 
 **Core value:** The user trusts what the Ledger screen shows — nothing else. Tampering at any layer between the agent and the device produces a visible mismatch on-screen before signing.
-**Current focus:** Phase 33 — evm-uniswap-v3-lp-verb-set
+**Current focus:** Phase 36 done; v2.5 verify pending
 
 ## Current Position
 
-Phase: 33 (evm-uniswap-v3-lp-verb-set) — EXECUTING
-Plan: 3 of 3
-Current Plan: 3
-Total Plans in Phase: 3
-Status: Phase complete — ready for verification
-Last activity: 2026-05-26
+Phase: 36 (safe-positions-tx-service) — code-complete
+Plan: 2 of 2
+Current Plan: 2
+Total Plans in Phase: 2
+Status: Phase complete — ready for v2.5 verify-phase
+Last activity: 2026-05-27
+
+Prior activity: 2026-05-27 — Phase 36 Plan 36-02 closed code-complete (3 atomic commits 318cc41 → d241db1 + docs commit pending). v2.5 user-visible Safe multisig read surface: `src/chains/safe.ts` Singleton state reader (parseAbi + multicall + module enumeration + `_safeChains` ESM spy seam, named-return discipline Pitfall 10) + `get_safe_positions` (multi-chain Promise.allSettled fan-out + per-chain 10s AbortController timeout + Tx Service enumeration cross-checked against on-chain Singleton multicall + wallet-not-owner silent drop + drift detection with 6 semantic labels + compact pending-tx list capped at 20 + module list sentinel-filtered + truncation flags) + `get_safe_transaction` (single SafeTx detail + best-effort cached-ABI decode via Phase 35's `getCachedEtherscanAbi` cache-only seam + operation discriminator `"call" | "delegatecall"` semantic string for Phase 38 hard-trigger contract + defensive `tx.confirmations ?? []` everywhere per Pitfall 6). FROZEN-area zero-diff held END-TO-END across Plan 36-01 + 36-02 (src/signing/, send_transaction.ts, preview_send.ts, test/signing-*.test.ts untouched — Test 18 acceptance gate). Plan 36-02 test delta: +48 (12 chains-safe + 19 safe-positions + 17 safe-get-transaction). Phase 36 total test delta: +105 (4548 → 4653). Phase 37 surfaces unblocked: EIP-712 typed-data signing flow (consumes `getOnchainSafeInfo.version` for v1.3.0 vs v1.4.1 domain-separator selection); `prepare_safe_tx_propose / _approve / _execute` (consumes the canonical-dispatch Safe arm from Plan 36-01); Phase 38 enableModule + delegateCall hard-trigger (consumes `enabledModules[]` + `operation: "call" | "delegatecall"`).
+
+Prior activity: 2026-05-27 — Phase 36 Plan 36-01 closed code-complete (3 atomic commits a18f728 → 3e6ce1d + docs commit 148b24d). Read-only Safe trust-pipeline foundation: `src/clients/safe-tx-service.ts` 5-arm DU client (URL migration to api.safe.global/tx-service/{shortname}/api per RESEARCH § Topic 1; v1/v2 path mix; ordering=nonce per Pitfall 8; per-session ceiling 30; dual LRU SafeInfo 32 + SafeTx 64; lazy bearer auth with T-SAFE-KEY-LEAK-1 audit) + SafeContracts SOT (4 singleton variants × 5 chains = 20 entries via safe-deployments canonical-across-eip155; T-SAFE-CANONICAL-ACROSS-EIP155 pairwise byte-identity) + canonical-dispatch Safe arm (T-SAFE-SINGLETON-DISPATCH-COVERAGE-1 4×5 = 20 across all chains) + `safeTxServiceApiKeyPresent` boolean in `get_vaultpilot_config_status`. Test delta: +57 (4548 → 4605).
+
+Prior activity: 2026-05-26 — Phase 33 (evm-uniswap-v3-lp-verb-set) closed code-complete.
 
 Prior activity: 2026-05-23 — Phase 32 Plan 32-01 closed code-complete (6 atomic commits f68b305 → 597a1a1 + docs commit a27601f). UniswapV3Contracts SOT + SwapRouter02 KNOWN_SPENDERS row promotion + canonical-dispatch arm + protocols/uniswap-v3.ts + signing/uniswap-path.ts + 2 APPEND-ONLY block templates + Fixtures UNI-A/B/C hardcoded payloadFingerprint literals.
 
