@@ -408,7 +408,7 @@ Plans:
   4. Decoded swap args (`From: X SYMBOL`, `To: Y SYMBOL`, `Price impact: Z%`) surface in `CHECKS PERFORMED` at preview time
   5. Jupiter v6 program ID added to canonical-dispatch allowlist (Layer 0.5 Solana arm)
 
-**Plans**: 2 plans (estimate)
+**Plans**: 2 plans
 
 Plans:
 
@@ -450,7 +450,7 @@ Plans:
   4. `get_solana_setup_status({ wallet })` returns `{ nonceAccountPresent, marginfiAccountPresent, kaminoObligationPresent, ledgerSolAppVersion?, walletPublicKeyOnDevice }` — probes per-wallet PDA + on-device status
   5. SECURITY.md updated with Solana-side bridge facet-decode rationale + Inv #6b extension scope
 
-**Plans**: 2 plans (estimate)
+**Plans**: 2 plans
 
 Plans:
 
@@ -1014,12 +1014,12 @@ Plans:
   3. Safe Tx Service API client (`src/clients/safe-tx-service.ts`) mirrors `etherscan.ts` shape per-chain (Ethereum + Arbitrum + Polygon + Base + Optimism endpoints documented at safe-global.com)
   4. Safe ProxyFactory + Singleton addresses sourced from `src/config/contracts.ts` per-chain table; canonical-dispatch allowlist Safe arm wiring (Singleton is the dispatch target for all Safe operations)
 
-**Plans**: 2 plans (estimate)
+**Plans**: 2 plans
 
 Plans:
 
-- [ ] 36-01: `src/clients/safe-tx-service.ts` + per-chain endpoint registry; `src/config/contracts.ts` Safe slot extension; canonical-dispatch allowlist wiring
-- [ ] 36-02: `get_safe_positions` + `get_safe_transaction` + `src/chains/safe.ts` (per-Safe state reader)
+- [ ] 36-01-PLAN.md — Safe Tx Service HTTP client (5-arm DU + dual LRU caches + lazy bearer-token auth) + SafeContracts SOT (4 singleton variants × 5 chains) + canonical-dispatch Safe arm + safeTxServiceApiKeyPresent diagnostic
+- [ ] 36-02-PLAN.md — src/chains/safe.ts Singleton multicall reader + get_safe_positions (multi-chain fan-out + on-chain cross-check + drift detection) + get_safe_transaction (best-effort cached-ABI decode); FROZEN-area zero-diff close-out
 
 #### Phase 37: Safe three-step signing flow — `prepare_safe_tx_propose` + `_approve` + `_execute` + `submit_safe_tx_signature`
 
@@ -1056,7 +1056,7 @@ Plans:
   4. SECURITY.md updated with Inv #12.5 — high-blast-radius Safe operations route through second-LLM defense by construction
   5. Skill-side Inv #12.5 encoded in companion `vaultpilot-preflight` skill (sister-repo update — coordinated v1.3.x bump or v1.4 minor)
 
-**Plans**: 2 plans (estimate)
+**Plans**: 2 plans
 
 Plans:
 
