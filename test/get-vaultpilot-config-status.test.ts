@@ -44,6 +44,8 @@ const SUPPRESS_KEY = "VAULTPILOT_DISABLE_UPDATE_CHECK";
 const WC_STORAGE_KEY = "VAULTPILOT_WC_STORAGE";
 // Plan 07-04 — new env var surfaced as etherscanApiKeyPresent boolean.
 const ETHERSCAN_KEY = "ETHERSCAN_API_KEY";
+// Phase 36 Plan 36-01 — new env var surfaced as safeTxServiceApiKeyPresent boolean.
+const SAFE_TX_SERVICE_KEY = "SAFE_TX_SERVICE_API_KEY";
 // Plan 08-01 — multi-chain RPC env vars surfaced as configuredChains booleans.
 const RPC_PROVIDER_KEY = "RPC_PROVIDER";
 const RPC_API_KEY_KEY = "RPC_API_KEY";
@@ -58,6 +60,7 @@ let savedWc: string | undefined;
 let savedSuppress: string | undefined;
 let savedWcStorage: string | undefined;
 let savedEtherscan: string | undefined;
+let savedSafeTxService: string | undefined;
 let savedRpcProvider: string | undefined;
 let savedRpcApiKey: string | undefined;
 let savedArbitrum: string | undefined;
@@ -79,6 +82,7 @@ beforeEach(() => {
   savedSuppress = process.env[SUPPRESS_KEY];
   savedWcStorage = process.env[WC_STORAGE_KEY];
   savedEtherscan = process.env[ETHERSCAN_KEY];
+  savedSafeTxService = process.env[SAFE_TX_SERVICE_KEY];
   savedRpcProvider = process.env[RPC_PROVIDER_KEY];
   savedRpcApiKey = process.env[RPC_API_KEY_KEY];
   savedArbitrum = process.env[ARBITRUM_KEY];
@@ -91,6 +95,7 @@ beforeEach(() => {
   delete process.env[WC_KEY];
   delete process.env[SUPPRESS_KEY];
   delete process.env[ETHERSCAN_KEY];
+  delete process.env[SAFE_TX_SERVICE_KEY];
   delete process.env[RPC_PROVIDER_KEY];
   delete process.env[RPC_API_KEY_KEY];
   delete process.env[ARBITRUM_KEY];
@@ -119,6 +124,8 @@ afterEach(() => {
   else process.env[WC_STORAGE_KEY] = savedWcStorage;
   if (savedEtherscan === undefined) delete process.env[ETHERSCAN_KEY];
   else process.env[ETHERSCAN_KEY] = savedEtherscan;
+  if (savedSafeTxService === undefined) delete process.env[SAFE_TX_SERVICE_KEY];
+  else process.env[SAFE_TX_SERVICE_KEY] = savedSafeTxService;
   if (savedRpcProvider === undefined) delete process.env[RPC_PROVIDER_KEY];
   else process.env[RPC_PROVIDER_KEY] = savedRpcProvider;
   if (savedRpcApiKey === undefined) delete process.env[RPC_API_KEY_KEY];
@@ -154,6 +161,7 @@ describe("get_vaultpilot_config_status — shape (DIAG-01)", () => {
       walletConnectProjectIdPresent: expect.any(Boolean),
       ethereumRpcUrlPresent: expect.any(Boolean),
       etherscanApiKeyPresent: expect.any(Boolean),
+      safeTxServiceApiKeyPresent: expect.any(Boolean),
       pairedAccountCount: expect.any(Number),
       wcSessionTopicSuffix: null,
       walletConnectStoragePersistent: expect.any(Boolean),
@@ -366,6 +374,58 @@ describe("get_vaultpilot_config_status — etherscanApiKeyPresent (Plan 07-04)",
     // The boolean is set correctly without leaking the value.
     const sc = result.structuredContent as { etherscanApiKeyPresent: boolean };
     expect(sc.etherscanApiKeyPresent).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 36 Plan 36-01 — safeTxServiceApiKeyPresent boolean surface (SAFE-03
+// extension; T-SAFE-KEY-LEAK-1 mirror of T-ETHERSCAN-KEY-LEAK-1).
+// Q-CONFIG-LEAK lock applies: the boolean ONLY, never the value.
+// ---------------------------------------------------------------------------
+describe("get_vaultpilot_config_status — safeTxServiceApiKeyPresent (Phase 36 Plan 36-01)", () => {
+  it("env unset → safeTxServiceApiKeyPresent false; text-block line matches", async () => {
+    delete process.env[SAFE_TX_SERVICE_KEY];
+
+    const result = await callTool();
+    const sc = result.structuredContent as {
+      safeTxServiceApiKeyPresent: boolean;
+    };
+
+    expect(sc.safeTxServiceApiKeyPresent).toBe(false);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/safeTxServiceApiKeyPresent:\s+false/);
+  });
+
+  it("env set → safeTxServiceApiKeyPresent true; text-block line matches", async () => {
+    process.env[SAFE_TX_SERVICE_KEY] = "any-value";
+
+    const result = await callTool();
+    const sc = result.structuredContent as {
+      safeTxServiceApiKeyPresent: boolean;
+    };
+
+    expect(sc.safeTxServiceApiKeyPresent).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/safeTxServiceApiKeyPresent:\s+true/);
+  });
+
+  it("LOAD-BEARING T-SAFE-KEY-LEAK-1 — SAFE_TX_SERVICE_API_KEY value never appears in response", async () => {
+    const SAFE_TX_SECRET = "secret-safe-tx-service-key-do-not-leak-abc123";
+    process.env[SAFE_TX_SERVICE_KEY] = SAFE_TX_SECRET;
+
+    const result = await callTool();
+    const serialized = JSON.stringify(result);
+    const text = result.content[0]?.text ?? "";
+
+    // Substring scan across the entire response envelope.
+    expect(serialized).not.toContain(SAFE_TX_SECRET);
+    expect(text).not.toContain(SAFE_TX_SECRET);
+
+    // Boolean is correct without leaking the value.
+    const sc = result.structuredContent as {
+      safeTxServiceApiKeyPresent: boolean;
+    };
+    expect(sc.safeTxServiceApiKeyPresent).toBe(true);
   });
 });
 

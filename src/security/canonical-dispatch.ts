@@ -69,6 +69,7 @@ import {
   getMorphoBlueAddress,
   getRocketPoolDepositPoolAddress,
   getRocketPoolRethAddress,
+  getSafeSingletonAddresses,
   getUniswapV3NonfungiblePositionManagerAddress,
   getUniswapV3SwapRouter02Address,
   getWethAddress,
@@ -203,6 +204,20 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
   // Non-Ethereum chains: getAllCurvePoolsForChain returns [] → spread adds nothing.
   const curvePools = getAllCurvePoolsForChain(chainId);
   const curveEntries: Address[] = curvePools.map((p) => p.address);
+  // Phase 36 — Plan 36-01. Safe Singleton dispatch allowlist arm. Each chain
+  // carries up to 4 singleton variants (v1.3.0-L1, v1.3.0-L2, v1.4.1-L1,
+  // v1.4.1-L2) — RESEARCH § Pitfall 2 anchor. The L2 variants dominate on
+  // Polygon / Arbitrum / Base / Optimism (per-tx event emission for L2
+  // indexers); allowlisting only L1 would silently refuse most user Safes on
+  // those chains. Phase 37+ prepare_safe_tx_propose / approve / execute
+  // consume this gate — Phase 36 wires it without a live producer (no Safe
+  // handle yet exists; Layer 0.5 dispatch check fires only when a record
+  // with `record.tx.data !== "0x"` resolves with tx.to ∈ Safe singletons).
+  // Cross-chain canonical-across-eip155: getSafeSingletonAddresses returns
+  // the SAME 4 addresses on every supported chain (safe-deployments canonical
+  // lock; pairwise byte-identity asserted in test/config-contracts.test.ts
+  // T-SAFE-CANONICAL-ACROSS-EIP155).
+  const safeSingletonEntries: Address[] = getSafeSingletonAddresses(chainId);
   return new Set<Address>([
     getAaveV3PoolAddress(chainId),
     getWethAddress(chainId),
@@ -217,6 +232,7 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
     ...uniswapEntries,
     ...uniswapV3LpEntries,
     ...curveEntries,
+    ...safeSingletonEntries, // Phase 36
   ]);
 }
 
@@ -226,14 +242,15 @@ function buildPerChainAllowlist(chainId: ChainId): ReadonlySet<Address> {
  * new chain extends this Record alongside the `ChainId` union in
  * `src/config/contracts.ts`.
  *
- * Membership counts per chain (execute-time, 2026-05-24 — Phase 33 Plan 33-01
- * Ethereum-arm extended by 1 Uniswap V3 NonfungiblePositionManager; SOT slot
- * was pre-populated at Phase 32 D-01 but no dispatch arm landed until Phase 33):
- *   - Ethereum (1):     40 entries (39 post-Phase-32 + Uniswap V3 NPM; net +1)
- *   - Arbitrum (42161): 21 entries (unchanged — Phase 33 is Ethereum-only per D-03)
- *   - Polygon (137):    22 entries (unchanged)
- *   - Base (8453):       8 entries (unchanged)
- *   - Optimism (10):    17 entries (unchanged)
+ * Membership counts per chain (execute-time, 2026-05-27 — Phase 36 Plan 36-01
+ * extends EVERY chain by 4 Safe singleton variants (v1.3.0-L1, v1.3.0-L2,
+ * v1.4.1-L1, v1.4.1-L2). Safe-deployments canonical-across-eip155 — same
+ * addresses on every supported chain, so the delta is uniform +4 per chain):
+ *   - Ethereum (1):     ethereum +4 Safe singletons (was 40 post-Phase-33)
+ *   - Arbitrum (42161): arbitrum +4 Safe singletons (was 21 pre-Phase-36)
+ *   - Polygon (137):    polygon +4 Safe singletons (was 22 pre-Phase-36)
+ *   - Base (8453):      base +4 Safe singletons (was 8 pre-Phase-36)
+ *   - Optimism (10):    optimism +4 Safe singletons (was 17 pre-Phase-36)
  */
 export const CANONICAL_DISPATCH_TARGETS: Readonly<
   Record<ChainId, ReadonlySet<Address>>

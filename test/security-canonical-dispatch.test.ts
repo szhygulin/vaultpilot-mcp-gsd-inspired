@@ -366,7 +366,10 @@ describe("Phase 29 Plan 29-03 — Morpho Blue in Ethereum-arm allowlist", () => 
     // Phase 34 Plan 34-01: 40 → 51 (+11 net Curve pool addresses — 1 legacy
     // stETH/ETH + 10 stable_ng plain pools; none are in BRIDGED_VARIANTS
     // since they are AMM pool contracts, not token contracts).
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(51);
+    // Phase 36 Plan 36-01: 51 → 55 (+4 net Safe singleton variants — v1.3.0-L1,
+    // v1.3.0-L2, v1.4.1-L1, v1.4.1-L2; none are in BRIDGED_VARIANTS since
+    // they are multisig wallet implementations, not token contracts).
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(55);
   });
 
   it("Refused tx.to on Ethereum surfaces the Morpho Blue address in allowlist (verbatim)", () => {
@@ -466,7 +469,8 @@ describe("CANONICAL_DISPATCH_TARGETS — Phase 31 EigenLayer + Rocket Pool entri
     // dispatch target — pre-populated in SOT but no dispatch arm at Phase 32).
     // Phase 33 Plan 33-01: 39 → 40 (+1 net NPM for the LP verb set).
     // Phase 34 Plan 34-01: 40 → 51 (+11 net Curve pool addresses).
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(51);
+    // Phase 36 Plan 36-01: 51 → 55 (+4 net Safe singleton variants).
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(55);
   });
 
   it("Refused tx.to on Ethereum surfaces the EigenLayer + Rocket Pool addresses in allowlist (verbatim)", () => {
@@ -522,14 +526,16 @@ describe("CANONICAL_DISPATCH_TARGETS — Phase 32 Uniswap V3 SwapRouter02 entry 
     }
   });
 
-  it("Phase 32 membership delta is exactly +1 net over the Phase 31 baseline (38 → 39); Phase 33 lifts it to 40; Phase 34 lifts it to 51", () => {
+  it("Phase 32 membership delta is exactly +1 net over the Phase 31 baseline (38 → 39); Phase 33 lifts it to 40; Phase 34 lifts it to 51; Phase 36 lifts it to 55", () => {
     // Hard-pinned count anchor. Phase 32 added: SwapRouter02 (NOT in
     // BRIDGED_VARIANTS — it's a router, not a token; no de-dupe; net +1).
     // Phase 33 added: NonfungiblePositionManager (also NOT in
     // BRIDGED_VARIANTS — net +1). Phase 34 added: 11 Curve pool addresses
     // (NOT in BRIDGED_VARIANTS — AMM pool contracts, not tokens; net +11).
-    // Combined post-Phase-34 size: 51.
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(51);
+    // Phase 36 added: 4 Safe singleton variants (NOT in BRIDGED_VARIANTS —
+    // multisig wallet implementations, not tokens; net +4).
+    // Combined post-Phase-36 size: 55.
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(55);
   });
 
   it("Refused tx.to on Ethereum surfaces the Uniswap V3 SwapRouter02 address in allowlist (verbatim)", () => {
@@ -574,12 +580,13 @@ describe("CANONICAL_DISPATCH_TARGETS — Phase 33 Uniswap V3 NPM entry (Ethereum
     }
   });
 
-  it("Uniswap_V3_NPM — Phase 33 membership delta is exactly +1 net over the Phase 32 baseline (39 → 40); Phase 34 lifts it to 51", () => {
+  it("Uniswap_V3_NPM — Phase 33 membership delta is exactly +1 net over the Phase 32 baseline (39 → 40); Phase 34 lifts it to 51; Phase 36 lifts it to 55", () => {
     // Direct count anchor. Drift fires the test before downstream allow-pattern
     // regressions surface elsewhere. NPM address 0xC36442b4a4522E871399CD717aBDD847Ab11FE88
     // is NOT in BRIDGED_VARIANTS (it's a position manager contract, not a token),
     // so no de-dupe — net +1. Phase 34 adds 11 Curve pool addresses (net +11).
-    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(51);
+    // Phase 36 adds 4 Safe singleton variants (net +4).
+    expect(CANONICAL_DISPATCH_TARGETS[1].size).toBe(55);
   });
 
   it("Uniswap_V3_NPM — refused tx.to on Ethereum surfaces NPM address in allowlist (verbatim)", () => {
