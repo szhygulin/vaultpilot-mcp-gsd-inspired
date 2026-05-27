@@ -120,6 +120,14 @@ import { _solanaSpl } from "../protocols/solana-spl.js";
 import { _solanaSystem } from "../protocols/solana-system.js";
 import { _tronStake } from "../protocols/tron-stake.js";
 import { WETH9_SELECTORS } from "../protocols/weth9.js";
+import {
+  decodeEnableModuleCalldata,
+  isEnableModuleCalldata,
+} from "../protocols/safe.js";
+import {
+  HARD_TRIGGER_DELEGATECALL_TEMPLATE,
+  HARD_TRIGGER_MODULE_ENABLE_TEMPLATE,
+} from "../signing/blocks.js";
 import { _canonicalDispatch } from "../security/canonical-dispatch.js";
 import { _canonicalDispatchSolana } from "../security/canonical-dispatch-solana.js";
 import { SUNSWAP_V2_ROUTER_TRON_ADDRESS, _canonicalDispatchTron } from "../security/canonical-dispatch-tron.js";
@@ -1887,6 +1895,12 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     // the OUTER execTransaction calldata (unchanged from the PREP-03 envelope).
     let safeExecDecodeBlock = "";
     let safeExecWarnBlock: string | null = null;
+    // Phase 38 Plan 38-01 (Inv #12.5) — re-emission collector. Populated
+    // inside the EXEC_TRANSACTION_SELECTOR arm below when the inner-decoded
+    // SafeTx matches either trigger condition. APPENDED to the response
+    // blocks array at the END for visual prominence (consistent with the
+    // prepare-side append after ledgerDisplay / ledgerNotice).
+    const safeHardTriggerBlocks: string[] = [];
     if (
       record.tx.data !== "0x" &&
       record.tx.data.slice(0, 10) === EXEC_TRANSACTION_SELECTOR
@@ -1959,6 +1973,48 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
           "  preview_send re-emits this block byte-identical so any drift between",
           "  prepare-side and preview-side decoding fails an integration regression.",
         ].join("\n");
+
+        // Phase 38 Plan 38-01 (Inv #12.5) — defense-in-depth re-emission for
+        // the cross-signer execute path. The executor's MCP session may lack
+        // the propose-side state (handle minted in a different process or
+        // earlier session); re-emitting the matching hard-trigger block(s)
+        // at preview guarantees the skill-side scan fires regardless of
+        // whether propose/approve was observed.
+        //
+        // Numeric `innerDecoded.operation === 1` discriminator at this site
+        // (NOT the semantic string "delegatecall" used at prepare) per
+        // CONTEXT §"operation discriminator parsing" — DecodedSafeExecTransaction
+        // surfaces `0 | 1` per safe-exec-decode.ts.
+        //
+        // Truncated inner calldata → silently SKIP the MODULE ENABLE block
+        // (prepare-side already refused with INVALID_INPUT; preview is
+        // defense-in-depth ONLY, not a refusal gate).
+        if (
+          isEnableModuleCalldata(innerDecoded.data) &&
+          innerDecoded.to.toLowerCase() ===
+            (record.tx.to as string).toLowerCase()
+        ) {
+          try {
+            const moduleAddress = decodeEnableModuleCalldata(
+              innerDecoded.data,
+            ).module;
+            safeHardTriggerBlocks.push(
+              HARD_TRIGGER_MODULE_ENABLE_TEMPLATE
+                .replace("{MODULE_ADDRESS}", moduleAddress)
+                .replace("{SAFE_ADDRESS}", record.tx.to as string)
+                .replace("{HANDLE}", handleArg),
+            );
+          } catch {
+            // Silent skip — prepare-side already refused.
+          }
+        }
+        if (innerDecoded.operation === 1) {
+          safeHardTriggerBlocks.push(
+            HARD_TRIGGER_DELEGATECALL_TEMPLATE
+              .replace("{SAFE_ADDRESS}", record.tx.to as string)
+              .replace("{HANDLE}", handleArg),
+          );
+        }
       } catch {
         // Decode failure — fall through to standard decodedArgsBlock. The
         // SHARED decoder throws on selector mismatch / operation outside
@@ -1998,6 +2054,10 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       simulationBlock,
       "",
       VERIFY_BEFORE_SIGNING_TEMPLATE,
+      // Phase 38 Plan 38-01 (Inv #12.5) — hard-trigger re-emission at the END
+      // for visual prominence. MODULE ENABLE before DELEGATECALL when both
+      // fire (composite order preserved from the push order above).
+      ...safeHardTriggerBlocks.flatMap((b) => ["", b]),
     ];
     const text = blocks.filter((b): b is string => b !== null).join("\n");
 

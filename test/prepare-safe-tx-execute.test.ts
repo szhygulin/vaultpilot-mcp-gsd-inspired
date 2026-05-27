@@ -66,7 +66,10 @@ import {
   EXEC_TRANSACTION_SELECTOR,
   execTransactionAbi,
 } from "../src/signing/safe-exec-decode.js";
-import { buildSafeEIP712TypedData } from "../src/signing/safe-tx-hash.js";
+import {
+  buildSafeEIP712TypedData,
+  computeSafeTxHash,
+} from "../src/signing/safe-tx-hash.js";
 import {
   _peekHandleForTesting,
   _resetHandleStoreForTesting,
@@ -619,7 +622,7 @@ describe("prepare_safe_tx_execute — composite-tx preview (CHECKS PERFORMED)", 
     expect(text).toContain(FIXTURE_SAFE_A_INPUT.to);
   });
 
-  it("delegatecall path surfaces Phase-38 informational note", async () => {
+  it("delegatecall path emits [HARD-TRIGGER — DELEGATECALL] block (Phase 38 promotion)", async () => {
     // SafeTx C — delegatecall variant of SAFE-A.
     const delegateInput = {
       ...FIXTURE_SAFE_A_INPUT,
@@ -651,7 +654,181 @@ describe("prepare_safe_tx_execute — composite-tx preview (CHECKS PERFORMED)", 
     });
     expect(result.isError).not.toBe(true);
     const text = (result.content[0] as { text: string }).text;
-    expect(text).toMatch(/delegatecall/i);
-    expect(text).toMatch(/Phase 38/i);
+    // Phase 38 Plan 38-01: informational "delegatecall: YES" line REMOVED;
+    // hard-trigger block emitted instead.
+    expect(text.includes("delegatecall:     YES")).toBe(false);
+    expect(text).toContain("[HARD-TRIGGER — DELEGATECALL]");
+    expect(text).toMatch(/Inv #12\.5/);
+  });
+});
+
+// ===========================================================================
+// Phase 38 Plan 38-01 — Inv #12.5 hard-trigger emission tests (execute site)
+// ===========================================================================
+
+const FIXTURE_SAFE_G_DATA_EXEC =
+  "0x610b5925000000000000000000000000cafe0000000000000000000000000000cafe0001";
+const FIXTURE_SAFE_G_MODULE_EXEC =
+  "0xcafe0000000000000000000000000000cafe0001";
+
+describe("prepare_safe_tx_execute — Phase 38 hard-trigger emission (inner-decoded)", () => {
+  it("MODULE ENABLE: inner SafeTx data starts with 0x610b5925 AND inner to === safeAddress emits [HARD-TRIGGER — MODULE ENABLE] block", async () => {
+    const moduleInput = {
+      ...FIXTURE_SAFE_A_INPUT,
+      to: FIXTURE_SAFE_A_INPUT.safeAddress,
+      data: FIXTURE_SAFE_G_DATA_EXEC as Hex,
+      value: 0n,
+    };
+    const moduleHash = computeSafeTxHash(moduleInput);
+    const sig = sign(moduleHash, ACCT0_PRIVKEY);
+    stubSafeChains({ owners: [ACCT0_ADDR], threshold: 1n });
+    stubTxService(
+      buildSafeAFixtureTx({
+        to: FIXTURE_SAFE_A_INPUT.safeAddress,
+        data: FIXTURE_SAFE_G_DATA_EXEC,
+        value: "0",
+        confirmationsRequired: 1,
+        confirmations: [{ owner: ACCT0_ADDR, signature: sig }],
+        safeTxHash: moduleHash,
+      }),
+    );
+    const result = await callTool({
+      chain: "ethereum",
+      safeAddress: FIXTURE_SAFE_A_INPUT.safeAddress,
+      safeTxHash: moduleHash,
+    });
+    expect(result.isError).not.toBe(true);
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain("[HARD-TRIGGER — MODULE ENABLE]");
+    expect(text.toLowerCase()).toContain(FIXTURE_SAFE_G_MODULE_EXEC);
+  });
+
+  it("composite at execute: enableModule + operation: 1 emits BOTH blocks in document order", async () => {
+    const compositeInput = {
+      ...FIXTURE_SAFE_A_INPUT,
+      to: FIXTURE_SAFE_A_INPUT.safeAddress,
+      data: FIXTURE_SAFE_G_DATA_EXEC as Hex,
+      value: 0n,
+      operation: 1 as const,
+    };
+    const compositeHash = computeSafeTxHash(compositeInput);
+    const sig = sign(compositeHash, ACCT0_PRIVKEY);
+    stubSafeChains({ owners: [ACCT0_ADDR], threshold: 1n });
+    stubTxService(
+      buildSafeAFixtureTx({
+        to: FIXTURE_SAFE_A_INPUT.safeAddress,
+        data: FIXTURE_SAFE_G_DATA_EXEC,
+        value: "0",
+        operation: 1,
+        confirmationsRequired: 1,
+        confirmations: [{ owner: ACCT0_ADDR, signature: sig }],
+        safeTxHash: compositeHash,
+      }),
+    );
+    const result = await callTool({
+      chain: "ethereum",
+      safeAddress: FIXTURE_SAFE_A_INPUT.safeAddress,
+      safeTxHash: compositeHash,
+    });
+    expect(result.isError).not.toBe(true);
+    const text = (result.content[0] as { text: string }).text;
+    const idxModule = text.indexOf("[HARD-TRIGGER — MODULE ENABLE]");
+    const idxDelegate = text.indexOf("[HARD-TRIGGER — DELEGATECALL]");
+    expect(idxModule).toBeGreaterThanOrEqual(0);
+    expect(idxDelegate).toBeGreaterThanOrEqual(0);
+    expect(idxModule).toBeLessThan(idxDelegate);
+  });
+
+  it("WARN block (Phase 37 invariant) PRECEDES hard-trigger blocks in document order", async () => {
+    const delegateInput = {
+      ...FIXTURE_SAFE_A_INPUT,
+      operation: 1 as const,
+    };
+    const delegateHash = computeSafeTxHash(delegateInput);
+    const sig = sign(delegateHash, ACCT0_PRIVKEY);
+    stubSafeChains({ owners: [ACCT0_ADDR], threshold: 1n });
+    stubTxService(
+      buildSafeAFixtureTx({
+        operation: 1,
+        confirmationsRequired: 1,
+        confirmations: [{ owner: ACCT0_ADDR, signature: sig }],
+        safeTxHash: delegateHash,
+      }),
+    );
+    const result = await callTool({
+      chain: "ethereum",
+      safeAddress: FIXTURE_SAFE_A_INPUT.safeAddress,
+      safeTxHash: delegateHash,
+    });
+    expect(result.isError).not.toBe(true);
+    const text = (result.content[0] as { text: string }).text;
+    const idxWarn = text.indexOf("[WARN — SAFE EXECUTE COMPOSITE-TX]");
+    const idxHardTrigger = text.indexOf("[HARD-TRIGGER — DELEGATECALL]");
+    expect(idxWarn).toBeGreaterThanOrEqual(0);
+    expect(idxHardTrigger).toBeGreaterThanOrEqual(0);
+    expect(idxWarn).toBeLessThan(idxHardTrigger);
+  });
+
+  it("INVALID_INPUT when inner enableModule selector match but argument decode fails (truncated)", async () => {
+    const truncatedInput = {
+      ...FIXTURE_SAFE_A_INPUT,
+      to: FIXTURE_SAFE_A_INPUT.safeAddress,
+      data: "0x610b5925cafe" as Hex,
+      value: 0n,
+    };
+    const truncatedHash = computeSafeTxHash(truncatedInput);
+    const sig = sign(truncatedHash, ACCT0_PRIVKEY);
+    stubSafeChains({ owners: [ACCT0_ADDR], threshold: 1n });
+    stubTxService(
+      buildSafeAFixtureTx({
+        to: FIXTURE_SAFE_A_INPUT.safeAddress,
+        data: "0x610b5925cafe",
+        value: "0",
+        confirmationsRequired: 1,
+        confirmations: [{ owner: ACCT0_ADDR, signature: sig }],
+        safeTxHash: truncatedHash,
+      }),
+    );
+    const result = await callTool({
+      chain: "ethereum",
+      safeAddress: FIXTURE_SAFE_A_INPUT.safeAddress,
+      safeTxHash: truncatedHash,
+    });
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as Record<string, unknown> & {
+      errorCode?: string;
+      message?: string;
+    };
+    expect(sc.errorCode).toBe("INVALID_INPUT");
+    expect(sc.message).toMatch(
+      /SafeTx data starts with enableModule selector but argument decode failed/,
+    );
+  });
+
+  it("REGRESSION — Phase 37 informational 'delegatecall: YES' CHECKS PERFORMED line is REMOVED at execute", async () => {
+    const delegateInput = {
+      ...FIXTURE_SAFE_A_INPUT,
+      operation: 1 as const,
+    };
+    const delegateHash = computeSafeTxHash(delegateInput);
+    const sig = sign(delegateHash, ACCT0_PRIVKEY);
+    stubSafeChains({ owners: [ACCT0_ADDR], threshold: 1n });
+    stubTxService(
+      buildSafeAFixtureTx({
+        operation: 1,
+        confirmationsRequired: 1,
+        confirmations: [{ owner: ACCT0_ADDR, signature: sig }],
+        safeTxHash: delegateHash,
+      }),
+    );
+    const result = await callTool({
+      chain: "ethereum",
+      safeAddress: FIXTURE_SAFE_A_INPUT.safeAddress,
+      safeTxHash: delegateHash,
+    });
+    expect(result.isError).not.toBe(true);
+    const text = (result.content[0] as { text: string }).text;
+    expect(text.includes("delegatecall:     YES")).toBe(false);
+    expect(text).toContain("[HARD-TRIGGER — DELEGATECALL]");
   });
 });

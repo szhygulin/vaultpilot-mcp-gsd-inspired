@@ -34,7 +34,10 @@
 
 import { isDemoMode } from "../config/env.js";
 import { lookup } from "../signing/handle-store.js";
-import { PASTEABLE_BLOCK_TEMPLATE } from "../signing/blocks.js";
+import {
+  PASTEABLE_BLOCK_TEMPLATE,
+  PASTEABLE_BLOCK_TEMPLATE_SAFE,
+} from "../signing/blocks.js";
 import { registerTool } from "./index.js";
 
 const DESCRIPTION = [
@@ -111,6 +114,53 @@ registerTool("get_verification_artifact", DESCRIPTION, INPUT_SCHEMA, async (args
   //    that branch.
   const presignHashJson = pinned?.presignHash ?? null;
   const presignHashText = pinned?.presignHash ?? "(not yet previewed)";
+
+  // Phase 38 Plan 38-01 (A1 resolution) — txType dispatch. For
+  // `PreparedTxSafeTypedData` handles, the EVM-shape sentinel fields
+  // (`record.tx.to` / `valueWei` / `data`) are zero / empty by construction
+  // (handle-store.ts:996-1001); the REAL Safe-side fields live in
+  // `safeAddress` / `safeTxTo` / `safeTxValue` / `safeTxData` / `operation`
+  // / `safeTxHash`. Substitute the PASTEABLE_BLOCK_TEMPLATE_SAFE so the
+  // second-LLM receives operationally meaningful bytes — the EVM template
+  // with sentinel zeros would be useless for Safe handles.
+  //
+  // The execute-path handle is `PreparedTxEvm` (NOT safe-typed-data) — its
+  // `record.tx.{to,valueWei,data}` are REAL (the outer execTransaction
+  // calldata). It correctly falls through to the EVM-shape branch below;
+  // the second-LLM decodes execTransaction(...) and recursively decodes
+  // the encapsulated SafeTx.
+  if (record.tx.txType === "safe-typed-data") {
+    const safeTx = record.tx;
+    const block = PASTEABLE_BLOCK_TEMPLATE_SAFE
+      .replace("{CHAIN_ID}", String(safeTx.chain))
+      .replace("{SAFE_ADDRESS}", safeTx.safeAddress)
+      .replace("{SAFE_TX_TO}", safeTx.safeTxTo)
+      .replace("{SAFE_TX_VALUE}", safeTx.safeTxValue.toString())
+      .replace("{SAFE_TX_DATA}", safeTx.safeTxData)
+      .replace("{OPERATION}", safeTx.operation)
+      .replace("{SAFE_TX_HASH}", safeTx.safeTxHash)
+      .replace("{PAYLOAD_FINGERPRINT}", record.payloadFingerprint);
+
+    const safeSelector =
+      safeTx.safeTxData === "0x"
+        ? null
+        : (safeTx.safeTxData.slice(0, 10) as `0x${string}`);
+
+    return {
+      content: [{ type: "text", text: block }],
+      structuredContent: {
+        safeAddress: safeTx.safeAddress,
+        safeTxTo: safeTx.safeTxTo,
+        safeTxValue: safeTx.safeTxValue.toString(),
+        safeTxData: safeTx.safeTxData,
+        operation: safeTx.operation,
+        safeTxHash: safeTx.safeTxHash,
+        chainId: safeTx.chain,
+        payloadFingerprint: record.payloadFingerprint,
+        selector: safeSelector,
+      },
+    };
+  }
 
   const block = PASTEABLE_BLOCK_TEMPLATE
     .replace("{CHAIN_ID}", String(record.tx.chainId))

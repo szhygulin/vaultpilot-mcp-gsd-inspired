@@ -243,12 +243,17 @@ describe("prepare_safe_tx_propose — happy path + Fixture SAFE-A/D cross-link",
     expect(text).toMatch(/Sign Hash:\s+0x/);
   });
 
-  it("delegatecall path surfaces the Phase-38 hard-trigger informational note", async () => {
+  it("delegatecall path emits the [HARD-TRIGGER — DELEGATECALL] block (Phase 38 promotion of the Phase-37 informational note)", async () => {
     stubSafeChains({});
     const res = await callTool(safeAArgs({ operation: "delegatecall" }));
     const text = res.content[0]?.text ?? "";
-    expect(text).toMatch(/delegatecall:\s+YES/);
-    expect(text).toMatch(/Phase 38/);
+    // Phase 38 Plan 38-01: informational "delegatecall: YES" line REMOVED;
+    // hard-trigger block emitted instead. Regression assert: the Phase-37
+    // informational line is GONE.
+    expect(text.includes("delegatecall:     YES")).toBe(false);
+    expect(text).toContain("[HARD-TRIGGER — DELEGATECALL]");
+    expect(text).toMatch(/Inv #12\.5/);
+    expect(text).toMatch(/get_verification_artifact/);
     // The delegatecall path also produces a DIFFERENT safeTxHash (operation
     // byte is part of the SafeTx EIP-712 struct hash).
     const sc = res.structuredContent as Record<string, unknown>;
@@ -387,5 +392,102 @@ describe("prepare_safe_tx_propose — gas-relay quintet", () => {
     const scBase = resBase.structuredContent as Record<string, unknown>;
     const scGas = resGas.structuredContent as Record<string, unknown>;
     expect(scBase.safeTxHash).not.toBe(scGas.safeTxHash);
+  });
+});
+
+// ===========================================================================
+// Phase 38 Plan 38-01 — Inv #12.5 hard-trigger emission tests
+// ===========================================================================
+
+// Fixture SAFE-G calldata — selector + zero-padded module address. Cross-link
+// to test/protocols-safe.test.ts FIXTURE_SAFE_G_CALLDATA.
+const FIXTURE_SAFE_G_DATA =
+  "0x610b5925000000000000000000000000cafe0000000000000000000000000000cafe0001";
+const FIXTURE_SAFE_G_MODULE = "0xcafe0000000000000000000000000000cafe0001";
+
+describe("prepare_safe_tx_propose — Phase 38 hard-trigger emission", () => {
+  it("MODULE ENABLE: data starts with 0x610b5925 AND to === safeAddress emits [HARD-TRIGGER — MODULE ENABLE] block", async () => {
+    stubSafeChains({});
+    const res = await callTool(
+      safeAArgs({
+        to: FIXTURE_SAFE_A_INPUT.safeAddress,
+        data: FIXTURE_SAFE_G_DATA,
+      }),
+    );
+    expect(res.isError).toBeFalsy();
+    const text = res.content[0]?.text ?? "";
+    expect(text).toContain("[HARD-TRIGGER — MODULE ENABLE]");
+    expect(text.toLowerCase()).toContain(FIXTURE_SAFE_G_MODULE);
+    // Handle UUID substituted into the block.
+    const sc = res.structuredContent as Record<string, unknown>;
+    expect(text).toContain(sc.handle as string);
+  });
+
+  it("MODULE ENABLE does NOT fire when to !== safeAddress (only safe-on-self triggers)", async () => {
+    stubSafeChains({});
+    // Different target — Anvil acct 2, which is NOT the safeAddress.
+    const res = await callTool(
+      safeAArgs({
+        to: NON_OWNER_PERSONA,
+        data: FIXTURE_SAFE_G_DATA,
+      }),
+    );
+    expect(res.isError).toBeFalsy();
+    const text = res.content[0]?.text ?? "";
+    expect(text.includes("[HARD-TRIGGER — MODULE ENABLE]")).toBe(false);
+  });
+
+  it("composite: enableModule selector + delegatecall emits BOTH blocks in document order (MODULE ENABLE before DELEGATECALL)", async () => {
+    stubSafeChains({});
+    const res = await callTool(
+      safeAArgs({
+        to: FIXTURE_SAFE_A_INPUT.safeAddress,
+        data: FIXTURE_SAFE_G_DATA,
+        operation: "delegatecall",
+      }),
+    );
+    expect(res.isError).toBeFalsy();
+    const text = res.content[0]?.text ?? "";
+    const idxModule = text.indexOf("[HARD-TRIGGER — MODULE ENABLE]");
+    const idxDelegate = text.indexOf("[HARD-TRIGGER — DELEGATECALL]");
+    expect(idxModule).toBeGreaterThanOrEqual(0);
+    expect(idxDelegate).toBeGreaterThanOrEqual(0);
+    expect(idxModule).toBeLessThan(idxDelegate);
+  });
+
+  it("non-trigger SafeTx (random calldata + call) emits NEITHER hard-trigger block", async () => {
+    stubSafeChains({});
+    const res = await callTool(safeAArgs({ data: "0xdeadbeef" }));
+    expect(res.isError).toBeFalsy();
+    const text = res.content[0]?.text ?? "";
+    expect(text.includes("[HARD-TRIGGER —")).toBe(false);
+  });
+
+  it("INVALID_INPUT when enableModule selector matches but argument decode fails (truncated calldata)", async () => {
+    stubSafeChains({});
+    const res = await callTool(
+      safeAArgs({
+        to: FIXTURE_SAFE_A_INPUT.safeAddress,
+        data: "0x610b5925cafe", // selector match but truncated args
+      }),
+    );
+    expect(res.isError).toBe(true);
+    const sc = res.structuredContent as Record<string, unknown> & {
+      errorCode?: string;
+      message?: string;
+    };
+    expect(sc.errorCode).toBe("INVALID_INPUT");
+    expect(sc.message).toMatch(
+      /SafeTx data starts with enableModule selector but argument decode failed/,
+    );
+  });
+
+  it("REGRESSION — Phase 37 informational 'delegatecall: YES' CHECKS PERFORMED line is REMOVED", async () => {
+    stubSafeChains({});
+    const res = await callTool(safeAArgs({ operation: "delegatecall" }));
+    const text = res.content[0]?.text ?? "";
+    // Bracketed-block emission survives; inline informational line does not.
+    expect(text.includes("delegatecall:     YES")).toBe(false);
+    expect(text).toContain("[HARD-TRIGGER — DELEGATECALL]");
   });
 });

@@ -72,6 +72,14 @@ import {
   type SafeOperation,
   type SupportedSafeVersion,
 } from "../signing/safe-tx-hash.js";
+import {
+  decodeEnableModuleCalldata,
+  isEnableModuleCalldata,
+} from "../protocols/safe.js";
+import {
+  HARD_TRIGGER_DELEGATECALL_TEMPLATE,
+  HARD_TRIGGER_MODULE_ENABLE_TEMPLATE,
+} from "../signing/blocks.js";
 import { registerTool } from "./index.js";
 
 function errEnvelope(
@@ -135,7 +143,7 @@ const INPUT_SCHEMA = {
       type: "string",
       enum: ["call", "delegatecall"],
       description:
-        "SafeTx operation discriminator. 'call' is the standard case; 'delegatecall' executes the target's code in the Safe's storage context — Phase 38 will hard-trigger a second-LLM check here.",
+        "SafeTx operation discriminator. 'call' is the standard case; 'delegatecall' executes the target's code in the Safe's storage context — Phase 38 hard-triggers a second-LLM check via the [HARD-TRIGGER — DELEGATECALL] block. enableModule(...) calldata on the Safe itself hard-triggers via the [HARD-TRIGGER — MODULE ENABLE] block.",
     },
     safeTxGas: {
       type: "string",
@@ -260,6 +268,29 @@ registerTool(
         };
       }
       const data = rawData as Hex;
+
+      // Phase 38 Plan 38-01 (Inv #12.5) — pre-flight: if the data prefix is
+      // the enableModule selector, verify the argument decode succeeds BEFORE
+      // we proceed (minting a handle for a SafeTx whose hard-trigger emission
+      // would silently swallow a truncated-arg decode is a poor UX). The
+      // selector match itself does NOT refuse — only a TRUNCATED arg refuses
+      // with INVALID_INPUT per CONTEXT §"enableModule calldata parsing".
+      // `to === safeAddress` gate is applied at the emission site below; this
+      // pre-flight only catches malformed bytes.
+      if (isEnableModuleCalldata(data)) {
+        try {
+          decodeEnableModuleCalldata(data);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          const msg =
+            "SafeTx data starts with enableModule selector but argument decode failed; bytes may be malformed";
+          return {
+            isError: true,
+            content: [{ type: "text", text: `error: ${msg} (${message})` }],
+            structuredContent: errEnvelope("INVALID_INPUT", msg, message),
+          };
+        }
+      }
 
       const rawValue = typeof args.value === "string" ? args.value : "";
       const valueParse = parseOptionalBigint(rawValue, "value");
@@ -534,9 +565,6 @@ registerTool(
         `  onchainNonce:     ${onchainInfo.nonce.toString()} (used as SafeTx nonce)`,
         `  onchainThreshold: ${onchainInfo.threshold.toString()} signatures required`,
         `  domainSeparator:  ${domainMatches ? "matches viem.hashDomain({chainId, verifyingContract})" : "DRIFT — on-chain " + onchainDomain + " ≠ local " + localDomain + " (informational; typed-data digest is correct by construction)"}`,
-        ...(operationStr === "delegatecall"
-          ? ["  delegatecall:     YES — Phase 38 will hard-trigger second-LLM check here (informational at Phase 37)"]
-          : []),
         ...(anyGasRelayNonZero
           ? [
               "  WARN gas-relay:   non-zero safeTxGas/baseGas/gasPrice/gasToken/refundReceiver — most Safe co-signers expect all-zero (Safe v1.3.0+ non-relayed convention). Confirm the values match what the other owners will sign.",
@@ -558,7 +586,39 @@ registerTool(
         "  In EITHER mode, visually confirm the 32-byte digest on-device matches the safeTxHash above.",
       ].join("\n");
 
-      const text = [prepareReceipt, checksPerformed, ledgerDisplay].join("\n\n");
+      // Phase 38 Plan 38-01 (Inv #12.5) — hard-trigger block composition.
+      // Composite scenario emits BOTH in document order: MODULE ENABLE first
+      // (narrower selector match; safe-on-self gate), DELEGATECALL second
+      // (broader operation-discriminator match). Never combined — skill-side
+      // Step 0.5 keys on titles independently.
+      const hardTriggerBlocks: string[] = [];
+      if (
+        isEnableModuleCalldata(data) &&
+        rawTo.toLowerCase() === rawSafeAddress.toLowerCase()
+      ) {
+        // The pre-flight above ensured this decode succeeds; safe to call.
+        const moduleAddress = decodeEnableModuleCalldata(data).module;
+        hardTriggerBlocks.push(
+          HARD_TRIGGER_MODULE_ENABLE_TEMPLATE
+            .replace("{MODULE_ADDRESS}", moduleAddress)
+            .replace("{SAFE_ADDRESS}", rawSafeAddress)
+            .replace("{HANDLE}", handle),
+        );
+      }
+      if (operationStr === "delegatecall") {
+        hardTriggerBlocks.push(
+          HARD_TRIGGER_DELEGATECALL_TEMPLATE
+            .replace("{SAFE_ADDRESS}", rawSafeAddress)
+            .replace("{HANDLE}", handle),
+        );
+      }
+
+      const text = [
+        prepareReceipt,
+        checksPerformed,
+        ledgerDisplay,
+        ...hardTriggerBlocks,
+      ].join("\n\n");
 
       return {
         content: [{ type: "text", text }],
