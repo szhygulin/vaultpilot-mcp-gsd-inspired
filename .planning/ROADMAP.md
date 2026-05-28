@@ -1103,7 +1103,7 @@ Plans:
 Plans:
 
 - [x] 39-01-PLAN.md — Wave 0 infra: append `DECODED_RECIPIENT_DRIFT` to the `ErrorCode` union + `DECODED_RECIPIENT_DRIFT_TEMPLATE` to `blocks.ts`; widen `PreparedTxEvm` with additive `bridgeParams?: { toAddress?: string }`; create `bridge-decoders/index.ts` registry skeleton with the `_bridgeTier1Decoders` ESM seam (returns no-match until decoders register)
-- [ ] 39-02-PLAN.md — The four Tier-1 decoders + unit tests + registry population: `across-v3.ts` (EVM address) + `near-omnibridge.ts` (account-id string) + `wormhole.ts` + `mayan-swift.ts` (encoding-aware bytes32: EVM last-20-bytes vs Solana full-32-byte case-sensitive base58); hardcoded-literal fixtures (Mayan SYNTHETIC); all five selectors registered
+- [x] 39-02-PLAN.md — The four Tier-1 decoders + unit tests + registry population: `across-v3.ts` (EVM address) + `near-omnibridge.ts` (account-id string) + `wormhole.ts` + `mayan-swift.ts` (encoding-aware bytes32: EVM last-20-bytes vs Solana full-32-byte case-sensitive base58); hardcoded-literal fixtures (Mayan SYNTHETIC); all five selectors registered
 - [ ] 39-03-PLAN.md — `preview_send` Layer 0.6 assertion (after Layer 0.5 canonical-dispatch, before Layer 2 chain-mismatch) with encoding-aware compare + integration test (refusal shape, layer ordering, DEX no-op, malformed no-throw, Solana case-sensitivity); SECURITY.md Inv #6b codification + Phase 39 threat register; companion-skill cross-repo coordinated-bump note
 
 #### Phase 40: Sandwich-MEV slippage hint per-L2 thresholds
@@ -1184,5 +1184,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 36. Safe positions + Tx Service API integration + `get_safe_positions` | v2.5 | 0/2 | Not started | - |
 | 37. Safe three-step signing flow — propose + approve + execute + submit-signature | v2.5 | 0/3 | Not started | - |
 | 38. `enableModule` + `delegateCall: true` hard-trigger second-LLM check (Inv #12.5) | v2.5 | 0/2 | Not started | - |
-| 39. Tier-1 bridge facet decoders + final-recipient assertion (Inv #6b) | v2.6 | 1/3 | In Progress|  |
+| 39. Tier-1 bridge facet decoders + final-recipient assertion (Inv #6b) | v2.6 | 2/3 | In Progress|  |
 | 40. Sandwich-MEV slippage hint per-L2 thresholds | v2.6 | 0/1 | Not started | - |

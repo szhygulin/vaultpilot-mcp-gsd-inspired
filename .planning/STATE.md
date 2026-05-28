@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v2.5
 milestone_name: Safe positions + Tx Service
-current_plan: 2
+current_plan: 3
 status: executing
-last_updated: "2026-05-28T16:42:23.240Z"
+last_updated: "2026-05-28T17:03:07.669Z"
 last_activity: 2026-05-28
 progress:
   total_phases: 3
@@ -26,8 +26,8 @@ See: .planning/PROJECT.md (updated 2026-05-12)
 ## Current Position
 
 Phase: 39 (bridge-tier-1-facet-decoders-final-recipient-assertion) — EXECUTING
-Plan: 2 of 3
-Current Plan: 2
+Plan: 3 of 3
+Current Plan: 3
 Total Plans in Phase: 3
 Status: Ready to execute
 Last activity: 2026-05-28
@@ -103,6 +103,7 @@ Progress: [█████████░] 86%
 | Phase 33 P33-03 | 38 min | 3 tasks | 12 files |
 | Phase 34 P34-03 | 45 | 4 tasks | 9 files |
 | Phase 39 P01 | 8 | 3 tasks | 5 files |
+| Phase 39 P02 | 15 | 3 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -163,6 +164,7 @@ Recent decisions affecting current work:
 - [Phase 34]: No sandwich-MEV gate for Curve — asymmetric to Phase 32 UniV3 — Documented in CHECKS PERFORMED on both tools and preview_send blocks; slippageBps [1,5000] cap is the only footgun guard
 - [Phase 34]: (tx.to, selector) TUPLE dispatch in preview_send Curve arm — Any Vyper StableSwap pool can share 4-byte selectors; registry gate prevents false decode (T-34-03-C)
 - [Phase ?]: bridgeParams optional bag on PreparedTxEvm — additive widening for Layer 0.6 comparand (Phase 39 Plan 01)
+- [Phase ?]: Mayan EVM/Solana discrimination uses structural 12-leading-zero-byte test on destAddr bytes32 (chain-id-scheme-independent)
 
 ### Pending Todos
 
@@ -362,6 +364,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-28T16:42:23.168Z
-Stopped at: Completed 39-01-PLAN.md — Wave 0 infrastructure for bridge Tier-1 decoder registry
+Last session: 2026-05-28T17:03:07.601Z
+Stopped at: Completed 39-02-PLAN.md
 Resume file: None
