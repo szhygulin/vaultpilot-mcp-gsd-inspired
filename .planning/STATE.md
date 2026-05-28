@@ -4,8 +4,8 @@ milestone: v2.5
 milestone_name: Safe positions + Tx Service
 current_plan: 2
 status: executing
-last_updated: "2026-05-28T16:21:54.350Z"
-last_activity: 2026-05-27 -- Phase 37 Plan 37-01 closed code-complete
+last_updated: "2026-05-28T16:42:23.240Z"
+last_activity: 2026-05-28
 progress:
   total_phases: 3
   completed_phases: 1
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-12)
 
 **Core value:** The user trusts what the Ledger screen shows — nothing else. Tampering at any layer between the agent and the device produces a visible mismatch on-screen before signing.
-**Current focus:** Phase 37 — safe-three-step-signing-flow
+**Current focus:** Phase 39 — bridge-tier-1-facet-decoders-final-recipient-assertion
 
 ## Current Position
 
-Phase: 37 (safe-three-step-signing-flow) — EXECUTING
-Plan: 2 of 3 (Plan 37-01 complete; Plan 37-02 next)
+Phase: 39 (bridge-tier-1-facet-decoders-final-recipient-assertion) — EXECUTING
+Plan: 2 of 3
 Current Plan: 2
 Total Plans in Phase: 3
-Status: Executing Phase 37
-Last activity: 2026-05-27 -- Phase 37 Plan 37-01 closed code-complete
+Status: Ready to execute
+Last activity: 2026-05-28
 
 Prior activity: 2026-05-27 — Phase 37 Plan 37-01 closed code-complete (3 atomic commits 905a95e → 1b26ca8). v2.5 Safe trust-pipeline foundation: `src/signing/safe-tx-hash.ts` (EIP-712 typed-data digest v1.3.0+v1.4.1 single path via viem.hashTypedData — single digest because byte-identical typehashes per RESEARCH §Pitfall 1; chainId pinned as number per RESEARCH §Pitfall 2) + `payload-fingerprint.ts` extension `SAFE_TX_FINGERPRINT_DOMAIN_TAG = "VaultPilot-safetx-v1:"` + `computeSafeTxPayloadFingerprint` (uint64 LE chain encoding via explicit `.reverse()` per RESEARCH §Pitfall A4) + Fixtures SAFE-A (`0xf5073f…`) / SAFE-B (`0xf198ea…`) / SAFE-C (`0x2f5b39…`) / SAFE-D (`0xbd55bd…`) hardcoded `0x…` literals (NO `beforeAll`-snapshot per CLAUDE.md) + `PreparedTxSafeTypedData` 7th `PreparedTx` union member with sentinel EVM-shape fields + Safe-specific cryptographic-binding fields (chain, safeAddress, safeVersion, safeTxHash, safeNonce, operation, safeTxTo/Value/Data, gas-relay quintet, typedDataStructure) + `prepare_safe_tx_propose` MCP tool (off-chain typed-data sign; refuses pre-v1.3.0 with `UNSUPPORTED_SAFE_VERSION` for cross-chain replay protection; refuses non-owner with `INVALID_INPUT`; surfaces PREPARE RECEIPT + CHECKS PERFORMED with domainSeparator drift detection + LEDGER DISPLAY with both clear-sign + blind-sign expectations) + `eth_signTypedData_v4` added to `REQUIRED_NAMESPACES.eip155.methods` for new WC pairings + `safe.ts` `domainSeparator()` + `getTransactionHash(10-arg)` ABI extensions + `getOnchainDomainSeparator` reader + `_safeChains` ESM seam extension + `UNSUPPORTED_SAFE_VERSION` error code. Test delta: +197 (4653 → 4850; +42 unique tests, remainder from fixture cross-imports in consumer tests — expected). FROZEN-area zero-diff held across all 3 commits per Phase 37 authoritative scope (`src/tools/send_transaction.ts` + `src/tools/preview_send.ts` untouched). One `[Rule 3 - Auto-fix]` deviation: re-scoped Phase 36 Test 18 from `src/signing/` zero-diff to Phase 37 authoritative paths (Phase 36 test scope was Phase-36-bounded; Plan 37-01 explicitly extends `src/signing/`). One `[Rule 1 - Bug]` deviation: lowercased Fixture SAFE-B safeAddress to bypass viem EIP-55 checksum validation. New exports surface for Plans 37-02 + 37-03: `computeSafeTxHash` / `buildSafeEIP712TypedData` / `computeSafeTxPayloadFingerprint` / `PreparedTxSafeTypedData` / `getOnchainDomainSeparator` / `SAFE_TX_FINGERPRINT_DOMAIN_TAG` / `SafeOperation` / `SupportedSafeVersion` / `SafeEIP712TypedData` / `UNSUPPORTED_SAFE_VERSION`. Plan 37-02 unblocked: `prepare_safe_tx_approve` (consumes `computeSafeTxHash` + `buildSafeEIP712TypedData`) + `submit_safe_tx_signature` (consumes `computeSafeTxPayloadFingerprint` for re-check + ECDSA-recover against `safeTxHash`).
 
@@ -60,7 +60,7 @@ Prior activity: 2026-05-13 — Quick task 260513-c8e (issue #25 WC session persi
 
 Prior activity: 2026-05-12 — Phase 5 planned + executed. Planning bundle (RESEARCH + VALIDATION + PATTERNS + 3 PLAN files) shipped as PR #18 (PASS after 2 inline plan-checker fixes + 1 accepted residual; Q-CONTRADICTION-PREP Option B + Q-NPM resolved via AskUserQuestion before planning). Then 05-01 (demo state + persona registry + ErrorCode 13→14 with WRONG_MODE + get/set_demo_wallet) shipped as PR #19 (+29 tests, 3 ESM-mechanics deviations). Then 05-02 (Q-CONTRADICTION-PREP Option B — REMOVES demo refusal from prepare_native_send + preview_send; persona address as `from`; integration test re-anchors Fixture A + C under demo `from`) shipped as PR #20 (+9 net tests, zero substantive deviations). Finally 05-03 (DIAG tools + update check + auto-demo NOTICE dispatcher-wrap + INSTRUCTIONS rewrite) shipped as PR #21 (+26 tests, 2 minor deviations; secret-safety audit via 3-sentinel substring scan; dispatcher-wrap at src/server.ts one-change architectural-scope-correct per Phase 4 precedent).
 
-Progress: [██████████] 100%
+Progress: [█████████░] 86%
 
 ## Performance Metrics
 
@@ -102,6 +102,7 @@ Progress: [██████████] 100%
 | Phase 33 P33-02 | ~33 min | 3 tasks | 17 files |
 | Phase 33 P33-03 | 38 min | 3 tasks | 12 files |
 | Phase 34 P34-03 | 45 | 4 tasks | 9 files |
+| Phase 39 P01 | 8 | 3 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -161,6 +162,7 @@ Recent decisions affecting current work:
 - [Phase 34]: Legacy add_liquidity refused — deferred to v2.4.x — legacy pool ABI uses fixed-N arrays; structural refusal before amounts validation
 - [Phase 34]: No sandwich-MEV gate for Curve — asymmetric to Phase 32 UniV3 — Documented in CHECKS PERFORMED on both tools and preview_send blocks; slippageBps [1,5000] cap is the only footgun guard
 - [Phase 34]: (tx.to, selector) TUPLE dispatch in preview_send Curve arm — Any Vyper StableSwap pool can share 4-byte selectors; registry gate prevents false decode (T-34-03-C)
+- [Phase ?]: bridgeParams optional bag on PreparedTxEvm — additive widening for Layer 0.6 comparand (Phase 39 Plan 01)
 
 ### Pending Todos
 
@@ -360,6 +362,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-28T16:21:54.334Z
-Stopped at: Phase 39 planned — 3 plans across 3 waves, plan-checker PASS (0 blockers)
-Resume file: .planning/phases/39-bridge-tier-1-facet-decoders-final-recipient-assertion/39-01-PLAN.md
+Last session: 2026-05-28T16:42:23.168Z
+Stopped at: Completed 39-01-PLAN.md — Wave 0 infrastructure for bridge Tier-1 decoder registry
+Resume file: None
