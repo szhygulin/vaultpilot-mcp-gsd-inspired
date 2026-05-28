@@ -4,7 +4,7 @@ milestone: v2.5
 milestone_name: Safe positions + Tx Service
 current_plan: 3
 status: verifying
-last_updated: "2026-05-28T17:22:47.177Z"
+last_updated: "2026-05-28T19:16:08.041Z"
 last_activity: 2026-05-28
 progress:
   total_phases: 3
@@ -367,6 +367,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-28T17:17:00.804Z
-Stopped at: Completed 39-02-PLAN.md
-Resume file: None
+Last session: 2026-05-28T19:16:08.029Z
+Stopped at: Phase 40 context gathered (2 forks resolved)
+Resume file: .planning/phases/40-mev-sandwich-slippage-hint-per-l2/40-CONTEXT.md
