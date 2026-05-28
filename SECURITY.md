@@ -673,3 +673,74 @@ The comparison is encoding-aware. The decoder already returns `finalRecipient` i
 The sister `vaultpilot-preflight` repo receives a coordinated version bump adding Inv #6b skill-side encoding: "before signing a bridge tx, verify the decoded recipient matches the user's stated recipient." This mirrors the v2.5 Phase 38 sister-repo coordination pattern (skill v1.4 + Inv #12.5). The MCP-side Layer 0.6 gate is the server-side control — it fires at preview time regardless of the agent's skill usage and produces a structured refusal. The skill-side encoding is defense in depth: it instructs the agent to perform the verification step explicitly before relaying `userDecision: "send"`.
 
 This is a CROSS-REPO follow-up tracked here. No edit to the sister `vaultpilot-preflight` repo lands inside this repository in Phase 39. The MCP-side control is complete and active as of Phase 39 Plan 39-03.
+
+## Sandwich-MEV per-L2 thresholds (v2.6 — Phase 40, MEV-01)
+
+### Threat-model nuance: sandwich-MEV exposure is per-chain, not per-tool
+
+The Phase 32 (v2.4) Uniswap V3 sandwich-MEV gate used a single global 2% price-impact refusal bar across all chains. This global threshold was simultaneously too loose for high-MEV chains and too tight for low-MEV chains. Phase 40 replaces it with a per-chain refusal bar calibrated to each chain's actual mempool exposure.
+
+**Why chains differ:**
+
+- **Ethereum mainnet:** Public mempool, highest sandwich-MEV exposure. Every pending transaction is visible to MEV searchers before block inclusion. Baseline: >2% price impact refuses.
+- **Polygon PoS:** Public Bor mempool with active MEV-searcher infrastructure. Public tx visibility and Polygon-native MEV bots make sandwich risk comparable to Ethereum. Calibrated at >2% (same bar as Ethereum), with a higher default slippage (100bps vs 50bps) to reflect the more volatile public-mempool environment.
+- **Arbitrum / Optimism / Base:** Centralized private-sequencer mempools. Transactions are not visible to external actors before ordering — sandwich-MEV is structurally near-impossible at the L2 level absent sequencer collusion. The refusal bar is relaxed to >3% to reduce false positives without materially increasing real sandwich risk.
+
+**Calibration table (src/config/sandwich-mev-thresholds.ts):**
+
+| Chain | defaultSlippageBps | priceImpactRefusalPct | Mempool type |
+|-------|--------------------|-----------------------|--------------|
+| ethereum (1) | 50 | 2.0% | Public, high MEV |
+| polygon (137) | 100 | 2.0% | Public Bor, active MEV |
+| arbitrum (42161) | 30 | 3.0% | Private centralized sequencer |
+| optimism (10) | 30 | 3.0% | Private centralized sequencer |
+| base (8453) | 30 | 3.0% | OP-stack private sequencer |
+
+These values are a **calibration, not a security boundary.** Too-tight → false-refusal annoyance driving users to explicitly set `slippageBps`; too-loose → real sandwiches slip through. The private-sequencer claim is well-established engineering consensus (centralized sequencers do not expose a public pending-tx mempool; L2-level sandwich requires sequencer collusion, outside this threat model).
+
+### Refusal contract consistency: SANDWICH_MEV_REFUSED
+
+Phase 40 introduces the dedicated `SANDWICH_MEV_REFUSED` error code (appended to `src/signing/error-codes.ts` after `DECODED_RECIPIENT_DRIFT`). Two producers:
+
+1. **`prepare_uniswap_swap` (EVM, per-chain bar):** fires when `priceImpactBps > priceImpactRefusalPct * 100` AND `slippageBps` was NOT explicitly supplied. Refusal envelope names the chain, the per-chain threshold values, and the actual `priceImpactBps` so the agent can surface a precise hint.
+2. **`prepare_sunswap_swap` (TRON, fixed 200bps):** TRON is not in the EVM SOT — its threshold stays at 200bps. Only the error code migrated from `INVALID_INPUT` to `SANDWICH_MEV_REFUSED` for a consistent refusal contract across all chains.
+
+**`SANDWICH_MEV_REFUSED` is also emitted when `MEV_THRESHOLD_<CHAIN>` is present but invalid** (non-integer, `≤0`, `>10000`, decimal). The gate cannot be silently disabled via an impossible threshold.
+
+### Curve stays gate-free by design
+
+`prepare_curve_swap` does NOT use the per-L2 sandwich-MEV SOT. Phase 34 established Curve's explicit-slippage-only model (`slippageBps` REQUIRED, range [1, 5000], 50% footgun cap). The per-L2 SOT (`sandwich-mev-thresholds.ts`) is scoped to Uniswap tools. This is an explicit design choice, not an oversight — Curve's CHECKS PERFORMED block documents the gate-free status and the per-L2 SOT scoping.
+
+### MEV_THRESHOLD_<CHAIN> env override bounds
+
+Operators can relax or tighten the per-chain default slippage bps via `MEV_THRESHOLD_<CHAIN>=<bps>` (e.g. `MEV_THRESHOLD_POLYGON=150`). The override:
+- Applies to `defaultSlippageBps` ONLY — `priceImpactRefusalPct` stays from the calibration table.
+- Validates as a base-10 integer in [1, 10000] (strict parse: no decimals, no leading zeros, no negatives, no empty string).
+- Invalid value → `InvalidMevThresholdError` → `SANDWICH_MEV_REFUSED` envelope naming chain + raw value. The gate cannot be set to 0 or an impossible threshold to bypass refusal.
+- Read at call time (never at module load) so test environments can mutate `process.env` freely.
+
+### Phase 40 threat register summary
+
+| Threat ID | STRIDE | Severity | Disposition | Mitigation |
+|-----------|--------|----------|-------------|------------|
+| T-40-MEV-GLOBAL-TOO-LOOSE | Tampering (economic) | HIGH | mitigate | Per-chain refusal bar from `getSandwichThresholds(chainId)` — Polygon/Ethereum stay strict (>2%) where mempool exposure is high; private-sequencer L2s relax to >3%. Replaces the single fixed 2% bar that was simultaneously too loose for Polygon and too tight for Arbitrum/OP/Base. Anchored in `test/sandwich-mev-thresholds.test.ts` (per-chain values) + `test/prepare-uniswap-swap.test.ts` (T6 `SANDWICH_MEV_REFUSED` at the ethereum bar). |
+| T-40-MEV-FALSE-REFUSAL | Usability→Security | MEDIUM | mitigate | A too-tight bar on private-sequencer L2s drives users to set `MEV_THRESHOLD_*` or pass blanket `slippageBps`, eroding the gate's value. The lenient L2 refusal bar (>3%) reduces false positives where sandwich is structurally near-impossible, without exposing real risk on those chains. Calibration documented as a tuning knob, not a security boundary. |
+| T-40-MEV-ENV-OVERRIDE-DISABLE | Tampering | HIGH | mitigate | `getSandwichThresholds` validates the override as a base-10 integer in [1, 10000]; non-integer / `≤0` / `>10000` / decimal values are refused (`InvalidMevThresholdError` → `SANDWICH_MEV_REFUSED` envelope). Cannot set 0 or a `>10000`-bps value to silently disable the gate; the refusal still fires above the (relaxed) bar. Anchored in `test/sandwich-mev-thresholds.test.ts` invalid-value cases + `test/prepare-uniswap-swap.test.ts` invalid-env test case. |
+| T-40-FROZEN-DRIFT | Tampering | CRITICAL | mitigate | Phase 40 touches only swap tools + config + error code + docs. `payload-fingerprint.ts` / `presign-hash(-tron).ts` / `send_transaction.ts` three gates / `handle-store.ts` state machine stay byte-identical to `origin/main` — asserted by `git diff origin/main` zero-diff verify in Task 2. `ErrorCode` union edit is append-only (additive type member). |
+| T-40-SC | Tampering | LOW | mitigate | NO new npm packages in Phase 40 (all imports are in-tree: viem, existing config/signing modules). Package Legitimacy Gate is N/A. |
+
+This section supersedes the Phase 32 "per-L2 calibration deferred to v2.6 Phase 40 MEV-01" forward-pointer in the Phase 32 section (§ "Quoter-midpoint price-impact understatement" + § "Sandwich-MEV refusal at PREPARE time"). The Phase 32 prose is preserved byte-for-byte above (append-only discipline).
+
+### v2.6 milestone close-out summary
+
+The v2.6 milestone (Phase 39 + Phase 40) is code-complete:
+
+- **Phase 39 (Bridge Tier-1 final-recipient assertion, Inv #6b EVM path):** Layer 0.6 assertion in `preview_send` decoding the recipient from Tier-1 bridge calldata (Wormhole, Mayan Swift, NEAR OmniBridge, Across V3) and asserting equality against the user-supplied `toAddress`. Mismatch → `[REFUSED — DECODED RECIPIENT DRIFT]` / `DECODED_RECIPIENT_DRIFT`. Encoding-aware (EIP-55 for EVM, exact-case base58 for Solana, trim-only for NEAR account-id). Code-complete as of Phase 39 Plan 39-03.
+
+- **Phase 40 (Per-L2 sandwich-MEV thresholds, MEV-01):** Per-chain threshold SOT + resolver + env override; `SANDWICH_MEV_REFUSED` error code spanning Uniswap (EVM, per-chain bar) + SunSwap (TRON, fixed 200bps); Curve stays gate-free; SECURITY.md per-L2 section. Code-complete as of Phase 40 Plan 40-01 (this plan).
+
+**Tier-2 bridge facet decoders** (deBridge/DLN, Stargate `composeMsg`, Hop, Symbiosis) are explicitly deferred and documented in `REQUIREMENTS.md` as out-of-scope for v2.6. Adding a Tier-2 decoder requires only extending `TIER1_DECODERS` in `src/protocols/bridge-decoders/index.ts`.
+
+**FROZEN trust-pipeline files stayed byte-identical to `origin/main` across the full v2.6 milestone** (Phase 39 + Phase 40). `src/signing/payload-fingerprint.ts`, `src/signing/presign-hash.ts`, `src/signing/payload-fingerprint-tron.ts`, `src/tools/send_transaction.ts`, `src/signing/handle-store.ts` — asserted by `git diff origin/main` zero-diff checks in both phases.
+
+**v2.6 verify-phase residual (deferred to real-device smoke):** Real-Ledger smoke testing against each Tier-1 facet decoder (Wormhole + Mayan + NEAR OmniBridge + Across V3 — small-amount bridge attempt with final-recipient assertion trigger on a redirected address) + a per-L2 swap against each configured chain (Ethereum, Polygon, Arbitrum, Optimism, Base) to exercise the live per-chain sandwich-MEV threshold in `prepare_uniswap_swap` with real `priceImpactBps` from the Quoter V2. Manual verification steps are documented in `.planning/phases/40-mev-sandwich-slippage-hint-per-l2/40-VALIDATION.md` (Manual-Only Verifications section).
