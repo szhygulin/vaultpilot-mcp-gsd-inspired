@@ -26,12 +26,14 @@
 //                            })  → multicall(deadline, [exactInputSingle, unwrapWETH9])
 //                            tx.value = 0n
 //
-// D-08 sandwich-MEV gate: when priceImpactBps > 200 AND slippageBps not
-// explicitly supplied (raw-input detection, NOT Zod-defaulted), refuses with
-// INVALID_INPUT + SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE block + hintTool
-// "get_uniswap_quote". The quote is RE-FETCHED at prepare time (NOT cached
-// from agent's prior get_uniswap_quote call) — drift detection per anti-
-// pattern 7: NEVER re-fetch quote inside send_transaction; only at prepare.
+// D-08 sandwich-MEV gate (Phase 40 MEV-01 — per-chain thresholds): when
+// priceImpactBps exceeds the per-chain priceImpactRefusalPct from the
+// sandwich-mev-thresholds.ts SOT AND slippageBps not explicitly supplied
+// (raw-input detection, NOT Zod-defaulted), refuses with SANDWICH_MEV_REFUSED
+// + SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE block + hintTool "get_uniswap_quote".
+// The quote is RE-FETCHED at prepare time (NOT cached from agent's prior
+// get_uniswap_quote call) — drift detection per anti-pattern 7: NEVER
+// re-fetch quote inside send_transaction; only at prepare.
 //
 // D-07 token-approval pre-flight: for non-ETH tokenIn, server reads
 // ERC20.allowance(from, SwapRouter02); insufficient allowance refuses with
@@ -63,7 +65,11 @@ import {
   type MultiHopQuoteResult,
   type SingleHopQuoteResult,
 } from "../chains/uniswap-v3.js";
-import { getUniswapV3SwapRouter02Address } from "../config/contracts.js";
+import { chainNameFromId, getUniswapV3SwapRouter02Address } from "../config/contracts.js";
+import {
+  InvalidMevThresholdError,
+  getSandwichThresholds,
+} from "../config/sandwich-mev-thresholds.js";
 import {
   _uniswapV3Protocol,
 } from "../protocols/uniswap-v3.js";
@@ -106,8 +112,8 @@ const WETH_ETHEREUM: Address = getAddress(
   "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
 );
 
-const DEFAULT_SLIPPAGE_BPS = 50;
-const SANDWICH_MEV_THRESHOLD_BPS = 200;
+// DEFAULT_SLIPPAGE_BPS and SANDWICH_MEV_THRESHOLD_BPS removed in Phase 40 MEV-01:
+// per-chain values now come from getSandwichThresholds(chainId) at call time.
 const DEADLINE_BUFFER_SECS = 600n; // 10 minutes — D-10
 
 // ---------------------------------------------------------------------------
@@ -121,13 +127,13 @@ const DESCRIPTION = [
   "Returns a handle the agent passes to preview_send before send_transaction.",
   "Auto-selects the best fee tier (single-hop 0.01% / 0.05% / 0.30% / 1.00% or multi-hop via WETH/USDC anchor) by RE-FETCHING the quote at prepare time (drift detection — NOT cached from agent's prior quote call).",
   "Native ETH supported via tokenIn or tokenOut = 'ETH' sentinel; server resolves to WETH internally. ETH-in: tx.value carries the ETH; the router wraps via WETH9.deposit internally. ETH-out: composeMulticallWithUnwrap helper — inner exactInputSingle.recipient = SwapRouter02 (router holds WETH between sub-calls); unwrapWETH9 sends native ETH to user atomically.",
-  "Sandwich-MEV defense (D-08): when priceImpactBps > 200 (2%) AND slippageBps NOT explicitly supplied, refuses with INVALID_INPUT + hintTool: 'get_uniswap_quote'. Pass slippageBps explicitly to acknowledge high impact.",
+  "Sandwich-MEV defense (D-08): when priceImpactBps exceeds the per-chain priceImpactRefusalPct (ethereum 2.0%, others via src/config/sandwich-mev-thresholds.ts SOT) AND slippageBps NOT explicitly supplied, refuses with SANDWICH_MEV_REFUSED + hintTool: 'get_uniswap_quote'. Pass slippageBps explicitly to acknowledge high impact.",
   "Token-approval pre-flight (D-07): for non-ETH tokenIn, server reads ERC20.allowance(from, SwapRouter02). Insufficient allowance refuses with INVALID_INPUT + hintTool: 'prepare_token_approve' + hintArgs naming SwapRouter02 as spender.",
   "LEDGER NOTICE (D-11): emitted UNCONDITIONALLY — the outer multicall selector 0x5ae401dc is NOT in the Ledger ERC-7730 clear-sign plugin registry. Every Phase 32 swap blind-signs at the device. Compare the predicted hash against the device display character-for-character after send_transaction fires.",
   "`chain` is REQUIRED and locked to 'ethereum'. `tokenIn`/`tokenOut` are EIP-55 addresses or 'ETH' sentinel. `amount` is a DECIMAL STRING in tokenIn units (server resolves decimals via ERC20.decimals readContract).",
-  "`slippageBps` is OPTIONAL (default 50 = 0.5%, bounds 1..10000). When omitted AND priceImpactBps > 200, the sandwich-MEV gate fires.",
+  "`slippageBps` is OPTIONAL (default per-chain from sandwich-mev-thresholds SOT — ethereum 50 = 0.5%, bounds 1..10000). When omitted AND priceImpactBps exceeds the per-chain priceImpactRefusalPct, the sandwich-MEV gate fires.",
   "Returns { handle, chainId, from, to, valueWei, data, payloadFingerprint, route, priceImpactBps, slippageBps, quotedAmountOut, amountOutMinimum, deadline } plus PREPARE RECEIPT + CHECKS PERFORMED + LEDGER NOTICE text blocks.",
-  "Failure modes: INVALID_INPUT (sandwich-MEV refusal / insufficient allowance / same-token / malformed amount / out-of-bounds slippageBps / no Uniswap V3 liquidity); WALLET_NOT_PAIRED (no live session); WRONG_MODE (demo mode mismatch); INTERNAL_ERROR (RPC failure).",
+  "Failure modes: SANDWICH_MEV_REFUSED (per-chain sandwich-MEV refusal / invalid MEV_THRESHOLD_<CHAIN> env override); INVALID_INPUT (insufficient allowance / same-token / malformed amount / out-of-bounds slippageBps / no Uniswap V3 liquidity); WALLET_NOT_PAIRED (no live session); WRONG_MODE (demo mode mismatch); INTERNAL_ERROR (RPC failure).",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -206,6 +212,37 @@ registerTool("prepare_uniswap_swap", DESCRIPTION, INPUT_SCHEMA, async (args) => 
     }
     const chainId = 1;
 
+    // Step 2b — Resolve per-chain sandwich-MEV thresholds (Phase 40 MEV-01).
+    // getSandwichThresholds reads MEV_THRESHOLD_<CHAIN> at call time (lazy).
+    // InvalidMevThresholdError → SANDWICH_MEV_REFUSED envelope naming chain + raw value.
+    let defaultSlippageBps: number;
+    let priceImpactRefusalPct: number;
+    try {
+      const thresholds = getSandwichThresholds(chainId);
+      defaultSlippageBps = thresholds.defaultSlippageBps;
+      priceImpactRefusalPct = thresholds.priceImpactRefusalPct;
+    } catch (err) {
+      if (err instanceof InvalidMevThresholdError) {
+        const chain = chainNameFromId(chainId);
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: `error: invalid MEV_THRESHOLD_${chain.toUpperCase()} env override "${err.rawValue}" — must be a base-10 integer in [1, 10000]`,
+            },
+          ],
+          structuredContent: {
+            ...errEnvelope(
+              "SANDWICH_MEV_REFUSED",
+              `invalid MEV_THRESHOLD_${chain.toUpperCase()} override "${err.rawValue}"; must be a base-10 integer in [1, 10000] (chain: ${chain})`,
+            ),
+          },
+        };
+      }
+      throw err;
+    }
+
     // Step 3 — Token sentinel handling + EIP-55 validation.
     const tokenInRaw =
       typeof args.tokenIn === "string" ? args.tokenIn : "";
@@ -274,10 +311,10 @@ registerTool("prepare_uniswap_swap", DESCRIPTION, INPUT_SCHEMA, async (args) => 
       };
     }
 
-    // Step 5 — slippageBps bounds (1..10000); default 50 when omitted.
+    // Step 5 — slippageBps bounds (1..10000); default from per-chain SOT when omitted.
     let slippageBps: number;
     if (!slippageWasExplicit) {
-      slippageBps = DEFAULT_SLIPPAGE_BPS;
+      slippageBps = defaultSlippageBps;
     } else {
       const slipRaw = rawArgs.slippageBps;
       if (
@@ -480,17 +517,19 @@ registerTool("prepare_uniswap_swap", DESCRIPTION, INPUT_SCHEMA, async (args) => 
       actualOut: quotedAmountOut,
     });
 
-    // Step 14 — SANDWICH-MEV GATE (D-08 LOAD-BEARING).
-    // Refuse when priceImpactBps > 200 AND slippage was NOT explicitly
-    // supplied. The check uses the FRESH priceImpactBps (re-fetched quote),
-    // not whatever the agent saw at quote time — drift detection.
+    // Step 14 — SANDWICH-MEV GATE (D-08 LOAD-BEARING — Phase 40 MEV-01 per-chain).
+    // Refuse when priceImpactBps exceeds the per-chain priceImpactRefusalPct AND
+    // slippage was NOT explicitly supplied. The check uses the FRESH priceImpactBps
+    // (re-fetched quote), not whatever the agent saw at quote time — drift detection.
+    const thresholdBps = priceImpactRefusalPct * 100;
     if (
-      priceImpactBps > SANDWICH_MEV_THRESHOLD_BPS &&
+      priceImpactBps > thresholdBps &&
       !slippageWasExplicit
     ) {
+      const chain = chainNameFromId(chainId);
       const mevRefusalBlock = SANDWICH_MEV_REFUSAL_ETHEREUM_TEMPLATE
         .replace(/\{PRICE_IMPACT_BPS\}/g, String(priceImpactBps))
-        .replace(/\{THRESHOLD_BPS\}/g, String(SANDWICH_MEV_THRESHOLD_BPS));
+        .replace(/\{THRESHOLD_BPS\}/g, String(thresholdBps));
 
       return {
         isError: true,
@@ -499,13 +538,13 @@ registerTool("prepare_uniswap_swap", DESCRIPTION, INPUT_SCHEMA, async (args) => 
             type: "text",
             text:
               `error: sandwich-MEV defense triggered — price impact ${(priceImpactBps / 100).toFixed(2)}% ` +
-              `exceeds the 2% threshold.\n\n${mevRefusalBlock}`,
+              `exceeds the ${priceImpactRefusalPct}% threshold for ${chain}.\n\n${mevRefusalBlock}`,
           },
         ],
         structuredContent: {
           ...errEnvelope(
-            "INVALID_INPUT",
-            `price impact ${(priceImpactBps / 100).toFixed(2)}% exceeds the 2% threshold; pass slippageBps explicitly to confirm acceptance of high price impact (D-08 sandwich-MEV defense)`,
+            "SANDWICH_MEV_REFUSED",
+            `price impact ${(priceImpactBps / 100).toFixed(2)}% exceeds the per-chain ${priceImpactRefusalPct}% threshold for ${chain} (priceImpactBps: ${priceImpactBps}, threshold: ${thresholdBps}bps, defaultSlippageBps: ${defaultSlippageBps}); pass slippageBps explicitly to confirm acceptance of high price impact (D-08 per-chain sandwich-MEV defense)`,
             `priceImpactBps: ${priceImpactBps}`,
           ),
           hintTool: "get_uniswap_quote",

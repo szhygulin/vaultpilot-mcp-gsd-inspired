@@ -503,10 +503,10 @@ describe("prepare_curve_swap — no sandwich-MEV gate", () => {
 });
 
 // ===========================================================================
-// T14: CHECKS PERFORMED MEV documentation line
+// T14: CHECKS PERFORMED MEV documentation line (Phase 40 MEV-01 note update)
 // ===========================================================================
 describe("prepare_curve_swap — MEV documentation line", () => {
-  it("T14: CHECKS PERFORMED contains literal 'Sandwich-MEV gate: not applied to Curve (low MEV exposure on stable pools)'", async () => {
+  it("T14: CHECKS PERFORMED contains per-L2 SOT note (Uniswap-scoped, Curve explicit-slippage-only)", async () => {
     setupStdMocks(99_000000n);
     mockReadContract.mockResolvedValue(1000000000n);
 
@@ -520,7 +520,51 @@ describe("prepare_curve_swap — MEV documentation line", () => {
     });
     expect(result.isError).toBeFalsy();
     const texts = (result.content as Array<{ type: string; text: string }>).map(c => c.text).join("\n");
-    expect(texts).toContain("Sandwich-MEV gate: not applied to Curve (low MEV exposure on stable pools)");
+    // Phase 40 MEV-01 updated note: references per-L2 SOT being Uniswap-scoped
+    expect(texts).toContain("Sandwich-MEV gate: not applied to Curve");
+    expect(texts).toContain("Uniswap-scoped");
+    expect(texts).toContain("explicit-slippage-only");
+  });
+});
+
+// ===========================================================================
+// T16: Curve NEVER emits SANDWICH_MEV_REFUSED (gate-free by design, Phase 40)
+// ===========================================================================
+describe("prepare_curve_swap — SANDWICH_MEV_REFUSED never emitted (Phase 40 regression)", () => {
+  it("T16: even with high slippage (5000), Curve never returns SANDWICH_MEV_REFUSED", async () => {
+    setupStdMocks(99_000000n);
+    mockReadContract.mockResolvedValue(1000000000n);
+
+    const result = await callTool({
+      chain: "ethereum",
+      poolAddress: PAY_POOL,
+      inputToken: PYUSD_ADDR,
+      outputToken: USDC_ADDR,
+      amount: "100",
+      slippageBps: 5000, // 50% — would trigger MEV gate on UniV3
+    });
+    // Curve stays gate-free — must succeed without any SANDWICH_MEV_REFUSED
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as Record<string, unknown>;
+    expect(sc.errorCode).not.toBe("SANDWICH_MEV_REFUSED");
+  });
+
+  it("T16b: an error path on Curve (bad slippage) uses INVALID_INPUT, never SANDWICH_MEV_REFUSED", async () => {
+    setupStdMocks(99_000000n);
+    mockReadContract.mockResolvedValue(1000000000n);
+
+    const result = await callTool({
+      chain: "ethereum",
+      poolAddress: PAY_POOL,
+      inputToken: PYUSD_ADDR,
+      outputToken: USDC_ADDR,
+      amount: "100",
+      slippageBps: 0, // invalid — below [1,5000] range
+    });
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as Record<string, unknown>;
+    expect(sc.errorCode).toBe("INVALID_INPUT");
+    expect(sc.errorCode).not.toBe("SANDWICH_MEV_REFUSED");
   });
 });
 

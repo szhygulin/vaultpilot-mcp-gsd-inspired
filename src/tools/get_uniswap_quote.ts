@@ -24,8 +24,9 @@
 //   D-04b  — Quoter-midpoint price-impact (tiny-amount fair reference)
 //   D-05   — ETH-in/ETH-out sentinel resolution to WETH; same-token-swap refused
 //   D-06   — default slippageBps = 50 (0.5%); bounds 1..10000
-//   D-08   — sandwich-MEV WARNING at priceImpactBps > 200 (REFUSAL block lives
-//            in Plan 32-03 prepare time, NOT here at quote time)
+//   D-08   — sandwich-MEV WARNING at priceImpactBps > per-chain priceImpactRefusalPct
+//            (ethereum: 2.0% = 200bps via sandwich-mev-thresholds.ts SOT per RESEARCH Q6).
+//            REFUSAL block lives in Plan 32-03/Phase-40 prepare time, NOT here at quote time.
 //   D-16   — decimal-aware amount at agent boundary (parseAmountStrict)
 //
 // Per CLAUDE.md "tool descriptions are agent routing prompts": DESCRIPTION
@@ -44,6 +45,7 @@ import {
 import { _uniswapV3Chain } from "../chains/uniswap-v3.js";
 import { getChainClient } from "../chains/registry.js";
 import { getUniswapV3QuoterV2Address } from "../config/contracts.js";
+import { getSandwichThresholds } from "../config/sandwich-mev-thresholds.js";
 import {
   InvalidAmountError,
   parseAmountStrict,
@@ -65,8 +67,12 @@ const WETH_ETHEREUM: Address = getAddress(
 /** D-06 default slippage when agent omits the field. */
 const DEFAULT_SLIPPAGE_BPS = 50;
 
-/** D-08 sandwich-MEV WARNING threshold (2.00%). */
-const SANDWICH_MEV_WARNING_THRESHOLD_BPS = 200;
+// D-08 sandwich-MEV WARNING threshold: sourced from the per-chain SOT (ethereum bar)
+// per RESEARCH Q6. Ethereum bar = 2.0% = 200bps — no behavior change, but warning
+// and refusal now track the same SOT so they stay in sync if the table is tuned.
+// getSandwichThresholds is called at the WARNING SITE (call time, not module load)
+// so the lazy-read contract mirrors the prepare tool.
+// Removed module-level SANDWICH_MEV_WARNING_THRESHOLD_BPS = 200 constant.
 
 /** Quote envelope source-field literal — pinned per Plan 32-02 verified_values. */
 const QUOTE_SOURCE = "uniswap-v3-quoter-v2";
@@ -455,14 +461,17 @@ registerTool(
       );
 
       // Step 15 — D-08 sandwich-MEV WARNING (NOT refusal — that lives at
-      // prepare time in Plan 32-03).
-      if (priceImpactBps > SANDWICH_MEV_WARNING_THRESHOLD_BPS) {
+      // prepare time in Plan 32-03 / Phase 40 MEV-01).
+      // Warning threshold sourced from per-chain SOT (ethereum, chainId=1) so
+      // warning and refusal track the same bar per RESEARCH Q6.
+      const warnThresholdBps = getSandwichThresholds(1).priceImpactRefusalPct * 100;
+      if (priceImpactBps > warnThresholdBps) {
         lines.push(
-          `⚠ Price impact (${(priceImpactBps / 100).toFixed(2)}%) exceeds 2% sandwich-MEV threshold. ` +
+          `⚠ Price impact (${(priceImpactBps / 100).toFixed(2)}%) exceeds ${getSandwichThresholds(1).priceImpactRefusalPct}% sandwich-MEV threshold. ` +
             "Pass slippageBps explicitly to prepare_uniswap_swap to acknowledge.",
         );
       } else {
-        lines.push("Price impact is within normal range (<= 2%).");
+        lines.push(`Price impact is within normal range (<= ${getSandwichThresholds(1).priceImpactRefusalPct}%).`);
       }
 
       // Step 16 — Build the structured-content envelope. Decimal strings at
