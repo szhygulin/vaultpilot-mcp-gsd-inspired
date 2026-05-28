@@ -1122,7 +1122,7 @@ Plans:
 
 Plans:
 
-- [ ] 40-01-PLAN.md — per-chain `src/config/sandwich-mev-thresholds.ts` SOT + `getSandwichThresholds` resolver + `MEV_THRESHOLD_<CHAIN>` env override + `SANDWICH_MEV_REFUSED` errorCode; migrate Uniswap (per-chain threshold + errorcode) & SunSwap (errorcode) sandwich gates; Curve gate-free note + regression; `get_uniswap_quote` warning tracks SOT; SECURITY.md per-L2 MEV section + v2.6 milestone close-out
+- [x] 40-01-PLAN.md — per-chain `src/config/sandwich-mev-thresholds.ts` SOT + `getSandwichThresholds` resolver + `MEV_THRESHOLD_<CHAIN>` env override + `SANDWICH_MEV_REFUSED` errorCode; migrate Uniswap (per-chain threshold + errorcode) & SunSwap (errorcode) sandwich gates; Curve gate-free note + regression; `get_uniswap_quote` warning tracks SOT; SECURITY.md per-L2 MEV section + v2.6 milestone close-out
 
 **Status**: planning; v2.6 verify-phase requires real-Ledger smoke for each Tier-1 facet decoder against a small mainnet bridge transaction (with a known-good final recipient) + a per-L2 swap against each configured chain to exercise the per-chain threshold.
 
@@ -1185,4 +1185,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 37. Safe three-step signing flow — propose + approve + execute + submit-signature | v2.5 | 0/3 | Not started | - |
 | 38. `enableModule` + `delegateCall: true` hard-trigger second-LLM check (Inv #12.5) | v2.5 | 0/2 | Not started | - |
 | 39. Tier-1 bridge facet decoders + final-recipient assertion (Inv #6b) | v2.6 | 3/3 | Complete   | 2026-05-28 |
-| 40. Sandwich-MEV slippage hint per-L2 thresholds | v2.6 | 0/1 | Planned | 2026-05-28 |
+| 40. Sandwich-MEV slippage hint per-L2 thresholds | v2.6 | 1/1 | Complete   | 2026-05-28 |
