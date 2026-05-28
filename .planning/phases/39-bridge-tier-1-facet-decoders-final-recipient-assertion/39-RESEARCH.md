@@ -709,22 +709,24 @@ const destAddr = params[7] as `0x${string}`; // bytes32 at index 7
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> All three resolved during planning (Phase 39 plans 39-01 / 39-02). Resolutions inline below.
 
 1. **Mayan destChainId chain ID scheme**
    - What we know: `destAddr` is bytes32; for Solana it's the pubkey. The struct has `destChainId uint16`.
    - What's unclear: Whether Mayan's chain IDs are the same as Wormhole's (1=Solana, 2=Ethereum) or a proprietary scheme.
-   - Recommendation: Wave 0 research task — check Mayan docs or contract constants for chain ID mappings. If the scheme is unknown, normalize `destAddr` by attempting EVM extraction (if leading 12 bytes are zero, treat as EVM address) else treat as non-EVM bytes32.
+   - **RESOLVED (39-02 T2):** Use a structural leading-12-zero-bytes test rather than depending on the chain-id scheme — if the bytes32 has 12 leading zero bytes, treat as EVM `address`; otherwise treat as non-EVM (Solana) full-32-byte base58. Chain-id-scheme independence makes this safe even if Mayan's scheme differs from Wormhole's.
 
 2. **Handle-store widening for `toAddress`**
    - What we know: `PreparedTxEvm` has no `toAddress` field. Layer 0.6 needs to compare decoded recipient against user-supplied recipient.
    - What's unclear: Whether to add to `PreparedTxEvm` directly or to a `bridgeParams` bag.
-   - Recommendation: Add `bridgeParams?: { toAddress?: string }` to `PreparedTxEvm` (additive, non-breaking). Prepare bridge tools (prepare_uniswap_swap, prepare_curve_swap, etc.) set this when applicable. Same-chain DEX tools leave it absent — Layer 0.6 ignores `no-match` from the decoder.
+   - **RESOLVED (39-01 T2):** Add additive optional `bridgeParams?: { toAddress?: string }` to `PreparedTxEvm` (non-breaking; not a state-machine change). Prepare bridge tools set it when applicable; same-chain DEX tools leave it absent — Layer 0.6 only fires on a Tier-1 selector match.
 
 3. **Mayan real calldata fixture**
    - What we know: The LiFi routing tx confirms the bytes32 Solana encoding. The ABI is confirmed from Etherscan.
    - What's unclear: No direct `createOrderWithEth` tx found in recent contract history (contract shows mostly fulfill/unlock ops).
-   - Recommendation: Wave 0 — construct a minimal synthetic fixture using the confirmed ABI, clearly labeled `SYNTHETIC` in the test comment. The ABI has been verified; a synthetically-encoded fixture is acceptable per the existing pattern for `lifi-btc.ts` (which also used a programmatically constructed fixture, as noted in the test file header).
+   - **RESOLVED (39-02 T2):** Construct a SYNTHETIC fixture from the confirmed Etherscan ABI + a verified Solana pubkey bytes32, labeled `// SYNTHETIC` in the test (per CLAUDE.md fixture discipline). ABI-drift caught at test time. Mirrors the `lifi-btc.ts` programmatically-constructed-fixture precedent.
 
 ---
 
