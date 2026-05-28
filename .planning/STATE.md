@@ -4,13 +4,13 @@ milestone: v2.5
 milestone_name: Safe positions + Tx Service
 current_plan: 2
 status: executing
-last_updated: "2026-05-27T15:34:07.943Z"
+last_updated: "2026-05-28T16:21:54.350Z"
 last_activity: 2026-05-27 -- Phase 37 Plan 37-01 closed code-complete
 progress:
   total_phases: 3
   completed_phases: 1
-  total_plans: 6
-  completed_plans: 5
+  total_plans: 8
+  completed_plans: 6
   percent: 33
 ---
 
@@ -360,6 +360,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-27T15:34:07.932Z
-Stopped at: Phase 38 context gathered
-Resume file: .planning/phases/38-safe-enable-module-delegate-call-second-llm/38-CONTEXT.md
+Last session: 2026-05-28T16:21:54.334Z
+Stopped at: Phase 39 planned — 3 plans across 3 waves, plan-checker PASS (0 blockers)
+Resume file: .planning/phases/39-bridge-tier-1-facet-decoders-final-recipient-assertion/39-01-PLAN.md

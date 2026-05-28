@@ -1098,13 +1098,13 @@ Plans:
   7. Each Tier-1 decoder lives in `src/protocols/bridge-decoders/` with per-bridge module shape (mirrors `src/protocols/erc20.ts` / `src/protocols/aave-v3.ts` per-protocol convention)
   8. Decoder regression tests pin known-good calldata fixtures per bridge — drift in upstream bridge ABI surface caught at test time
 
-**Plans**: 3 plans (estimate)
+**Plans**: 3 plans
 
 Plans:
 
-- [ ] 39-01: `src/protocols/bridge-decoders/wormhole.ts` + `src/protocols/bridge-decoders/mayan.ts` + corresponding decoder regression tests (calldata fixtures per bridge); Inv #6b assertion at `preview_send` (after handle lookup, before chain-mismatch — same layer as v1.3 canonical-dispatch)
-- [ ] 39-02: `src/protocols/bridge-decoders/near-intents.ts` + `src/protocols/bridge-decoders/across-v3.ts` + decoder regression tests
-- [ ] 39-03: Inv #6b wiring across `prepare_swap` / `prepare_uniswap_swap` / `prepare_solana_lifi_swap` / `prepare_btc_lifi_swap` / `prepare_tron_lifi_swap` (existing tools opt into the assertion when the calldata matches a known Tier-1 facet); SECURITY.md Inv #6b codification; companion-skill update for Tier-1 coverage (sister-repo coordinated bump)
+- [ ] 39-01-PLAN.md — Wave 0 infra: append `DECODED_RECIPIENT_DRIFT` to the `ErrorCode` union + `DECODED_RECIPIENT_DRIFT_TEMPLATE` to `blocks.ts`; widen `PreparedTxEvm` with additive `bridgeParams?: { toAddress?: string }`; create `bridge-decoders/index.ts` registry skeleton with the `_bridgeTier1Decoders` ESM seam (returns no-match until decoders register)
+- [ ] 39-02-PLAN.md — The four Tier-1 decoders + unit tests + registry population: `across-v3.ts` (EVM address) + `near-omnibridge.ts` (account-id string) + `wormhole.ts` + `mayan-swift.ts` (encoding-aware bytes32: EVM last-20-bytes vs Solana full-32-byte case-sensitive base58); hardcoded-literal fixtures (Mayan SYNTHETIC); all five selectors registered
+- [ ] 39-03-PLAN.md — `preview_send` Layer 0.6 assertion (after Layer 0.5 canonical-dispatch, before Layer 2 chain-mismatch) with encoding-aware compare + integration test (refusal shape, layer ordering, DEX no-op, malformed no-throw, Solana case-sensitivity); SECURITY.md Inv #6b codification + Phase 39 threat register; companion-skill cross-repo coordinated-bump note
 
 #### Phase 40: Sandwich-MEV slippage hint per-L2 thresholds
 
