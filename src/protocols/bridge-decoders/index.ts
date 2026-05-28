@@ -26,6 +26,22 @@
 // no-ops for internal calls (CLAUDE.md Conventions).
 
 import type { Hex } from "viem";
+import {
+  decodeAcrossV3Deposit,
+  ACROSS_V3_SELECTORS,
+} from "./across-v3.js";
+import {
+  decodeMayanSwiftOrder,
+  MAYAN_SWIFT_SELECTORS,
+} from "./mayan-swift.js";
+import {
+  decodeNearOmniBridgeTransfer,
+  NEAR_SELECTORS,
+} from "./near-omnibridge.js";
+import {
+  decodeWormholeTransferWithPayload,
+  WORMHOLE_SELECTORS,
+} from "./wormhole.js";
 
 // ─── BridgeFacetDecodeResult ─────────────────────────────────────────────────
 
@@ -57,11 +73,93 @@ export type BridgeFacetDecodeResult =
  *
  * Plan 39-02 registers decoders here:
  */
-// Plan 39-02 registers decoders here
+// Plan 39-02 populated — all five Tier-1 bridge selectors registered.
+// Each adapter maps a per-bridge DecodeXResult to the canonical BridgeFacetDecodeResult shape.
+// Bridge name strings follow the "Human Bridge Name" convention from the plan.
 const TIER1_DECODERS: ReadonlyMap<string, (data: Hex) => BridgeFacetDecodeResult> = new Map<
   string,
   (data: Hex) => BridgeFacetDecodeResult
->();
+>([
+  // Wormhole Token Bridge — 0xc5a5ebda (transferTokensWithPayload)
+  [
+    WORMHOLE_SELECTORS.transferTokensWithPayload,
+    (data: Hex): BridgeFacetDecodeResult => {
+      const result = decodeWormholeTransferWithPayload(data);
+      if (result.kind === "ok") {
+        return {
+          kind: "ok",
+          bridge: "Wormhole Token Bridge",
+          finalRecipient: result.summary.finalRecipient,
+        };
+      }
+      return { kind: "error", bridge: "Wormhole Token Bridge", message: result.message };
+    },
+  ],
+
+  // Mayan Swift — 0xb866e173 (createOrderWithEth)
+  [
+    MAYAN_SWIFT_SELECTORS.createOrderWithEth,
+    (data: Hex): BridgeFacetDecodeResult => {
+      const result = decodeMayanSwiftOrder(data);
+      if (result.kind === "ok") {
+        return {
+          kind: "ok",
+          bridge: "Mayan Swift",
+          finalRecipient: result.summary.finalRecipient,
+        };
+      }
+      return { kind: "error", bridge: "Mayan Swift", message: result.message };
+    },
+  ],
+
+  // Mayan Swift — 0x8e8d142b (createOrderWithToken)
+  [
+    MAYAN_SWIFT_SELECTORS.createOrderWithToken,
+    (data: Hex): BridgeFacetDecodeResult => {
+      const result = decodeMayanSwiftOrder(data);
+      if (result.kind === "ok") {
+        return {
+          kind: "ok",
+          bridge: "Mayan Swift",
+          finalRecipient: result.summary.finalRecipient,
+        };
+      }
+      return { kind: "error", bridge: "Mayan Swift", message: result.message };
+    },
+  ],
+
+  // NEAR OmniBridge — 0xdeb915b8 (initTransfer)
+  [
+    NEAR_SELECTORS.initTransfer,
+    (data: Hex): BridgeFacetDecodeResult => {
+      const result = decodeNearOmniBridgeTransfer(data);
+      if (result.kind === "ok") {
+        return {
+          kind: "ok",
+          bridge: "NEAR OmniBridge",
+          finalRecipient: result.summary.finalRecipient,
+        };
+      }
+      return { kind: "error", bridge: "NEAR OmniBridge", message: result.message };
+    },
+  ],
+
+  // Across V3 SpokePool — 0x7b939232 (depositV3)
+  [
+    ACROSS_V3_SELECTORS.depositV3,
+    (data: Hex): BridgeFacetDecodeResult => {
+      const result = decodeAcrossV3Deposit(data);
+      if (result.kind === "ok") {
+        return {
+          kind: "ok",
+          bridge: "Across V3",
+          finalRecipient: result.summary.finalRecipient,
+        };
+      }
+      return { kind: "error", bridge: "Across V3", message: result.message };
+    },
+  ],
+]);
 
 // ─── decodeBridgeTier1FacetRecipient ─────────────────────────────────────────
 
