@@ -62,6 +62,14 @@ import {
   type SafeOperation,
   type SupportedSafeVersion,
 } from "../signing/safe-tx-hash.js";
+import {
+  decodeEnableModuleCalldata,
+  isEnableModuleCalldata,
+} from "../protocols/safe.js";
+import {
+  HARD_TRIGGER_DELEGATECALL_TEMPLATE,
+  HARD_TRIGGER_MODULE_ENABLE_TEMPLATE,
+} from "../signing/blocks.js";
 import { registerTool } from "./index.js";
 
 function errEnvelope(
@@ -281,6 +289,26 @@ registerTool(
       ) as Address;
       const nonce = BigInt(tx.nonce);
 
+      // Phase 38 Plan 38-01 (Inv #12.5) — pre-flight: if the Tx Service-
+      // reported data starts with the enableModule selector, verify the
+      // argument decode succeeds BEFORE recompute / handle minting. A
+      // compromised Tx Service feeding malformed enableModule bytes is the
+      // INVALID_INPUT refusal arm per CONTEXT §"enableModule calldata parsing".
+      if (isEnableModuleCalldata(data)) {
+        try {
+          decodeEnableModuleCalldata(data);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          const msg =
+            "SafeTx data starts with enableModule selector but argument decode failed; bytes may be malformed";
+          return {
+            isError: true,
+            content: [{ type: "text", text: `error: ${msg} (${message})` }],
+            structuredContent: errEnvelope("INVALID_INPUT", msg, message),
+          };
+        }
+      }
+
       // Step 9 — Recompute SafeTx hash from on-chain VERSION + Tx Service fields.
       // T-37-10 mitigation: a compromised Tx Service serving a wrong pending
       // SafeTx (e.g. mutated value / data / to) produces a recomputed digest
@@ -406,11 +434,6 @@ registerTool(
         `  onchainThreshold: ${onchainInfo.threshold.toString()} signatures required`,
         `  safeOperation:    ${operationStr}`,
         `  domainSeparator:  ${domainMatches ? "matches viem.hashDomain({chainId, verifyingContract})" : "DRIFT — on-chain " + onchainDomain + " ≠ local " + localDomain + " (informational; typed-data digest is correct by construction)"}`,
-        ...(operationStr === "delegatecall"
-          ? [
-              "  delegatecall:     YES — Phase 38 will hard-trigger second-LLM check here (informational at Phase 37)",
-            ]
-          : []),
         ...(duplicateSignWarning
           ? [
               "  duplicateSignWarning: YES — wallet has already signed this SafeTx; re-submission is a no-op via postSignature's 200/duplicate arm.",
@@ -432,9 +455,38 @@ registerTool(
         "  In EITHER mode, visually confirm the 32-byte digest on-device matches the safeTxHash above.",
       ].join("\n");
 
-      const text = [prepareReceipt, checksPerformed, ledgerDisplay].join(
-        "\n\n",
-      );
+      // Phase 38 Plan 38-01 (Inv #12.5) — hard-trigger block composition.
+      // Composite scenario emits BOTH in document order: MODULE ENABLE first,
+      // DELEGATECALL second. Data + to come from the Tx Service fetched at
+      // Step 4; safe-on-self gate uses lowercased compare for case-insensitive
+      // address equivalence.
+      const hardTriggerBlocks: string[] = [];
+      if (
+        isEnableModuleCalldata(data) &&
+        to.toLowerCase() === rawSafeAddress.toLowerCase()
+      ) {
+        const moduleAddress = decodeEnableModuleCalldata(data).module;
+        hardTriggerBlocks.push(
+          HARD_TRIGGER_MODULE_ENABLE_TEMPLATE
+            .replace("{MODULE_ADDRESS}", moduleAddress)
+            .replace("{SAFE_ADDRESS}", rawSafeAddress)
+            .replace("{HANDLE}", handle),
+        );
+      }
+      if (operationStr === "delegatecall") {
+        hardTriggerBlocks.push(
+          HARD_TRIGGER_DELEGATECALL_TEMPLATE
+            .replace("{SAFE_ADDRESS}", rawSafeAddress)
+            .replace("{HANDLE}", handle),
+        );
+      }
+
+      const text = [
+        prepareReceipt,
+        checksPerformed,
+        ledgerDisplay,
+        ...hardTriggerBlocks,
+      ].join("\n\n");
 
       return {
         content: [{ type: "text", text }],

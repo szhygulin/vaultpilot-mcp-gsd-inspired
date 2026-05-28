@@ -338,3 +338,138 @@ describe("preview_send — Phase 37 Plan 37-03 site (c): composite-tx decode arm
     expect(text).toMatch(/undecoded|0xdeadbeef/);
   });
 });
+
+// ===========================================================================
+// Phase 38 Plan 38-01 — Inv #12.5 hard-trigger re-emission at preview
+// ===========================================================================
+
+const FIXTURE_SAFE_G_DATA_PREVIEW: Hex =
+  "0x610b5925000000000000000000000000cafe0000000000000000000000000000cafe0001";
+
+/**
+ * Seed a handle whose inner SafeTx targets the OUTER tx.to (the user Safe
+ * proxy itself). This is the safe-on-self gate for MODULE ENABLE — the
+ * preview-side check verifies innerDecoded.to === record.tx.to (lowercased).
+ */
+function seedSafeExecHandleSelfTarget(opts: {
+  innerData?: Hex;
+  operation?: 0 | 1;
+}): { handle: string; calldata: Hex } {
+  const calldata = buildExecTransactionCalldata({
+    to: USER_SAFE, // inner SafeTx targets the Safe proxy itself
+    value: 0n,
+    data: opts.innerData,
+    operation: opts.operation,
+  });
+  const tx: PreparedTxEvm = {
+    chainId: 1,
+    to: USER_SAFE,
+    valueWei: 0n,
+    data: calldata,
+  };
+  const handle = createHandle({
+    args: { to: USER_SAFE, valueWei: "0" },
+    tx,
+    payloadFingerprint: FIXTURE_FINGERPRINT,
+    isSafeExecTransaction: true,
+  });
+  return { handle, calldata };
+}
+
+describe("preview_send — Phase 38 hard-trigger re-emission (Inv #12.5)", () => {
+  it("MODULE ENABLE: inner data starts with 0x610b5925 AND inner to === record.tx.to emits [HARD-TRIGGER — MODULE ENABLE] block at preview", async () => {
+    scriptHappyMocks();
+    const { handle } = seedSafeExecHandleSelfTarget({
+      innerData: FIXTURE_SAFE_G_DATA_PREVIEW,
+      operation: 0,
+    });
+    const result = await callPreview({ handle });
+    expect(result.isError).toBeFalsy();
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain("[HARD-TRIGGER — MODULE ENABLE]");
+    expect(text.toLowerCase()).toContain(
+      "0xcafe0000000000000000000000000000cafe0001",
+    );
+  });
+
+  it("DELEGATECALL: innerDecoded.operation === 1 emits [HARD-TRIGGER — DELEGATECALL] block at preview", async () => {
+    scriptHappyMocks();
+    const { handle } = seedSafeExecHandle({
+      withSentinel: true,
+      operation: 1,
+    });
+    const result = await callPreview({ handle });
+    expect(result.isError).toBeFalsy();
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).toContain("[HARD-TRIGGER — DELEGATECALL]");
+    expect(text).toMatch(/Inv #12\.5/);
+  });
+
+  it("composite at preview: MODULE ENABLE + DELEGATECALL emits BOTH in document order", async () => {
+    scriptHappyMocks();
+    const { handle } = seedSafeExecHandleSelfTarget({
+      innerData: FIXTURE_SAFE_G_DATA_PREVIEW,
+      operation: 1,
+    });
+    const result = await callPreview({ handle });
+    expect(result.isError).toBeFalsy();
+    const text = (result.content[0] as { text: string }).text;
+    const idxModule = text.indexOf("[HARD-TRIGGER — MODULE ENABLE]");
+    const idxDelegate = text.indexOf("[HARD-TRIGGER — DELEGATECALL]");
+    expect(idxModule).toBeGreaterThanOrEqual(0);
+    expect(idxDelegate).toBeGreaterThanOrEqual(0);
+    expect(idxModule).toBeLessThan(idxDelegate);
+  });
+
+  it("non-isSafeExecTransaction handle emits NEITHER hard-trigger block (gate is the EXEC_TRANSACTION_SELECTOR + isSafeExecTransaction arm)", async () => {
+    scriptHappyMocks();
+    // Build a non-Safe-exec handle — tx.data is NOT execTransaction calldata.
+    const tx: PreparedTxEvm = {
+      chainId: 1,
+      to: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", // WETH9 — in allowlist
+      valueWei: 0n,
+      data: "0x2e1a7d4d0000000000000000000000000000000000000000000000000de0b6b3a7640000" as Hex, // WETH9.withdraw(1e18)
+    };
+    const handle = createHandle({
+      args: { to: tx.to, valueWei: "0" },
+      tx,
+      payloadFingerprint: FIXTURE_FINGERPRINT,
+    });
+    const result = await callPreview({ handle });
+    // Result may pass or fail based on canonical-dispatch; we only care
+    // about the absence of hard-trigger blocks in the response text.
+    const text = (result.content[0] as { text: string }).text;
+    expect(text.includes("[HARD-TRIGGER —")).toBe(false);
+  });
+
+  it("MODULE ENABLE does NOT fire when inner to !== record.tx.to (safe-on-self gate)", async () => {
+    scriptHappyMocks();
+    // Inner SafeTx targets ENCAPSULATED_TO (different from the outer tx.to / USER_SAFE).
+    const { handle } = seedSafeExecHandle({
+      withSentinel: true,
+      operation: 0,
+      innerData: FIXTURE_SAFE_G_DATA_PREVIEW,
+    });
+    const result = await callPreview({ handle });
+    expect(result.isError).toBeFalsy();
+    const text = (result.content[0] as { text: string }).text;
+    expect(text.includes("[HARD-TRIGGER — MODULE ENABLE]")).toBe(false);
+  });
+
+  it("hard-trigger blocks COEXIST with safeExecWarnBlock + safeExecDecodeBlock (Phase 37 invariants preserved)", async () => {
+    scriptHappyMocks();
+    const { handle } = seedSafeExecHandleSelfTarget({
+      innerData: FIXTURE_SAFE_G_DATA_PREVIEW,
+      operation: 1,
+    });
+    const result = await callPreview({ handle });
+    expect(result.isError).toBeFalsy();
+    const text = (result.content[0] as { text: string }).text;
+    // Phase 37 invariants — WARN + composite-tx DECODED ARGS still present.
+    expect(text).toContain("[WARN — SAFE EXECUTE COMPOSITE-TX]");
+    expect(text).toMatch(/DECODED ARGS — Safe execTransaction/);
+    // Phase 38 additions present alongside.
+    expect(text).toContain("[HARD-TRIGGER — MODULE ENABLE]");
+    expect(text).toContain("[HARD-TRIGGER — DELEGATECALL]");
+  });
+});

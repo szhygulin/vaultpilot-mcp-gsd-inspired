@@ -621,3 +621,108 @@ describe("get_verification_artifact — Unicode preservation (Test 18)", () => {
     expect(PASTEABLE_BLOCK_TEMPLATE).toContain("‖");
   });
 });
+
+// -----------------------------------------------------------------------------
+// Phase 38 Plan 38-01 — txType dispatch for PreparedTxSafeTypedData handles
+// (A1 resolution — surface real Safe fields, NOT EVM sentinel zeros)
+// -----------------------------------------------------------------------------
+
+const SAFE_ADDRESS_FIXTURE = "0x1234567890123456789012345678901234567890" as Address;
+const SAFE_TX_TO_FIXTURE = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8" as Address;
+const SAFE_TX_HASH_FIXTURE =
+  "0xf5073f5eabcb7ff540becf339c3bbe2b5f41b5f9fec8ae1e42847d9a25fedf0a" as Hex;
+const SAFE_TX_DATA_FIXTURE =
+  "0x610b5925000000000000000000000000cafe0000000000000000000000000000cafe0001" as Hex;
+
+function seedPreparedSafeTypedDataHandle(): string {
+  return createHandle({
+    args: { to: SAFE_ADDRESS_FIXTURE, valueWei: "0" },
+    tx: {
+      txType: "safe-typed-data",
+      // EVM sentinels — should NOT appear in the Safe-shape pasteable block.
+      chainId: 0,
+      to: "0x0000000000000000000000000000000000000000" as Address,
+      valueWei: 0n,
+      data: "0x" as Hex,
+      // Real Safe fields — these MUST appear in the Safe-shape pasteable block.
+      chain: 1,
+      safeAddress: SAFE_ADDRESS_FIXTURE,
+      safeVersion: "1.3.0",
+      safeTxHash: SAFE_TX_HASH_FIXTURE,
+      safeNonce: 42n,
+      operation: "call",
+      safeTxTo: SAFE_TX_TO_FIXTURE,
+      safeTxValue: 0n,
+      safeTxData: SAFE_TX_DATA_FIXTURE,
+      safeTxGas: 0n,
+      baseGas: 0n,
+      gasPrice: 0n,
+      gasToken: "0x0000000000000000000000000000000000000000" as Address,
+      refundReceiver: "0x0000000000000000000000000000000000000000" as Address,
+      typedDataStructure: {
+        domain: { chainId: 1, verifyingContract: SAFE_ADDRESS_FIXTURE },
+        types: {} as never,
+        primaryType: "SafeTx",
+        message: {} as never,
+      },
+    },
+    payloadFingerprint: FINGERPRINT_FIXTURE_A,
+  });
+}
+
+describe("get_verification_artifact — Phase 38 txType dispatch (Safe-typed-data A1 resolution)", () => {
+  it("PreparedTxSafeTypedData handle returns PASTEABLE_BLOCK_TEMPLATE_SAFE with REAL Safe fields (NOT EVM sentinels)", async () => {
+    const handle = seedPreparedSafeTypedDataHandle();
+    const result = await callTool({ handle });
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+    // Safe-shape template signal: header references the Safe context.
+    expect(text).toMatch(/Safe multisig transaction/i);
+    // Real Safe fields surface in the pasteable block.
+    expect(text).toContain(SAFE_ADDRESS_FIXTURE);
+    expect(text).toContain(SAFE_TX_TO_FIXTURE);
+    expect(text).toContain(SAFE_TX_DATA_FIXTURE);
+    expect(text).toContain(SAFE_TX_HASH_FIXTURE);
+    // EVM-shape template strings MUST NOT be present (would indicate fall-
+    // through to the wrong branch).
+    expect(text).not.toContain("You are verifying an Ethereum transaction");
+  });
+
+  it("structuredContent for safe-typed-data branch surfaces Safe-shape fields (safeAddress / safeTxTo / safeTxValue / safeTxData / operation / safeTxHash / chainId / payloadFingerprint)", async () => {
+    const handle = seedPreparedSafeTypedDataHandle();
+    const result = await callTool({ handle });
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as Record<string, unknown>;
+    expect(sc).toHaveProperty("safeAddress", SAFE_ADDRESS_FIXTURE);
+    expect(sc).toHaveProperty("safeTxTo", SAFE_TX_TO_FIXTURE);
+    expect(sc).toHaveProperty("safeTxValue", "0");
+    expect(sc).toHaveProperty("safeTxData", SAFE_TX_DATA_FIXTURE);
+    expect(sc).toHaveProperty("operation", "call");
+    expect(sc).toHaveProperty("safeTxHash", SAFE_TX_HASH_FIXTURE);
+    expect(sc).toHaveProperty("chainId", 1);
+    expect(sc).toHaveProperty("payloadFingerprint", FINGERPRINT_FIXTURE_A);
+    // EVM-shape keys MUST NOT be present (the dispatch branched away from
+    // them).
+    expect(sc).not.toHaveProperty("valueWei");
+    expect(sc).not.toHaveProperty("data");
+  });
+
+  it("EVM-shape handle (PreparedTxEvm) behaves byte-identically to Phase 9 — regression guard", async () => {
+    // Re-use the native handle setup from Test 1. The result MUST still
+    // match the EVM-shape PASTEABLE_BLOCK_TEMPLATE (header + chain layout).
+    const handle = seedPreparedNativeHandle();
+    transitionToPreviewed(handle, buildPinnedNative());
+    const result = await callTool({ handle });
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]?.text ?? "";
+    expect(text).toContain("You are verifying an Ethereum transaction");
+    // No Safe-shape template signal.
+    expect(text).not.toMatch(/Safe multisig transaction/i);
+    // EVM-shape structuredContent keys.
+    const sc = result.structuredContent as Record<string, unknown>;
+    expect(sc).toHaveProperty("to");
+    expect(sc).toHaveProperty("valueWei");
+    expect(sc).toHaveProperty("data");
+    expect(sc).not.toHaveProperty("safeAddress");
+  });
+});

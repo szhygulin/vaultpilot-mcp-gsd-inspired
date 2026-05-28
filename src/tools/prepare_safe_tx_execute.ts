@@ -62,6 +62,14 @@ import {
   execTransactionAbi,
 } from "../signing/safe-exec-decode.js";
 import type { SupportedSafeVersion } from "../signing/safe-tx-hash.js";
+import {
+  decodeEnableModuleCalldata,
+  isEnableModuleCalldata,
+} from "../protocols/safe.js";
+import {
+  HARD_TRIGGER_DELEGATECALL_TEMPLATE,
+  HARD_TRIGGER_MODULE_ENABLE_TEMPLATE,
+} from "../signing/blocks.js";
 import { registerTool } from "./index.js";
 
 function errEnvelope(
@@ -304,6 +312,25 @@ registerTool(
       ) as Address;
       const txNonce = BigInt(tx.nonce);
 
+      // Phase 38 Plan 38-01 (Inv #12.5) — pre-flight: if the inner SafeTx
+      // data starts with the enableModule selector, verify the argument
+      // decode succeeds BEFORE proceeding. Mirror of the propose/approve
+      // pre-flight; refuses with INVALID_INPUT on truncated bytes.
+      if (isEnableModuleCalldata(safeTxData)) {
+        try {
+          decodeEnableModuleCalldata(safeTxData);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          const msg =
+            "SafeTx data starts with enableModule selector but argument decode failed; bytes may be malformed";
+          return {
+            isError: true,
+            content: [{ type: "text", text: `error: ${msg} (${message})` }],
+            structuredContent: errEnvelope("INVALID_INPUT", msg, message),
+          };
+        }
+      }
+
       // Step 9 — Nonce-drift refusal (defends against another execTransaction
       // landing between approve and execute).
       if (onchainInfo.nonce !== txNonce) {
@@ -535,11 +562,6 @@ registerTool(
           : [
               `  Inner:            (undecoded — selector ${safeTxData.slice(0, 10)} shown on-device; call get_contract_abi for richer decode)`,
             ]),
-        ...(operationStr === "delegatecall"
-          ? [
-              "  delegatecall:     YES — Phase 38 will hard-trigger second-LLM check for delegatecall (informational at Phase 37).",
-            ]
-          : []),
         "  Layer 0.5:        bypassed via isSafeExecTransaction sentinel (5 prepare-time invariants asserted above)",
       ].join("\n");
 
@@ -569,11 +591,37 @@ registerTool(
         "  Visually confirm `to` matches the Safe proxy address above on the device.",
       ].join("\n");
 
+      // Phase 38 Plan 38-01 (Inv #12.5) — hard-trigger block composition.
+      // Inner-decoded `safeTxData` + `operationStr` from decodeSingleSafeExecTransaction
+      // (lines 293-297 above) feed the trigger checks. Composite emits BOTH
+      // in document order: MODULE ENABLE first, DELEGATECALL second.
+      const hardTriggerBlocks: string[] = [];
+      if (
+        isEnableModuleCalldata(safeTxData) &&
+        safeTxTo.toLowerCase() === rawSafeAddress.toLowerCase()
+      ) {
+        const moduleAddress = decodeEnableModuleCalldata(safeTxData).module;
+        hardTriggerBlocks.push(
+          HARD_TRIGGER_MODULE_ENABLE_TEMPLATE
+            .replace("{MODULE_ADDRESS}", moduleAddress)
+            .replace("{SAFE_ADDRESS}", rawSafeAddress)
+            .replace("{HANDLE}", handle),
+        );
+      }
+      if (operationStr === "delegatecall") {
+        hardTriggerBlocks.push(
+          HARD_TRIGGER_DELEGATECALL_TEMPLATE
+            .replace("{SAFE_ADDRESS}", rawSafeAddress)
+            .replace("{HANDLE}", handle),
+        );
+      }
+
       const text = [
         warnBlock,
         prepareReceipt,
         checksPerformed,
         ledgerNotice,
+        ...hardTriggerBlocks,
       ].join("\n\n");
 
       return {

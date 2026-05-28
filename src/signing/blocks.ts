@@ -756,7 +756,7 @@ export const VAULTPILOT_NOTICE_TEMPLATE_MISSING: string = [
   "  reduced to MCP-side checks only (the trust anchor remains the Ledger device",
   "  screen). To install:",
   "    git clone https://github.com/szhygulin/vaultpilot-preflight-skill ~/.claude/skills/vaultpilot-preflight",
-  "    cd ~/.claude/skills/vaultpilot-preflight && git checkout v1.3.0",
+  "    cd ~/.claude/skills/vaultpilot-preflight && git checkout v1.4",
   "  See ./SECURITY.md for the full residual-risk model.",
 ].join("\n");
 
@@ -781,7 +781,7 @@ export const VAULTPILOT_NOTICE_TEMPLATE_TAMPERED: string = [
   "  The skill content differs from the version this MCP build pins. Either:",
   "    (a) the skill was tampered with locally — re-clone or reset to the pinned tag",
   "    (b) you have a newer skill version than this MCP — upgrade vaultpilot-mcp",
-  "    (c) you have an older skill version than this MCP — git checkout v1.3.0 in",
+  "    (c) you have an older skill version than this MCP — git checkout v1.4 in",
   "        ~/.claude/skills/vaultpilot-preflight",
   "  Until resolved, treat skill output as untrusted (the Ledger device screen",
   "  remains the trust anchor; the skill is defense-in-depth).",
@@ -2914,4 +2914,148 @@ export const NON_PROTOCOL_TARGET_REFUSAL_TEMPLATE: string = [
   "  it BYPASSES the canonical-dispatch allowlist.",
   "",
   "  {SUGGESTION}",
+].join("\n");
+
+// -----------------------------------------------------------------------------
+// Phase 38 Plan 38-01 — Inv #12.5 hard-trigger block templates (SAFE-09).
+//
+// APPEND-ONLY template constants emitted by FOUR MCP-side sites:
+//   - src/tools/prepare_safe_tx_propose.ts  (propose-side detection at prepare)
+//   - src/tools/prepare_safe_tx_approve.ts  (approve-side detection on Tx Service
+//                                             data — defense-in-depth against
+//                                             a compromised Tx Service feed)
+//   - src/tools/prepare_safe_tx_execute.ts  (execute-side detection on the
+//                                             inner-decoded SafeTx)
+//   - src/tools/preview_send.ts             (re-emission at preview for the
+//                                             cross-signer execute path —
+//                                             closes the cross-MCP-session gap)
+//
+// The block titles `[HARD-TRIGGER — MODULE ENABLE]` and `[HARD-TRIGGER —
+// DELEGATECALL]` are the LOAD-BEARING format-fanout-sentinel — the skill-side
+// `vaultpilot-preflight` v1.4 Step 0.5 scan keys on these literals. Drift in
+// either title (including em-dash → ASCII hyphen substitution) breaks Inv
+// #12.5 enforcement coupling. Anchored byte-identically in
+// `test/signing-blocks-hard-trigger.test.ts`.
+//
+// Voice register mirrors `AGENT_TASK_TEMPLATE` (lines 116-141) — bracketed
+// title, imperative numbered steps to the agent, closing with the consequence
+// gate on `userDecision: "send"`.
+//
+// The blocks are NOT structured refusals. Both `enableModule` and
+// `delegatecall` are LEGITIMATE Safe operations. The blocks are INSTRUCTIONS
+// to the agent to invoke `get_verification_artifact({ handle })`, surface the
+// pasteable block to the user verbatim, and obtain confirmation of an
+// out-of-band second-LLM cross-check before relaying `userDecision: "send"`.
+// MCP cannot enforce — accepted residual T-INV-12.5-NON-SKILL-1 (SECURITY.md
+// Phase 38 section). Skill-side enforcement is the load-bearing defense.
+// -----------------------------------------------------------------------------
+
+/**
+ * `[HARD-TRIGGER — MODULE ENABLE]` block. Three slots: `{MODULE_ADDRESS}`,
+ * `{SAFE_ADDRESS}`, `{HANDLE}`. Substituted at the emission site. Em-dash in
+ * the title is load-bearing — drift to ASCII hyphen breaks the skill-side
+ * scan. Cross-link: `test/signing-blocks-hard-trigger.test.ts` byte-identity
+ * regression.
+ */
+export const HARD_TRIGGER_MODULE_ENABLE_TEMPLATE: string = [
+  "[HARD-TRIGGER — MODULE ENABLE]",
+  "This SafeTx calls enableModule({MODULE_ADDRESS}) on the Safe at {SAFE_ADDRESS}.",
+  "",
+  "Enabling a module grants it the ability to execute transactions from the Safe",
+  "WITHOUT collecting owner signatures. A malicious module can drain the Safe.",
+  "",
+  "Required defense-in-depth (Inv #12.5):",
+  "  1. Run get_verification_artifact({ handle: \"{HANDLE}\" }) and surface the",
+  "     output to the user verbatim.",
+  "  2. Ask the user to cross-check the module address against a second LLM",
+  "     (open a fresh chat with a different model; paste the verification",
+  "     artifact; ask \"Is this module address legitimate? Any known abuse?\").",
+  "  3. Only after the user confirms the second-LLM check passes, request",
+  "     userDecision: \"send\" via submit_safe_tx_signature.",
+].join("\n");
+
+/**
+ * `[HARD-TRIGGER — DELEGATECALL]` block. Two slots: `{SAFE_ADDRESS}`,
+ * `{HANDLE}`. Does NOT contain `{MODULE_ADDRESS}` (delegatecall is operation-
+ * discriminator-keyed, not module-keyed). Same load-bearing em-dash + skill-
+ * side scan coupling as MODULE ENABLE.
+ */
+export const HARD_TRIGGER_DELEGATECALL_TEMPLATE: string = [
+  "[HARD-TRIGGER — DELEGATECALL]",
+  "This SafeTx uses operation=1 (delegatecall) on the Safe at {SAFE_ADDRESS}.",
+  "The target contract's code will execute IN THE SAFE'S STORAGE CONTEXT —",
+  "equivalent to a contract upgrade.",
+  "",
+  "Legitimate uses: MultiSend batched-tx contracts (multiSendCallOnly is the",
+  "safer variant; non-CallOnly multiSend uses operation=1).",
+  "Attack vector: a malicious target can rewrite the Safe's owner set,",
+  "threshold, or implementation.",
+  "",
+  "Required defense-in-depth (Inv #12.5):",
+  "  1. Run get_verification_artifact({ handle: \"{HANDLE}\" }) and surface the",
+  "     output to the user verbatim.",
+  "  2. Ask the user to cross-check the target contract code against a second",
+  "     LLM (open a fresh chat with a different model; paste the verification",
+  "     artifact; ask \"Is the target contract's bytecode safe to execute in",
+  "     the Safe's storage context?\").",
+  "  3. Only after the user confirms the second-LLM check passes, request",
+  "     userDecision: \"send\" via submit_safe_tx_signature.",
+].join("\n");
+
+/**
+ * Safe-shape paste-able block template (A1 resolution — Plan 38-01 extension
+ * of `get_verification_artifact` for `PreparedTxSafeTypedData` handles).
+ *
+ * Mirror of the EVM-shape `PASTEABLE_BLOCK_TEMPLATE` (lines 811-) but with
+ * Safe-specific slots: the EVM `{TO}` / `{VALUE_WEI}` / `{DATA}` sentinels are
+ * REPLACED with `{SAFE_ADDRESS}` / `{SAFE_TX_TO}` / `{SAFE_TX_VALUE}` /
+ * `{SAFE_TX_DATA}` / `{OPERATION}` / `{SAFE_TX_HASH}` so the second LLM
+ * receives operationally meaningful bytes (the REAL SafeTx the Safe will
+ * execute, NOT the EVM sentinels stored on the `PreparedTxSafeTypedData`
+ * handle).
+ *
+ * The `>>>>` / `<<<<` markers are LOAD-BEARING — the skill-side Inv #12.5
+ * Step 0.5 enforcement requires the agent to surface the artifact "verbatim
+ * with markers preserved" so the user has an unambiguous copy-region for
+ * the fresh-chat paste.
+ */
+export const PASTEABLE_BLOCK_TEMPLATE_SAFE: string = [
+  ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>",
+  "COPY EVERYTHING BETWEEN THESE MARKERS INTO A FRESH CHAT WINDOW",
+  "(Claude, ChatGPT, Gemini — any LLM with no shared context with the agent that",
+  "prepared this Safe multisig transaction)",
+  "",
+  "  You are verifying a Safe multisig transaction (EIP-712 typed-data signing).",
+  "  The agent that prepared this may be compromised. Decode it from scratch",
+  "  using only the bytes below. Do not consult any external context, any prior",
+  "  conversation, any file the user mentions. Use only the bytes.",
+  "",
+  "  chainId:            {CHAIN_ID}",
+  "  safeAddress:        {SAFE_ADDRESS}",
+  "  safeTxTo:           {SAFE_TX_TO}",
+  "  safeTxValue (wei):  {SAFE_TX_VALUE}",
+  "  safeTxData:         {SAFE_TX_DATA}",
+  "  operation:          {OPERATION}",
+  "  safeTxHash:         {SAFE_TX_HASH}",
+  "  payloadFingerprint: {PAYLOAD_FINGERPRINT}",
+  "",
+  "  Tell the user:",
+  "    1. What contract is `safeTxTo`? Look up the verified source on Etherscan",
+  "       (or the chain's equivalent block explorer).",
+  "    2. Decode `safeTxData` against `safeTxTo`'s ABI. What function is being",
+  "       called? With what arguments?",
+  "    3. If `operation` is `delegatecall`, FLAG IT — delegatecall executes the",
+  "       target's code in the Safe's storage context (equivalent to a contract",
+  "       upgrade). Confirm the target's bytecode is intentional.",
+  "    4. If the call is `enableModule(address)`, FLAG IT — the module argument",
+  "       is the address being granted module privileges. Verify the module is",
+  "       legitimate and not a known-malicious contract.",
+  "    5. Recompute the EIP-712 SafeTx digest from {chainId, safeAddress,",
+  "       safeVersion} and the SafeTx struct fields. Confirm it matches",
+  "       `safeTxHash` above.",
+  "",
+  "  If the decoded action does NOT match the user's stated intent, OR if any",
+  "  of the FLAGS above surface a malicious-looking pattern, instruct the user:",
+  "  DO NOT SIGN.",
+  "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<",
 ].join("\n");

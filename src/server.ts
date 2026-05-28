@@ -49,7 +49,7 @@ const INSTRUCTIONS = [
   // `initialize` time (external source of truth — a SHA cannot self-reference,
   // so the value lives OUTSIDE the hashed SKILL.md). Install one-liner is
   // documented at https://github.com/szhygulin/vaultpilot-preflight-skill.
-  `vaultpilot-preflight skill v1.3.0 expected SHA-256: ${EXPECTED_SKILL_SHA256} (install: git clone https://github.com/szhygulin/vaultpilot-preflight-skill ~/.claude/skills/vaultpilot-preflight && cd ~/.claude/skills/vaultpilot-preflight && git checkout v1.3.0).`,
+  `vaultpilot-preflight skill v1.4 expected SHA-256: ${EXPECTED_SKILL_SHA256} (install: git clone https://github.com/szhygulin/vaultpilot-preflight-skill ~/.claude/skills/vaultpilot-preflight && cd ~/.claude/skills/vaultpilot-preflight && git checkout v1.4).`,
 ].join(" ");
 
 // Plan 05-03 / DIAG-04: read package.json once at module load. Top-level
