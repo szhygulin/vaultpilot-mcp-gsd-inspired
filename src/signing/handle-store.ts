@@ -336,6 +336,30 @@ export interface PreparedTxEvm {
   gas?: bigint;
   maxFeePerGas?: bigint;
   maxPriorityFeePerGas?: bigint;
+  /**
+   * Phase 39 Plan 39-01 — Bridge Tier-1 final-recipient assertion (Inv #6b).
+   *
+   * Populated by bridge prepare tools (e.g. prepare_across_v3_deposit,
+   * prepare_wormhole_transfer) when the user supplies a destination address.
+   * Consumed by `preview_send` Layer 0.6 to compare against the `finalRecipient`
+   * decoded from the bridge calldata.
+   *
+   * DEX swaps and non-bridge tools leave this field absent — Layer 0.6 is a
+   * no-op for them (the decoder returns `{ kind: "no-match" }` for non-Tier-1
+   * selectors, so the assertion never fires).
+   *
+   * This is an ADDITIVE optional field only. The handle-store state machine,
+   * TTL constants, lifecycle transitions, and the `PreviewPinned` shape are
+   * BYTE-IDENTICAL to origin/main. All existing EVM handle-construction call
+   * sites remain byte-identical (the field is absent by default).
+   *
+   * Analogous to `PreparedTxBtcLifi.toAddress` (line ~924) but scoped to EVM
+   * bridge flows via an optional bag rather than a required top-level field.
+   */
+  bridgeParams?: {
+    /** User-supplied destination address as passed to the prepare tool. */
+    toAddress?: string;
+  };
 }
 
 /**

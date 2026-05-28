@@ -129,11 +129,13 @@ import {
   HARD_TRIGGER_MODULE_ENABLE_TEMPLATE,
 } from "../signing/blocks.js";
 import { _canonicalDispatch } from "../security/canonical-dispatch.js";
+import { _bridgeTier1Decoders } from "../protocols/bridge-decoders/index.js";
 import { _canonicalDispatchSolana } from "../security/canonical-dispatch-solana.js";
 import { SUNSWAP_V2_ROUTER_TRON_ADDRESS, _canonicalDispatchTron } from "../security/canonical-dispatch-tron.js";
 import {
   AGENT_TASK_TEMPLATE,
   CHAIN_ID_MISMATCH_REFUSAL_TEMPLATE,
+  DECODED_RECIPIENT_DRIFT_TEMPLATE,
   DISPATCH_TARGET_REFUSAL_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_TEMPLATE,
   LEDGER_NOTICE_COMPOUND_TEMPLATE,
@@ -223,6 +225,7 @@ import {
   type HandleRecord,
   type PreparedTxBtc,
   type PreparedTxBtcLifi,
+  type PreparedTxEvm,
   type PreparedTxLtc,
   type PreparedTxSolana,
   type PreparedTxTron,
@@ -890,6 +893,108 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
           ),
         };
       }
+    }
+
+    // Phase 39 — Layer 0.6 Bridge Tier-1 Final-Recipient Assertion (Inv #6b EVM path).
+    //
+    // Fires AFTER Layer 0.5 canonical-dispatch allowlist (a bridge address must
+    // be allowlisted to reach here) and BEFORE Layer 2 chain-name mismatch.
+    // Only fires for contract calls (data !== "0x") that match a Tier-1 bridge
+    // selector. DEX swaps and non-bridge calls return no-match and pass through.
+    //
+    // Purpose: a compromised agent can supply a clean-looking `toAddress` to
+    // the user's eyes while encoding a different recipient inside opaque bridge
+    // calldata the Ledger device cannot decode. This gate mechanically asserts
+    // the decoded recipient equals the user-supplied bridgeParams.toAddress
+    // before the device ever signs.
+    //
+    // Encoding-aware compare (T-BRIDGE-SOLANA-NORM-1):
+    //   - EVM (0x-prefixed 20-byte): getAddress(both sides) — case-insensitive.
+    //   - Solana base58 pubkey / NEAR account-id: trim-only compare,
+    //     CASE-SENSITIVE for base58 (Solana pubkeys ARE case-sensitive).
+    //     Do NOT blanket-toLowerCase — lowercasing a Solana base58 value is
+    //     a spoofing bug (two different pubkeys may share the same lowercase
+    //     string). NEAR decoders already lowercase at decode time; trim-only
+    //     compare is correct for NEAR account-ids which are always lowercase.
+    if (record.tx.data !== "0x") {
+      const bridgeDecodeResult =
+        _bridgeTier1Decoders.decodeBridgeTier1FacetRecipient(record.tx.data);
+
+      if (bridgeDecodeResult.kind === "error") {
+        // Tier-1 bridge selector matched but calldata decode failed.
+        // Refuse rather than passing through — opaque calldata we cannot
+        // decode is a security event at a bridge call site (Pitfall 4).
+        const userRecipient =
+          (record.tx as PreparedTxEvm).bridgeParams?.toAddress ?? "(none)";
+        const refusalText = DECODED_RECIPIENT_DRIFT_TEMPLATE
+          .replace("{BRIDGE}", bridgeDecodeResult.bridge)
+          .replace("{DECODED}", `decode error: ${bridgeDecodeResult.message}`)
+          .replace("{SUPPLIED}", userRecipient);
+        return {
+          isError: true,
+          content: [{ type: "text", text: refusalText }],
+          structuredContent: errEnvelope(
+            "DECODED_RECIPIENT_DRIFT",
+            `bridge decode error for ${bridgeDecodeResult.bridge}: ${bridgeDecodeResult.message}`,
+          ),
+        };
+      }
+
+      if (bridgeDecodeResult.kind === "ok") {
+        // A Tier-1 bridge selector matched AND decoding succeeded.
+        // Compare the decoded finalRecipient against the user-supplied toAddress.
+        //
+        // PITFALL 5: if userRecipient is empty ("") a Tier-1 selector matched
+        // but no toAddress was stored on the handle — refuse, do NOT silently
+        // pass. An empty stored recipient is not meaningful consent from the user.
+        const userRecipient =
+          (record.tx as PreparedTxEvm).bridgeParams?.toAddress ?? "";
+
+        // Encoding-aware compare (T-BRIDGE-SOLANA-NORM-1):
+        //   - EVM branch: both decoded finalRecipient AND userRecipient look
+        //     like "0x" + 40 hex chars → normalize both via getAddress() for
+        //     case-insensitive EIP-55 compare.
+        //   - Otherwise (Solana base58 pubkey or NEAR account-id):
+        //     trim-only, CASE-SENSITIVE compare. Do NOT toLowerCase — a Solana
+        //     base58 pubkey IS case-sensitive (lowercasing changes the address).
+        const EVM_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+        let recipientsMatch: boolean;
+        if (
+          EVM_ADDRESS_RE.test(bridgeDecodeResult.finalRecipient) &&
+          EVM_ADDRESS_RE.test(userRecipient)
+        ) {
+          // EVM branch: case-insensitive comparison via getAddress (EIP-55).
+          try {
+            recipientsMatch =
+              getAddress(bridgeDecodeResult.finalRecipient) === getAddress(userRecipient);
+          } catch {
+            // If getAddress throws (malformed), treat as mismatch.
+            recipientsMatch = false;
+          }
+        } else {
+          // Non-EVM branch (Solana base58 / NEAR account-id):
+          // trim-only, CASE-SENSITIVE compare.
+          recipientsMatch =
+            bridgeDecodeResult.finalRecipient.trim() === userRecipient.trim();
+        }
+
+        if (!recipientsMatch) {
+          // Mismatch OR empty userRecipient — refuse.
+          const refusalText = DECODED_RECIPIENT_DRIFT_TEMPLATE
+            .replace("{BRIDGE}", bridgeDecodeResult.bridge)
+            .replace("{DECODED}", bridgeDecodeResult.finalRecipient)
+            .replace("{SUPPLIED}", userRecipient);
+          return {
+            isError: true,
+            content: [{ type: "text", text: refusalText }],
+            structuredContent: errEnvelope(
+              "DECODED_RECIPIENT_DRIFT",
+              `[REFUSED — DECODED RECIPIENT DRIFT] bridge=${bridgeDecodeResult.bridge} decoded=${bridgeDecodeResult.finalRecipient} supplied=${userRecipient}`,
+            ),
+          };
+        }
+      }
+      // bridgeDecodeResult.kind === "no-match" → not a Tier-1 bridge call → pass through.
     }
 
     // Phase 8 — Plan 08-02. Layer 2 defense-in-depth chain-name MISMATCH

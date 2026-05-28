@@ -619,3 +619,57 @@ The v2.5 verify-phase remains pending a real-Ledger Ethereum-app smoke against E
 | T-FANOUT-SENTINEL-38 | Tampering | MEDIUM | mitigate | `ENABLE_MODULE_SELECTOR = "0x610b5925"` lives in `src/protocols/safe.ts` exactly once. `[HARD-TRIGGER — MODULE ENABLE]` and `[HARD-TRIGGER — DELEGATECALL]` string-literal emissions live in `src/signing/blocks.ts` exactly once each — verified by `test/signing-blocks-hard-trigger.test.ts` grep regression (filtered to string-literal occurrences, excluding JSDoc / line-comment backtick references). Skill-side v1.4 Step 0.5 scan keys on these literal titles — drift in either title (em-dash → ASCII hyphen substitution, case change, spacing change) breaks Inv #12.5 enforcement coupling. |
 
 The v2.5 Safe milestone (Phase 36 + 37 + 38) is code-complete. The v2.5 verify-phase remains pending a real-Ledger Ethereum-app smoke against Ethereum mainnet covering 1-of-1 Safe propose → submit → execute with hard-trigger block traversal + second-LLM ritual on a sentinel "no-op" module. Phase 39 (cross-chain bridges) is the next v2.6 phase. The FROZEN trust-pipeline files stay byte-identical to `origin/main` across the full v2.5 milestone.
+
+## Bridge Tier-1 final-recipient assertion (v2.6 — Phase 39, Inv #6b EVM path)
+
+### Threat
+
+A compromised agent can supply a clean-looking `toAddress` to the user's eyes (visible in the MCP response and PREPARE RECEIPT block) while encoding a different recipient inside opaque bridge calldata that the Ledger device cannot decode. The device shows the EOA call to the bridge contract address but cannot parse the bridge protocol's internal recipient field — the on-device display is insufficient to detect the mismatch. This is a trust-boundary violation at the agent → MCP boundary: the agent controls both the user-visible argument and the calldata content, and can diverge them without detection if no server-side assertion exists.
+
+### Control — preview_send Layer 0.6 (Inv #6b EVM path)
+
+Phase 39 adds a new Layer 0.6 assertion in `preview_send` (EVM path) that fires AFTER the Layer 0.5 canonical-dispatch allowlist (the bridge contract must already be allowlisted) and BEFORE the Layer 2 chain-name mismatch check. The assertion:
+
+1. Calls `_bridgeTier1Decoders.decodeBridgeTier1FacetRecipient(record.tx.data)` — the centralized Tier-1 bridge decoder registry — against the EVM calldata stored in the handle.
+2. On `no-match` (non-Tier-1 selector, DEX swap, or native send): passes through silently. Layer 0.6 is a no-op for non-bridge calls.
+3. On `error` (Tier-1 selector matched but calldata malformed or unsupported destination chain): refuses with `[REFUSED — DECODED RECIPIENT DRIFT]`, error code `DECODED_RECIPIENT_DRIFT`. Opaque calldata we cannot decode at a Tier-1 bridge call site is a security event, not a benign pass-through.
+4. On `ok` (Tier-1 selector matched and recipient decoded): performs an encoding-aware comparison against `record.tx.bridgeParams?.toAddress` (the user-supplied recipient stored at prepare time). Mismatch or absent stored recipient → `[REFUSED — DECODED RECIPIENT DRIFT]` naming `bridge=`, `decoded=`, `supplied=`.
+
+**Four Tier-1 bridges covered:**
+- Wormhole Token Bridge — `transferTokensWithPayload` (selector `0xc5a5ebda`)
+- Mayan Swift — `createOrderWithEth` (`0xb866e173`) and `createOrderWithToken` (`0x8e8d142b`)
+- NEAR OmniBridge — `initTransfer` (`0xdeb915b8`)
+- Across V3 SpokePool — `depositV3` (`0x7b939232`)
+
+### Centralization rationale
+
+Single placement at `preview_send` means every current and future swap/bridge tool that routes through `preview_send` inherits the assertion with no per-tool edits. Adding a new bridge prepare tool requires only registering the decoder in `src/protocols/bridge-decoders/index.ts` (the `TIER1_DECODERS` map) — `preview_send` picks it up automatically.
+
+### Encoding-aware normalization (T-BRIDGE-SOLANA-NORM-1)
+
+The comparison is encoding-aware. The decoder already returns `finalRecipient` in canonical normalized form. `preview_send` normalizes the user-supplied `bridgeParams.toAddress` the same way before comparison:
+
+- **EVM (0x-prefixed 20-byte address):** both sides through `getAddress()` (EIP-55 checksum) — case-insensitive comparison.
+- **Solana base58 pubkey:** trim-only, CASE-SENSITIVE comparison. Solana base58 pubkeys are case-sensitive — two different pubkeys may share the same lowercase string. A blanket `.toLowerCase()` on both sides is a spoofing bug. The regression guard (test 9 in `test/preview-send.bridge-tier1.test.ts`) asserts that the exact-case base58 MATCHES and the lowercased base58 REFUSES.
+- **NEAR account-id:** the NEAR OmniBridge decoder already normalizes to `toLowerCase().trim()` at decode time; trim-only compare is correct post-normalization.
+
+### Accepted residuals
+
+**Tier-2 bridge deferral:** deBridge/DLN, Stargate `composeMsg`, Hop, and Symbiosis are EVM-to-EVM bridges — the recipient is a plain EVM address visible on the Ledger device display without bridge-specific decoding. No decoder ships for Tier-2 in Phase 39. This is documented in `REQUIREMENTS.md` as out-of-scope for v2.6; Tier-2 decoder addition requires only extending `TIER1_DECODERS`.
+
+**Mayan SYNTHETIC fixture:** The Mayan Swift `createOrderWithEth` / `createOrderWithToken` ABI was confirmed from Etherscan (`0xC38e4e6A15593f908255214653d3d947ca1c2338`). No direct `createOrderWithEth` mainnet calldata was found in the contract's recent transaction history (primarily `fulfill`/`unlock` ops). Fixtures in `test/bridge-decoders-mayan-swift.test.ts` are ABI-encoded programmatically from the confirmed ABI + a verified Solana pubkey bytes32, labeled `// SYNTHETIC`. ABI-drift is caught at test time. This mirrors the `lifi-btc.ts` Phase 26 programmatic-fixture precedent.
+
+### Phase 39 threat register summary
+
+| Threat ID | STRIDE | Severity | Disposition | Mitigation |
+|-----------|--------|----------|-------------|------------|
+| T-BRIDGE-RECIPIENT-SPOOF-1 | Tampering | HIGH | mitigate | Layer 0.6 decodes the Tier-1 bridge recipient from calldata and asserts equality against the user-supplied `bridgeParams.toAddress` stored on the handle at prepare time. Mismatch → `[REFUSED — DECODED RECIPIENT DRIFT]` (error code `DECODED_RECIPIENT_DRIFT`). Layer 0.6 fires AFTER Layer 0.5 (bridge contract must be allowlisted) and BEFORE Layer 2 (chain-mismatch). Empty stored toAddress on a Tier-1 selector match refuses (Pitfall 5 — no silent pass). |
+| T-BRIDGE-DECODER-DOS-1 | Denial of Service | MEDIUM | mitigate | All four Tier-1 decoders and the registry dispatcher are WR-02 NEVER-throws — every error path returns `{ kind: "error" }`. Malformed or truncated Tier-1 calldata reaches Layer 0.6 as an `error` result → isError:true refusal, not an exception into the preview flow. Test 7 in `test/preview-send.bridge-tier1.test.ts` asserts the no-throw invariant. |
+| T-BRIDGE-SOLANA-NORM-1 | Spoofing | HIGH | mitigate | Encoding-aware comparison: EVM 0x40-hex → `getAddress()` both sides (EIP-55 case-insensitive); Solana base58 / NEAR account-id → trim-only CASE-SENSITIVE (no blanket `.toLowerCase()`). Tests 8 + 9 in `test/preview-send.bridge-tier1.test.ts` pin the Solana regression: exact-base58 toAddress MATCHES; lowercased-base58 REFUSES. Wormhole decoder pinned literal `"2hh484NLjrMsKxrFXnF3e3yd2cimKo33TR2jidY7j6W5"` in `test/bridge-decoders-wormhole.test.ts`. |
+| T-39-FROZEN | Tampering | CRITICAL | mitigate | Layer 0.6 is a NEW separate `if (record.tx.data !== "0x")` block inserted BETWEEN the Layer 0.5 closing brace and the Layer 2 chain-mismatch block. The Layer 0.5 body byte-identity is verified by the FROZEN test in `test/preview-send.solana.test.ts`. `git diff origin/main -- src/tools/send_transaction.ts src/signing/payload-fingerprint.ts src/signing/presign-hash.ts src/protocols/bridge-decoders/lifi-btc.ts` returns empty across all Phase 39 commits. |
+
+### Companion-skill coordinated follow-up (vaultpilot-preflight, Inv #6b)
+
+The sister `vaultpilot-preflight` repo receives a coordinated version bump adding Inv #6b skill-side encoding: "before signing a bridge tx, verify the decoded recipient matches the user's stated recipient." This mirrors the v2.5 Phase 38 sister-repo coordination pattern (skill v1.4 + Inv #12.5). The MCP-side Layer 0.6 gate is the server-side control — it fires at preview time regardless of the agent's skill usage and produces a structured refusal. The skill-side encoding is defense in depth: it instructs the agent to perform the verification step explicitly before relaying `userDecision: "send"`.
+
+This is a CROSS-REPO follow-up tracked here. No edit to the sister `vaultpilot-preflight` repo lands inside this repository in Phase 39. The MCP-side control is complete and active as of Phase 39 Plan 39-03.

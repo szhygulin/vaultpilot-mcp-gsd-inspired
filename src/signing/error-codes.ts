@@ -337,7 +337,25 @@ export type ErrorCode =
   //                        current Safe owner. Re-collect signatures via
   //                        prepare_safe_tx_approve."
   | "INSUFFICIENT_SIGNATURES"
-  | "STALE_SIGNATURE";
+  | "STALE_SIGNATURE"
+  //
+  // Phase 39 Plan 39-01 — Bridge Tier-1 final-recipient assertion (Inv #6b EVM path).
+  //
+  //   DECODED_RECIPIENT_DRIFT — preview_send Layer 0.6 refused: the recipient
+  //                        address decoded from a Tier-1 bridge calldata field
+  //                        (e.g. Wormhole `recipient`, Across V3 `recipient`,
+  //                        NEAR OmniBridge `recipient`, Mayan Swift `destAddr`)
+  //                        does NOT match the user-supplied `toAddress` stored
+  //                        in `PreparedTxEvm.bridgeParams.toAddress`.
+  //
+  //                        This defends against a compromised agent that encodes
+  //                        an attacker-controlled destination inside opaque bridge
+  //                        calldata that the Ledger device cannot decode on-screen.
+  //
+  //                        Recovery hint: Do NOT sign. Re-verify the intended
+  //                        destination address and re-prepare the transaction via
+  //                        the bridge prepare tool.
+  | "DECODED_RECIPIENT_DRIFT";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers
