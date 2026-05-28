@@ -429,7 +429,7 @@ registerTool(
             },
           ],
           structuredContent: errEnvelope(
-            "INVALID_INPUT",
+            "SANDWICH_MEV_REFUSED",
             `price impact ${(quote.priceImpactBps / 100).toFixed(2)}% exceeds the 2% threshold; pass slippageBps explicitly to confirm acceptance of high price impact (sandwich-MEV defense — mirrors Phase 14 Jupiter + v2.6 MEV-01 EVM)`,
             `priceImpactBps: ${quote.priceImpactBps}`,
             "get_sunswap_quote",

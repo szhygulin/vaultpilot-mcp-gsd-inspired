@@ -366,20 +366,19 @@ describe("prepare_uniswap_swap — ETH↔ETH refusal", () => {
 });
 
 // ---------------------------------------------------------------------------
-// T6: sandwich-MEV refusal (D-08)
+// T6: sandwich-MEV refusal (D-08) — Phase 40 MEV-01: SANDWICH_MEV_REFUSED
 // ---------------------------------------------------------------------------
 describe("prepare_uniswap_swap — sandwich-MEV refusal (D-08)", () => {
-  it("priceImpactBps > 200 AND slippage NOT explicit → INVALID_INPUT + hintTool 'get_uniswap_quote'", async () => {
+  afterEach(() => {
+    delete process.env.MEV_THRESHOLD_ETHEREUM;
+  });
+
+  it("priceImpactBps > 200 AND slippage NOT explicit → SANDWICH_MEV_REFUSED + hintTool 'get_uniswap_quote'", async () => {
     getStatusSpy.mockResolvedValueOnce(PAIRED_STATUS);
-    // Drive priceImpactBps ~3% — fair = 1000n, actual = 970n → drop=30, bps=300.
-    setupQuoteMocks({
-      singleHopByFee: { 500: 970n },
-      tinySingleHopByFee: { 500: 1000n / 10000n }, // tinyOut * 10000 = 1000 fair
-    });
     // Better: use larger numbers to avoid bigint truncation.
     setupQuoteMocks({
       singleHopByFee: { 500: 970_000_000n },
-      tinySingleHopByFee: { 500: 100_000n }, // tinyOut * 10000 = 1_000_000_000n fair
+      tinySingleHopByFee: { 500: 100_000n }, // tinyOut * 10000 = 1_000_000_000n fair → 300bps impact
     });
 
     const result = await callTool({
@@ -392,11 +391,33 @@ describe("prepare_uniswap_swap — sandwich-MEV refusal (D-08)", () => {
     const sc = result.structuredContent as {
       errorCode: string;
       hintTool: string;
+      message: string;
     };
-    expect(sc.errorCode).toBe("INVALID_INPUT");
+    // Phase 40 MEV-01: sandwich refusal now uses SANDWICH_MEV_REFUSED (was INVALID_INPUT)
+    expect(sc.errorCode).toBe("SANDWICH_MEV_REFUSED");
     expect(sc.hintTool).toBe("get_uniswap_quote");
-    // SANDWICH-MEV DEFENSE block in text content.
+    // Refusal message names chain + threshold + actual impact
+    expect(sc.message).toMatch(/ethereum/);
+    // priceImpactRefusalPct for ethereum is 2.0; formatted as "2%" or "2.0%" depending on JS number formatting
+    expect(sc.message).toMatch(/2%|2\.0%/);
+    expect(sc.message).toMatch(/300/); // actual priceImpactBps
+    // SANDWICH-MEV DEFENSE block in text content (template stays byte-identical)
     expect(result.content[0]?.text ?? "").toMatch(/SANDWICH-MEV\s+DEFENSE/);
+  });
+
+  it("invalid MEV_THRESHOLD_ETHEREUM env → SANDWICH_MEV_REFUSED naming the override", async () => {
+    process.env.MEV_THRESHOLD_ETHEREUM = "abc";
+    getStatusSpy.mockResolvedValueOnce(PAIRED_STATUS);
+
+    const result = await callTool({
+      tokenIn: USDC,
+      tokenOut: WETH,
+      amount: "100",
+    });
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as { errorCode: string; message: string };
+    expect(sc.errorCode).toBe("SANDWICH_MEV_REFUSED");
+    expect(sc.message).toMatch(/abc/);
   });
 });
 

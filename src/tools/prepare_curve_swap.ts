@@ -14,7 +14,8 @@
 //   - bigint min_dy derivation: (quotedDy * (10000n - BigInt(slippageBps))) / 10000n
 //   - slippageBps REQUIRED, range [1, 5000] — no MEV gate, but 50% cap is footgun guard
 //   - Token amounts via per-pool coinDecimals (NOT get_token_metadata round-trip)
-//   - No sandwich-MEV refusal (asymmetric treatment vs Phase 32 UniV3 — documented in CHECKS PERFORMED)
+//   - No sandwich-MEV refusal (Phase 34 design: explicit-slippage-only model; Phase 40 MEV-01
+//     per-L2 SOT is Uniswap-scoped; Curve never emits SANDWICH_MEV_REFUSED — documented in CHECKS PERFORMED)
 //
 // Analog: src/tools/prepare_uniswap_swap.ts (Phase 32)
 // Pattern map: PATTERNS.md §prepare_curve_swap.ts
@@ -417,7 +418,7 @@ registerTool("prepare_curve_swap", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       `ETH-in path:        ${isEthIn}`,
       `tx.value (valueWei): ${valueWei}`,
       approvalHint.trim(),
-      `Sandwich-MEV gate: not applied to Curve (low MEV exposure on stable pools)`,
+      `Sandwich-MEV gate: not applied to Curve (per-L2 sandwich-MEV SOT in sandwich-mev-thresholds.ts is Uniswap-scoped; Curve intentionally uses explicit-slippage-only model — slippageBps REQUIRED [1,5000] + 50% footgun cap, no price-impact refusal by design)`,
       `payloadFingerprint: ${payloadFingerprint}`,
     ].join("\n");
 

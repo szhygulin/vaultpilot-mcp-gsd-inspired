@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v2.5
 milestone_name: Safe positions + Tx Service
-current_plan: 3
+current_plan: 1
 status: verifying
-last_updated: "2026-05-28T19:38:25.310Z"
+last_updated: "2026-05-28T19:57:52.653Z"
 last_activity: 2026-05-28
 progress:
   total_phases: 3
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-12)
 
 **Core value:** The user trusts what the Ledger screen shows — nothing else. Tampering at any layer between the agent and the device produces a visible mismatch on-screen before signing.
-**Current focus:** Phase 39 — bridge-tier-1-facet-decoders-final-recipient-assertion
+**Current focus:** Phase 40 — mev-sandwich-slippage-hint-per-l2
 
 ## Current Position
 
-Phase: 39 (bridge-tier-1-facet-decoders-final-recipient-assertion) — EXECUTING
-Plan: 3 of 3
-Current Plan: 3
-Total Plans in Phase: 3
+Phase: 40 (mev-sandwich-slippage-hint-per-l2) — EXECUTING
+Plan: 1 of 1
+Current Plan: 1
+Total Plans in Phase: 1
 Status: Phase complete — ready for verification
 Last activity: 2026-05-28
 
@@ -105,6 +105,7 @@ Progress: [█████████░] 86%
 | Phase 39 P01 | 8 | 3 tasks | 5 files |
 | Phase 39 P02 | 15 | 3 tasks | 10 files |
 | Phase 39 P03 | 584 | 3 tasks | 3 files |
+| Phase 40-mev-sandwich-slippage-hint-per-l2 P01 | 15 | 3 tasks | 11 files |
 
 ## Accumulated Context
 
@@ -168,6 +169,7 @@ Recent decisions affecting current work:
 - [Phase ?]: Mayan EVM/Solana discrimination uses structural 12-leading-zero-byte test on destAddr bytes32 (chain-id-scheme-independent)
 - [Phase ?]: Layer 0.6 separate block preserves Layer 0.5 FROZEN body byte-identity
 - [Phase ?]: Encoding-aware compare: EVM_ADDRESS_RE dispatches to getAddress; Solana base58 trim-only CASE-SENSITIVE (no blanket toLowerCase)
+- [Phase ?]: Per-chain MEV SOT + SANDWICH_MEV_REFUSED closes MEV-01 and v2.6 milestone
 
 ### Pending Todos
 
@@ -367,6 +369,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-28T19:38:25.298Z
-Stopped at: Phase 40 planned — 1 plan, plan-checker PASS (0 issues)
-Resume file: .planning/phases/40-mev-sandwich-slippage-hint-per-l2/40-01-PLAN.md
+Last session: 2026-05-28T19:57:52.640Z
+Stopped at: Completed 40-01-PLAN.md (MEV-01 v2.6 close-out)
+Resume file: None

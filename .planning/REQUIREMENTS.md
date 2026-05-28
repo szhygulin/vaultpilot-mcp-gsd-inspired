@@ -399,7 +399,7 @@ Explicitly deferred until usage data justifies. Documented in REQUIREMENTS.md bu
 
 #### Sandwich-MEV per-L2 thresholds (MEV-*)
 
-- [ ] **MEV-01**: `prepare_uniswap_swap` / `prepare_curve_swap` / other EVM swap tools accept per-chain slippage thresholds — Ethereum mainnet stays at 50bps default / >2% refusal (v2.4 Phase 32 default); L2 thresholds calibrated against actual sandwich-MEV exposure (most L2s tolerate smaller default slippage). Default thresholds documented in `src/config/sandwich-mev-thresholds.ts` per-chain SOT; refusal mode is consistent (`SANDWICH_MEV_REFUSED` errorCode + structured refusal with chain-specific guidance). Per-L2 thresholds configurable via env (`MEV_THRESHOLD_<CHAIN>` override) for advanced users. SECURITY.md updated with per-L2 sandwich-MEV threat-model nuance
+- [x] **MEV-01**: `prepare_uniswap_swap` / `prepare_curve_swap` / other EVM swap tools accept per-chain slippage thresholds — Ethereum mainnet stays at 50bps default / >2% refusal (v2.4 Phase 32 default); L2 thresholds calibrated against actual sandwich-MEV exposure (most L2s tolerate smaller default slippage). Default thresholds documented in `src/config/sandwich-mev-thresholds.ts` per-chain SOT; refusal mode is consistent (`SANDWICH_MEV_REFUSED` errorCode + structured refusal with chain-specific guidance). Per-L2 thresholds configurable via env (`MEV_THRESHOLD_<CHAIN>` override) for advanced users. SECURITY.md updated with per-L2 sandwich-MEV threat-model nuance
 
 ### v3.0 Hosted MCP
 
@@ -502,7 +502,7 @@ Updated during roadmap creation.
 | SAFE-05..08 | Phase 37 (v2.5) | Pending |
 | SAFE-09 (Inv #12.5) | Phase 38 (v2.5) | Pending |
 | BRIDGE-T1-01..06 | Phase 39 (v2.6) | Pending |
-| MEV-01 | Phase 40 (v2.6) | Pending |
+| MEV-01 | Phase 40 (v2.6) | Complete |
 | BRIDGE-T2-* | v2.6.x+ (DEFERRED) | Backlog |
 | HOST-* | v3.0 (post-v2.6) | Backlog |
 | NFT-* | v3.1 (post-v3.0) | Backlog |

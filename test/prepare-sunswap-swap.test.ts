@@ -299,7 +299,7 @@ describe("prepare_sunswap_swap — happy path + Fixture Tron-20-A re-anchor", ()
 // ============================================================================
 
 describe("prepare_sunswap_swap — sandwich-MEV gate (D-03b/D-03c)", () => {
-  it("Test 6 LOAD-BEARING: priceImpactBps > 200 WITHOUT explicit slippageBps → INVALID_INPUT + hintTool", async () => {
+  it("Test 6 LOAD-BEARING: priceImpactBps > 200 WITHOUT explicit slippageBps → SANDWICH_MEV_REFUSED + hintTool", async () => {
     listAccountsSpy.mockReturnValue([PAIRED_TRON_ACCOUNT]);
     vi.spyOn(_sunswapClient, "fetchSunswapQuote").mockResolvedValueOnce({
       inAmount: 100_000_000n,
@@ -319,9 +319,10 @@ describe("prepare_sunswap_swap — sandwich-MEV gate (D-03b/D-03c)", () => {
 
     expect(result.isError).toBe(true);
     const sc = result.structuredContent as Record<string, unknown>;
-    expect(sc.errorCode).toBe("INVALID_INPUT");
+    // Phase 40 MEV-01: sandwich refusal now uses SANDWICH_MEV_REFUSED (was INVALID_INPUT)
+    expect(sc.errorCode).toBe("SANDWICH_MEV_REFUSED");
     expect(sc.hintTool).toBe("get_sunswap_quote");
-    // cause mentions the 2% threshold
+    // message still mentions the 2% threshold (TRON keeps fixed 200bps threshold)
     expect(sc.message as string).toMatch(/2%/);
   });
 

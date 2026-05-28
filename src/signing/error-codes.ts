@@ -355,7 +355,39 @@ export type ErrorCode =
   //                        Recovery hint: Do NOT sign. Re-verify the intended
   //                        destination address and re-prepare the transaction via
   //                        the bridge prepare tool.
-  | "DECODED_RECIPIENT_DRIFT";
+  | "DECODED_RECIPIENT_DRIFT"
+  //
+  // Phase 40 Plan 40-01 — Per-chain sandwich-MEV refusal (MEV-01, append-only).
+  // APPEND-ONLY — do NOT reorder existing codes above.
+  //
+  //   SANDWICH_MEV_REFUSED  — Emitted by two producers:
+  //
+  //                         1. prepare_uniswap_swap (EVM, per-chain bar):
+  //                            priceImpactBps > priceImpactRefusalPct*100 AND
+  //                            slippageBps was NOT explicitly supplied. The
+  //                            threshold is per-chain from the
+  //                            src/config/sandwich-mev-thresholds.ts SOT
+  //                            (ethereum 2.0%, polygon 2.0%, arbitrum/optimism/
+  //                            base 3.0%). Migrated from INVALID_INPUT in Phase
+  //                            40 for one consistent refusal contract across
+  //                            all chains.
+  //
+  //                         2. prepare_sunswap_swap (TRON, fixed 200bps):
+  //                            priceImpactBps > 200 AND slippageBps was NOT
+  //                            explicitly supplied. TRON keeps its own threshold
+  //                            + template; only the errorcode migrated from
+  //                            INVALID_INPUT to SANDWICH_MEV_REFUSED.
+  //
+  //                         ALSO emitted when a MEV_THRESHOLD_<CHAIN> env
+  //                         override is present but invalid (non-integer /
+  //                         <1 / >10000 / decimal). The consuming tool catches
+  //                         InvalidMevThresholdError from getSandwichThresholds
+  //                         and maps it to this code, naming chain + raw value.
+  //
+  //                         Recovery hint: Pass slippageBps explicitly to
+  //                         acknowledge the high price impact, or correct the
+  //                         MEV_THRESHOLD_<CHAIN> env override.
+  | "SANDWICH_MEV_REFUSED";
 
 /**
  * Uniform structured-error envelope shape that all Phase 4 tool handlers
