@@ -3059,3 +3059,48 @@ export const PASTEABLE_BLOCK_TEMPLATE_SAFE: string = [
   "  DO NOT SIGN.",
   "<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<",
 ].join("\n");
+
+// -----------------------------------------------------------------------------
+// Phase 39 Plan 39-01 — DECODED_RECIPIENT_DRIFT_TEMPLATE (BRIDGE-T1-05).
+//
+// Layer 0.6 of `preview_send` (EVM path): refuses when the final-recipient
+// address decoded from a Tier-1 bridge calldata field does NOT match the
+// user-supplied `toAddress` stored in `PreparedTxEvm.bridgeParams.toAddress`.
+//
+// Three slots:
+//   - `{BRIDGE}`   — human-readable bridge name (e.g. "Across V3", "Wormhole",
+//                    "NEAR OmniBridge", "Mayan Swift").
+//   - `{DECODED}`  — the address or account ID decoded from the on-chain
+//                    calldata field (the value that would actually be bridged to).
+//   - `{SUPPLIED}` — the address the user supplied to the prepare tool (the
+//                    value they intended to send to).
+//
+// Existing templates (Phase 4 + 6 + 7 + 8 + 9 + 28 + 38) BYTE-FROZEN —
+// Plan 39-01 appends at end-of-file per APPEND-ONLY discipline.
+// -----------------------------------------------------------------------------
+
+/**
+ * Refusal block for `preview_send` Layer 0.6 — Tier-1 bridge final-recipient
+ * drift detection (Inv #6b, BRIDGE-T1-05).
+ *
+ * Emitted when `decodeBridgeTier1FacetRecipient` returns `{ kind: "ok" }` and
+ * the decoded `finalRecipient` does NOT equal (case-insensitively) the
+ * `PreparedTxEvm.bridgeParams.toAddress` value set by the prepare tool.
+ *
+ * Slot substitution at emission time:
+ *   - `{BRIDGE}`   → bridge name from the decoder (e.g. "Across V3")
+ *   - `{DECODED}`  → decoded on-chain recipient (address / NEAR account ID /
+ *                    Solana base58 pubkey)
+ *   - `{SUPPLIED}` → user-supplied toAddress from the prepare tool
+ */
+export const DECODED_RECIPIENT_DRIFT_TEMPLATE: string = [
+  "[REFUSED — DECODED RECIPIENT DRIFT]",
+  "  bridge:    {BRIDGE}",
+  "  decoded:   {DECODED}",
+  "  supplied:  {SUPPLIED}",
+  "  reason:    The recipient encoded in the bridge calldata does not match the",
+  "             address you supplied to the prepare tool. This may indicate a",
+  "             compromised agent rewriting the destination inside opaque calldata.",
+  "  action:    Do NOT sign. Re-verify the transaction and re-prepare if the",
+  "             recipient should be {SUPPLIED}.",
+].join("\n");
