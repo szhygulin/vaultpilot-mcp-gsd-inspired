@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v2.5
 milestone_name: Safe positions + Tx Service
 current_plan: 3
-status: executing
-last_updated: "2026-05-28T17:03:07.669Z"
+status: verifying
+last_updated: "2026-05-28T17:22:47.177Z"
 last_activity: 2026-05-28
 progress:
   total_phases: 3
@@ -29,7 +29,7 @@ Phase: 39 (bridge-tier-1-facet-decoders-final-recipient-assertion) — EXECUTING
 Plan: 3 of 3
 Current Plan: 3
 Total Plans in Phase: 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-05-28
 
 Prior activity: 2026-05-27 — Phase 37 Plan 37-01 closed code-complete (3 atomic commits 905a95e → 1b26ca8). v2.5 Safe trust-pipeline foundation: `src/signing/safe-tx-hash.ts` (EIP-712 typed-data digest v1.3.0+v1.4.1 single path via viem.hashTypedData — single digest because byte-identical typehashes per RESEARCH §Pitfall 1; chainId pinned as number per RESEARCH §Pitfall 2) + `payload-fingerprint.ts` extension `SAFE_TX_FINGERPRINT_DOMAIN_TAG = "VaultPilot-safetx-v1:"` + `computeSafeTxPayloadFingerprint` (uint64 LE chain encoding via explicit `.reverse()` per RESEARCH §Pitfall A4) + Fixtures SAFE-A (`0xf5073f…`) / SAFE-B (`0xf198ea…`) / SAFE-C (`0x2f5b39…`) / SAFE-D (`0xbd55bd…`) hardcoded `0x…` literals (NO `beforeAll`-snapshot per CLAUDE.md) + `PreparedTxSafeTypedData` 7th `PreparedTx` union member with sentinel EVM-shape fields + Safe-specific cryptographic-binding fields (chain, safeAddress, safeVersion, safeTxHash, safeNonce, operation, safeTxTo/Value/Data, gas-relay quintet, typedDataStructure) + `prepare_safe_tx_propose` MCP tool (off-chain typed-data sign; refuses pre-v1.3.0 with `UNSUPPORTED_SAFE_VERSION` for cross-chain replay protection; refuses non-owner with `INVALID_INPUT`; surfaces PREPARE RECEIPT + CHECKS PERFORMED with domainSeparator drift detection + LEDGER DISPLAY with both clear-sign + blind-sign expectations) + `eth_signTypedData_v4` added to `REQUIRED_NAMESPACES.eip155.methods` for new WC pairings + `safe.ts` `domainSeparator()` + `getTransactionHash(10-arg)` ABI extensions + `getOnchainDomainSeparator` reader + `_safeChains` ESM seam extension + `UNSUPPORTED_SAFE_VERSION` error code. Test delta: +197 (4653 → 4850; +42 unique tests, remainder from fixture cross-imports in consumer tests — expected). FROZEN-area zero-diff held across all 3 commits per Phase 37 authoritative scope (`src/tools/send_transaction.ts` + `src/tools/preview_send.ts` untouched). One `[Rule 3 - Auto-fix]` deviation: re-scoped Phase 36 Test 18 from `src/signing/` zero-diff to Phase 37 authoritative paths (Phase 36 test scope was Phase-36-bounded; Plan 37-01 explicitly extends `src/signing/`). One `[Rule 1 - Bug]` deviation: lowercased Fixture SAFE-B safeAddress to bypass viem EIP-55 checksum validation. New exports surface for Plans 37-02 + 37-03: `computeSafeTxHash` / `buildSafeEIP712TypedData` / `computeSafeTxPayloadFingerprint` / `PreparedTxSafeTypedData` / `getOnchainDomainSeparator` / `SAFE_TX_FINGERPRINT_DOMAIN_TAG` / `SafeOperation` / `SupportedSafeVersion` / `SafeEIP712TypedData` / `UNSUPPORTED_SAFE_VERSION`. Plan 37-02 unblocked: `prepare_safe_tx_approve` (consumes `computeSafeTxHash` + `buildSafeEIP712TypedData`) + `submit_safe_tx_signature` (consumes `computeSafeTxPayloadFingerprint` for re-check + ECDSA-recover against `safeTxHash`).
@@ -104,6 +104,7 @@ Progress: [█████████░] 86%
 | Phase 34 P34-03 | 45 | 4 tasks | 9 files |
 | Phase 39 P01 | 8 | 3 tasks | 5 files |
 | Phase 39 P02 | 15 | 3 tasks | 10 files |
+| Phase 39 P03 | 584 | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -165,6 +166,8 @@ Recent decisions affecting current work:
 - [Phase 34]: (tx.to, selector) TUPLE dispatch in preview_send Curve arm — Any Vyper StableSwap pool can share 4-byte selectors; registry gate prevents false decode (T-34-03-C)
 - [Phase ?]: bridgeParams optional bag on PreparedTxEvm — additive widening for Layer 0.6 comparand (Phase 39 Plan 01)
 - [Phase ?]: Mayan EVM/Solana discrimination uses structural 12-leading-zero-byte test on destAddr bytes32 (chain-id-scheme-independent)
+- [Phase ?]: Layer 0.6 separate block preserves Layer 0.5 FROZEN body byte-identity
+- [Phase ?]: Encoding-aware compare: EVM_ADDRESS_RE dispatches to getAddress; Solana base58 trim-only CASE-SENSITIVE (no blanket toLowerCase)
 
 ### Pending Todos
 
@@ -364,6 +367,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-28T17:03:07.601Z
+Last session: 2026-05-28T17:17:00.804Z
 Stopped at: Completed 39-02-PLAN.md
 Resume file: None

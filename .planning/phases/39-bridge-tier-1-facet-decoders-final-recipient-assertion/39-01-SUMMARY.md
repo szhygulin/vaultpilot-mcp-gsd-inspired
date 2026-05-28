@@ -118,3 +118,14 @@ None — no external service configuration required.
 ---
 *Phase: 39-bridge-tier-1-facet-decoders-final-recipient-assertion*
 *Completed: 2026-05-28*
+
+## Self-Check: PASSED
+
+- FOUND: `src/protocols/bridge-decoders/index.ts`
+- FOUND: `test/bridge-decoders-index.test.ts`
+- FOUND: `.planning/phases/39-bridge-tier-1-facet-decoders-final-recipient-assertion/39-01-SUMMARY.md`
+- FOUND: commit `ef94a7e` (Task 1)
+- FOUND: commit `5385b61` (Task 2)
+- FOUND: commit `4dc4ab6` (Task 3 RED)
+- FOUND: commit `08dfe11` (Task 3 GREEN)
+- FOUND: commit `200cfd7` (metadata)
