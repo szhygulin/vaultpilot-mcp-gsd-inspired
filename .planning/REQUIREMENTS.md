@@ -122,7 +122,7 @@ Closes the residual-risk gaps documented in SECURITY.md. Three distinct verifica
 
 ## v1.4 Requirements (Distribution + ergonomics)
 
-- [ ] **DIST-40**: Bundled binary distribution per platform (linux-x64, linux-arm64 [via npm-fallback message], macos-x64, macos-arm64, windows-x64)
+- [x] **DIST-40**: Bundled binary distribution per platform (linux-x64, linux-arm64 [via npm-fallback message], macos-x64, macos-arm64, windows-x64)
 - [ ] **DIST-41**: `install.sh` (bash) + `install.ps1` (PowerShell) installers download from GitHub releases, register with detected MCP clients, emit `InstallEnvelope`
 - [ ] **DIST-42**: `vaultpilot-mcp setup` interactive wizard validates RPC keys, optionally pairs Ledger, writes `~/.vaultpilot-mcp/config.json`
 - [ ] **DIST-43**: `request_capability({ title, body })` produces a pre-filled GitHub issue URL (rate-limited 3/hour); no auto-submit by default
