@@ -1188,10 +1188,10 @@ Small, scoped follow-ups deferred out of already-shipped phases. Each is sized a
   7. SECURITY.md `## v1.4 Residual Risks (Distribution)` is reconciled if the fix changes the supply-chain/runtime-resolution posture (e.g. SEA backend swap); otherwise unchanged
   8. The v1.4.0 GA tag is no longer blocked by this regression — documented as resolved in the phase SUMMARY with the GA gate cleared (the real-binary smoke remains a deferred hardware/cross-platform verify item, captured as HUMAN-UAT, not a blocker for code-completion)
 
-**Plans:** 0 plans (run /gsd-plan-phase 42 to break down)
+**Plans:** 1 plan
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 42 to break down)
+- [ ] 42-01-PLAN.md — pkg.sea=true + tronweb CJS-forcing patch (patches/tronweb+6.3.0.patch) + tronweb pin 6.3.0 + empirical linux-x64 binary smoke (--version + MCP stdio handshake) + FROZEN zero-diff gate
 
 ---
 
