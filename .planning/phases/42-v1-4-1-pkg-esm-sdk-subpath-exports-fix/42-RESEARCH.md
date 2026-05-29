@@ -474,21 +474,24 @@ The SEA mode change does not introduce new attack surface. The binary supply-cha
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Are there other ESM/CJS interop failures after tronweb is patched?**
    - What we know: Checked major deps (@walletconnect, viem, bitcoinjs-lib, @solana, @ledgerhq); no obvious bignumber-pattern failures.
    - What's unclear: Packages not directly inspected may have similar issues.
    - Recommendation: Run the full smoke test. If new errors appear, apply additional patches using the same pattern.
+   - **RESOLVED (planned):** Plan 42-01 Task 3 runs the empirical binary smoke; Task 4 is a bounded `checkpoint:human-verify` contingency that patches further interop failures the same way, escalating on >~3 deps or any FROZEN `src/` touch.
 
 2. **Does the SEA build work cross-platform (macOS-arm64, Windows-x64)?**
    - What we know: Tested linux-x64 empirically. Cross-compile uses the same SEA injection mechanism via pkg-fetch per-target Node binaries.
    - What's unclear: Platform-specific module loading behavior may differ.
    - Recommendation: Run `npm run build:binary:macos-arm64` + `npm run build:binary:windows-x64` in the release workflow and verify the binaries in the CI log. The existing release.yml will exercise all 4 targets.
+   - **RESOLVED (deferred):** Cross-target SEA binaries are deferred to HUMAN-UAT / CI per Phase 42 Success Criterion #8 — not a code-completion blocker; linux-x64 is the code-completion target.
 
 3. **Should `tronweb` be pinned to exactly `6.3.0` or use `^6.3.0` with a note?**
    - What we know: patch-package version matching requires the installed version to match the patch filename.
    - Recommendation: Pin to `6.3.0` (exact) in package.json. Small but necessary.
+   - **RESOLVED (planned):** Plan 42-01 Task 1 pins `tronweb` to exact `6.3.0`.
 
 ---
 
