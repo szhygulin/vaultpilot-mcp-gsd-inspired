@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v2.5
 milestone_name: Safe positions + Tx Service
 current_plan: 2
-status: executing
-last_updated: "2026-05-29T06:14:03.870Z"
+status: verifying
+last_updated: "2026-05-29T06:44:31.210Z"
 last_activity: 2026-05-29
 progress:
   total_phases: 3
@@ -29,7 +29,7 @@ Phase: 41 (compound-v3-multi-chain-expansion-polygon-arbitrum-base-opti) — EXE
 Plan: 2 of 2
 Current Plan: 2
 Total Plans in Phase: 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-05-29
 
 Prior activity: 2026-05-27 — Phase 37 Plan 37-01 closed code-complete (3 atomic commits 905a95e → 1b26ca8). v2.5 Safe trust-pipeline foundation: `src/signing/safe-tx-hash.ts` (EIP-712 typed-data digest v1.3.0+v1.4.1 single path via viem.hashTypedData — single digest because byte-identical typehashes per RESEARCH §Pitfall 1; chainId pinned as number per RESEARCH §Pitfall 2) + `payload-fingerprint.ts` extension `SAFE_TX_FINGERPRINT_DOMAIN_TAG = "VaultPilot-safetx-v1:"` + `computeSafeTxPayloadFingerprint` (uint64 LE chain encoding via explicit `.reverse()` per RESEARCH §Pitfall A4) + Fixtures SAFE-A (`0xf5073f…`) / SAFE-B (`0xf198ea…`) / SAFE-C (`0x2f5b39…`) / SAFE-D (`0xbd55bd…`) hardcoded `0x…` literals (NO `beforeAll`-snapshot per CLAUDE.md) + `PreparedTxSafeTypedData` 7th `PreparedTx` union member with sentinel EVM-shape fields + Safe-specific cryptographic-binding fields (chain, safeAddress, safeVersion, safeTxHash, safeNonce, operation, safeTxTo/Value/Data, gas-relay quintet, typedDataStructure) + `prepare_safe_tx_propose` MCP tool (off-chain typed-data sign; refuses pre-v1.3.0 with `UNSUPPORTED_SAFE_VERSION` for cross-chain replay protection; refuses non-owner with `INVALID_INPUT`; surfaces PREPARE RECEIPT + CHECKS PERFORMED with domainSeparator drift detection + LEDGER DISPLAY with both clear-sign + blind-sign expectations) + `eth_signTypedData_v4` added to `REQUIRED_NAMESPACES.eip155.methods` for new WC pairings + `safe.ts` `domainSeparator()` + `getTransactionHash(10-arg)` ABI extensions + `getOnchainDomainSeparator` reader + `_safeChains` ESM seam extension + `UNSUPPORTED_SAFE_VERSION` error code. Test delta: +197 (4653 → 4850; +42 unique tests, remainder from fixture cross-imports in consumer tests — expected). FROZEN-area zero-diff held across all 3 commits per Phase 37 authoritative scope (`src/tools/send_transaction.ts` + `src/tools/preview_send.ts` untouched). One `[Rule 3 - Auto-fix]` deviation: re-scoped Phase 36 Test 18 from `src/signing/` zero-diff to Phase 37 authoritative paths (Phase 36 test scope was Phase-36-bounded; Plan 37-01 explicitly extends `src/signing/`). One `[Rule 1 - Bug]` deviation: lowercased Fixture SAFE-B safeAddress to bypass viem EIP-55 checksum validation. New exports surface for Plans 37-02 + 37-03: `computeSafeTxHash` / `buildSafeEIP712TypedData` / `computeSafeTxPayloadFingerprint` / `PreparedTxSafeTypedData` / `getOnchainDomainSeparator` / `SAFE_TX_FINGERPRINT_DOMAIN_TAG` / `SafeOperation` / `SupportedSafeVersion` / `SafeEIP712TypedData` / `UNSUPPORTED_SAFE_VERSION`. Plan 37-02 unblocked: `prepare_safe_tx_approve` (consumes `computeSafeTxHash` + `buildSafeEIP712TypedData`) + `submit_safe_tx_signature` (consumes `computeSafeTxPayloadFingerprint` for re-check + ECDSA-recover against `safeTxHash`).
@@ -107,6 +107,7 @@ Progress: [█████████░] 86%
 | Phase 39 P03 | 584 | 3 tasks | 3 files |
 | Phase 40-mev-sandwich-slippage-hint-per-l2 P01 | 15 | 3 tasks | 11 files |
 | Phase 41 P41-01 | 12 | 2 tasks | 2 files |
+| Phase 41 P41-02 | 20 | 3 tasks | 21 files |
 
 ## Accumulated Context
 
@@ -175,6 +176,9 @@ Recent decisions affecting current work:
 - [Phase ?]: distinct key avoids symbol confusion
 - [Phase ?]: Gauntlet Dec-2024 deprecation, ~2k TVL
 - [Phase ?]: stale count comment left intentionally
+- [Phase ?]: Removed chainName !== ethereum hard-gates from all 6 Compound tool files; chain enum widened to all 5 supported chains
+- [Phase ?]: Removed record.tx.chainId === 1 guard from isCompoundComet in preview_send.ts so LEDGER NOTICE fires on L2 Compound transactions
+- [Phase ?]: Hardcoded 4 L2 payloadFingerprint fixtures as 0x literals per CLAUDE.md fixture-pinning rule
 
 ### Pending Todos
 
@@ -374,6 +378,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-29T06:14:03.858Z
-Stopped at: Completed 40-01-PLAN.md (MEV-01 v2.6 close-out)
+Last session: 2026-05-29T06:44:31.198Z
+Stopped at: Completed 41-02-PLAN.md
 Resume file: None

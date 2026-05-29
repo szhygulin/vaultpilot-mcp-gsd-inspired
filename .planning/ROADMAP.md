@@ -1150,7 +1150,7 @@ Plans:
 
 Plans:
 - [x] 41-01-PLAN.md — SOT extension: 13 verified L2 Comet rows into `COMPOUND_COMETS_RAW` (Arbitrum 4 / Polygon 2 / Base 4 / Optimism 3) + widen `CompoundCometBase` with `USDC.e` + `AERO` + cross-chain-coincidence / USDbC-exclusion / WETH-consistency comments + per-chain config-contracts assertions
-- [ ] 41-02-PLAN.md — tool chain-gate removal (4 prepare tools + `get_compound_market_info` enum + `get_lending_positions` + `simulate_position_change` chainId guards) + cross-chain distinctness Fixtures `FIXTURE_CMP_{ARB,BASE,OPT,POLY}_A` + NEW `canonical-dispatch-compound-l2.test.ts` + per-L2 lifecycle integration round-trips
+- [x] 41-02-PLAN.md — tool chain-gate removal (4 prepare tools + `get_compound_market_info` enum + `get_lending_positions` + `simulate_position_change` chainId guards) + cross-chain distinctness Fixtures `FIXTURE_CMP_{ARB,BASE,OPT,POLY}_A` + NEW `canonical-dispatch-compound-l2.test.ts` + per-L2 lifecycle integration round-trips
 
 ---
 
