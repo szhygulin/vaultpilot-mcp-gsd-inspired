@@ -18,6 +18,7 @@ The journey: a working trust pipeline first (one chain, one signing flow, end-to
 - 📋 **v2.4 EVM DEX + LP + escape hatch** — Phases 32-35 planned (Uniswap V3 swap / Uniswap V3 LP / Curve / `prepare_custom_call`)
 - 📋 **v2.5 Safe (Gnosis) multisig** — Phases 36-38 planned (Safe positions + Tx Service / three-step signing flow / `enableModule` + `delegateCall` hard-trigger second-LLM)
 - 📋 **v2.6 Bridge facet decoders + cross-chain hardening** — Phases 39-40 planned (Tier-1 facet decoders + Inv #6b final-recipient assertion / sandwich-MEV per-L2 thresholds; Tier-2 facets explicitly deferred)
+- 📋 **v2.3.x multi-chain Compound (deferred follow-up)** — Phase 41 (lift the Phase 28 deferral — Compound V3 lifecycle on Polygon / Arbitrum / Base / Optimism Comets; additive port, Ethereum byte-identical)
 - 📋 **v3.0** — Hosted MCP (HTTP/SSE / OAuth)
 - 📋 **v3.1** — NFT reads (portfolio / collection / history / listings)
 - 📋 **v3.2** — Contacts + read-only sharing
@@ -1125,6 +1126,31 @@ Plans:
 - [x] 40-01-PLAN.md — per-chain `src/config/sandwich-mev-thresholds.ts` SOT + `getSandwichThresholds` resolver + `MEV_THRESHOLD_<CHAIN>` env override + `SANDWICH_MEV_REFUSED` errorCode; migrate Uniswap (per-chain threshold + errorcode) & SunSwap (errorcode) sandwich gates; Curve gate-free note + regression; `get_uniswap_quote` warning tracks SOT; SECURITY.md per-L2 MEV section + v2.6 milestone close-out
 
 **Status**: planning; v2.6 verify-phase requires real-Ledger smoke for each Tier-1 facet decoder against a small mainnet bridge transaction (with a known-good final recipient) + a per-L2 swap against each configured chain to exercise the per-chain threshold.
+
+### 📋 v2.3.x multi-chain Compound (deferred follow-up) (Phase 41)
+
+**Milestone Goal:** Lift the Phase 28 deferral — extend the Compound V3 lifecycle (already chain-parameterized from the Phase 8 multi-EVM fan-out) from Ethereum-only Comets to the four L2s where Compound III is deployed: Polygon, Arbitrum, Base, Optimism. Pure additive port: per-chain Comet data into the `COMPOUND_COMETS_RAW` sibling sub-table, per-chain canonical-dispatch arms, per-chain regression coverage. Ethereum behavior stays byte-identical (Fixtures R/S/T/U are the regression anchors). No new tools, no new error codes — the 21-code union stays FROZEN.
+
+#### Phase 41: Compound V3 multi-chain expansion (Polygon / Arbitrum / Base / Optimism)
+
+**Goal**: The existing Compound V3 tools (`get_compound_positions` / `get_compound_market_info` / `prepare_compound_supply` / `_withdraw` / `_borrow` / `_repay` / `simulate_position_change`) operate against Polygon, Arbitrum, Base, and Optimism Comets, sourced from the `COMPOUND_COMETS_RAW` sibling sub-table and gated by per-chain canonical-dispatch. Ethereum behavior is byte-identical.
+**Depends on**: Phase 28 (Compound V3 Ethereum) — and current `main` (v2.6 close-out)
+**Requirements**: CMP-01, CMP-02, CMP-03, CMP-04, CMP-05, CMP-06 (multi-chain extension)
+**Success Criteria** (what must be TRUE):
+
+  1. `COMPOUND_COMETS_RAW` extended with verified Comet deployments for Polygon / Arbitrum / Base / Optimism — addresses + base assets cross-verified against `compound-finance/comet/deployments/` at planning time (per-chain Comet maturity re-verified at dispatch time per the Phase 28 deferral note)
+  2. `get_compound_positions({ wallet, chain })` + `get_compound_market_info({ chain, cometAddress })` return per-Comet data on all four L2s
+  3. `prepare_compound_supply` / `_withdraw` / `_borrow` / `_repay` produce unsigned Comet calls on all four L2s; `chain` required (no default-pick); intent-vs-reality gates (`deriveIntent` server-side RPC reads) fire per chain against the correct per-chain RPC
+  4. Per-chain canonical-dispatch allowlist arms (Polygon / Arbitrum / Base / Optimism) extended with the new Comet addresses — additive; FROZEN region byte-identical
+  5. `MAX_UINT256` repay-all sentinel + `INVALID_INPUT + hintTool` refusal pattern behave identically across all chains (no error-code additions; 21-code union FROZEN)
+  6. Ethereum Compound behavior unchanged — Phase 28 Fixtures R / S / T / U remain byte-identical regression anchors; cross-chain fingerprint distinctness asserted (same Comet shape on different chains yields distinct `payloadFingerprint`)
+  7. Per-chain dispatch-coverage tests added (each new Comet address resolves through `checkDispatchTarget` on its chain); cryptographic-binding FROZEN-area zero-diff held
+
+**Plans**: 2 plans
+
+Plans:
+- [ ] 41-01-PLAN.md — SOT extension: 13 verified L2 Comet rows into `COMPOUND_COMETS_RAW` (Arbitrum 4 / Polygon 2 / Base 4 / Optimism 3) + widen `CompoundCometBase` with `USDC.e` + `AERO` + cross-chain-coincidence / USDbC-exclusion / WETH-consistency comments + per-chain config-contracts assertions
+- [ ] 41-02-PLAN.md — tool chain-gate removal (4 prepare tools + `get_compound_market_info` enum + `get_lending_positions` + `simulate_position_change` chainId guards) + cross-chain distinctness Fixtures `FIXTURE_CMP_{ARB,BASE,OPT,POLY}_A` + NEW `canonical-dispatch-compound-l2.test.ts` + per-L2 lifecycle integration round-trips
 
 ---
 
