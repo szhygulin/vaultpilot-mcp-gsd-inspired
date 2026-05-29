@@ -2,12 +2,13 @@ diff --git a/node_modules/tronweb/package.json b/node_modules/tronweb/package.js
 index 37c45ed..e04225d 100644
 --- a/node_modules/tronweb/package.json
 +++ b/node_modules/tronweb/package.json
-@@ -12,8 +12,8 @@
+@@ -12,8 +12,9 @@
      ],
      "exports": {
          ".": {
 -            "import": "./lib/esm/index.js",
 -            "require": "./lib/commonjs/index.js"
++            "types": "./lib/esm/index.d.ts",
 +            "require": "./lib/commonjs/index.js",
 +            "default": "./lib/commonjs/index.js"
          },
