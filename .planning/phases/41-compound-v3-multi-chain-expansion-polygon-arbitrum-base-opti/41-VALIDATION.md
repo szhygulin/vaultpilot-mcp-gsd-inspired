@@ -1,9 +1,9 @@
 ---
 phase: 41
 slug: compound-v3-multi-chain-expansion-polygon-arbitrum-base-opti
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: approved
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-05-29
 ---
 
@@ -52,8 +52,10 @@ created: 2026-05-29
 
 ## Wave 0 Requirements
 
-- [ ] `test/canonical-dispatch-compound-l2.test.ts` — NEW dispatch-coverage test file (Plan 41-02)
-- [ ] `test/signing-fingerprint.test.ts` fixtures `FIXTURE_CMP_ARB_A` / `FIXTURE_CMP_BASE_A` / `FIXTURE_CMP_OPT_A` / `FIXTURE_CMP_POLY_A` — 4 new hardcoded `0x…` literals (Plan 41-02)
+**No separate Wave 0 for this phase.** This is an additive multi-chain port — the new test artifacts are written *alongside* the code they regress, not as a pre-existing failing-test scaffold. Both items below are OUTPUTS of Plan 41-02 Task 2 (tests-with-code), not prerequisites that must pre-exist; `wave_0_complete: true` reflects that there is no scaffolding debt to discharge before execution:
+
+- `test/canonical-dispatch-compound-l2.test.ts` — NEW dispatch-coverage test file (created in Plan 41-02 Task 2)
+- `test/signing-fingerprint.test.ts` fixtures `FIXTURE_CMP_ARB_A` / `FIXTURE_CMP_BASE_A` / `FIXTURE_CMP_OPT_A` / `FIXTURE_CMP_POLY_A` — 4 new hardcoded `0x…` literals (added in Plan 41-02 Task 2; pinned via the RED→capture→GREEN fixture workflow, NOT beforeAll-snapshot)
 
 *Existing infrastructure (`test/config-contracts.test.ts`, `test/signing-fingerprint.test.ts`, `test/compound-v3-lifecycle.integration.test.ts`) covers the remaining requirements by extension.*
 
@@ -69,11 +71,11 @@ created: 2026-05-29
 
 ## Validation Sign-Off
 
-- [ ] All tasks have automated verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references (the 1 new test file + 4 fixtures)
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 10s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have automated verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references (the 1 new test file + 4 fixtures are Plan 41-02 Task 2 outputs)
+- [x] No watch-mode flags
+- [x] Feedback latency < 10s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-05-29

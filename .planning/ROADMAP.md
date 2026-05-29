@@ -1146,10 +1146,11 @@ Plans:
   6. Ethereum Compound behavior unchanged — Phase 28 Fixtures R / S / T / U remain byte-identical regression anchors; cross-chain fingerprint distinctness asserted (same Comet shape on different chains yields distinct `payloadFingerprint`)
   7. Per-chain dispatch-coverage tests added (each new Comet address resolves through `checkDispatchTarget` on its chain); cryptographic-binding FROZEN-area zero-diff held
 
-**Plans**: 2-3 plans (estimate; planner refines)
+**Plans**: 2 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 41 to break down)
+- [ ] 41-01-PLAN.md — SOT extension: 13 verified L2 Comet rows into `COMPOUND_COMETS_RAW` (Arbitrum 4 / Polygon 2 / Base 4 / Optimism 3) + widen `CompoundCometBase` with `USDC.e` + `AERO` + cross-chain-coincidence / USDbC-exclusion / WETH-consistency comments + per-chain config-contracts assertions
+- [ ] 41-02-PLAN.md — tool chain-gate removal (4 prepare tools + `get_compound_market_info` enum + `get_lending_positions` + `simulate_position_change` chainId guards) + cross-chain distinctness Fixtures `FIXTURE_CMP_{ARB,BASE,OPT,POLY}_A` + NEW `canonical-dispatch-compound-l2.test.ts` + per-L2 lifecycle integration round-trips
 
 ---
 

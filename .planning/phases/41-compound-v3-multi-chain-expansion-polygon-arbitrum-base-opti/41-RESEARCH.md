@@ -594,19 +594,20 @@ call `getAllCompoundCometsForChain(42161)` etc., which return `[]` until 41-01 m
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Include AERO Comet on Base?**
+> All three resolved at the planning gate (2026-05-29) by the orchestrator per the Phase 41 locked-scope decisions. Recorded here for audit trail.
+
+1. **Include AERO Comet on Base?** — **RESOLVED: INCLUDED.**
    - What we know: `0x784efeB622244d2348d4F2522f8860B96fbEcE89`, base token AERO (18 dec), active and deployed
-   - What's unclear: Whether the project intends to support volatile-base-asset Comets at this stage
-   - Recommendation: Include it — code complexity is identical; it just adds one address to the Base dispatch arm. The `LEDGER_NOTICE_COMPOUND_TEMPLATE` fires for all Compound interactions anyway.
+   - Decision: Include it — code complexity is identical; it just adds one address to the Base dispatch arm. The `LEDGER_NOTICE_COMPOUND_TEMPLATE` fires for all Compound interactions anyway. SOT row carries a "volatile base asset" comment.
 
-2. **Exclude deprecated Base USDbC Comet?**
+2. **Exclude deprecated Base USDbC Comet?** — **RESOLVED: EXCLUDED.**
    - What we know: In deprecation since Gauntlet Dec 2024 recommendation, TVL ~$82k
-   - Recommendation: Exclude — permanent SOT entry for a market being shut down creates long-term maintenance burden. If a user has an existing USDbC position they need to exit, they can use `prepare_custom_call` (Phase 35).
+   - Decision: Exclude — permanent SOT entry for a market being shut down creates long-term maintenance burden. Users with an existing USDbC position exit via the `prepare_custom_call` escape hatch (Phase 35). SOT carries a deliberate-exclusion comment; a Task-2 negative assertion proves the address is absent from the Base dispatch arm.
 
-3. **`USDC.e` as a `CompoundCometBase` key vs reusing `"USDC"` for bridged markets**
-   - Recommendation: Use `"USDC.e"` as a distinct key. On Polygon specifically, the market is bridged and the user may have native USDC in their wallet expecting to supply it to the USDC Comet — the `deriveIntent` gate would correctly classify native USDC as collateral (not base token supply), but the agent's description of the market would be confusing. A distinct type key at the SOT level makes the distinction explicit.
+3. **`USDC.e` as a `CompoundCometBase` key vs reusing `"USDC"` for bridged markets** — **RESOLVED: distinct `"USDC.e"` key adopted.**
+   - Decision: Use `"USDC.e"` as a distinct key for both the Arbitrum legacy bridged market and the Polygon market (whose "usdc" Comet base token IS bridged USDC.e `0x2791…`, not native USDC). On Polygon specifically, the user may have native USDC in their wallet expecting to supply it to the USDC Comet — the `deriveIntent` gate would correctly classify native USDC as collateral, but a distinct type key at the SOT level makes the distinction explicit and prevents symbol confusion.
 
 ---
 
