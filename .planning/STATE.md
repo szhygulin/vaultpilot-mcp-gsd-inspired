@@ -2,10 +2,9 @@
 gsd_state_version: 1.0
 milestone: v2.6
 milestone_name: Bridge facet decoders + cross-chain hardening
-current_plan: null
-status: maintenance
-last_updated: "2026-05-29T18:00:00.000Z"
-last_activity: 2026-05-29
+status: executing
+last_updated: "2026-05-29T08:42:58.390Z"
+last_activity: 2026-05-29 -- Phase 42 execution started
 progress:
   total_phases: 2
   completed_phases: 2
@@ -21,16 +20,17 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-12)
 
 **Core value:** The user trusts what the Ledger screen shows — nothing else. Tampering at any layer between the agent and the device produces a visible mismatch on-screen before signing.
-**Current focus:** Maintenance — all numbered milestones (v1.0–v2.6) plus the v2.3.x Phase 41 Compound multi-chain backfill are code-complete and merged. Next active work = the Deferred Backlog (planned follow-ups) in ROADMAP.md.
+**Current focus:** Phase 42 — v1-4-1-pkg-esm-sdk-subpath-exports-fix
 
 ## Current Position
 
 Milestone: v2.6 (Bridge facet decoders + cross-chain hardening) — COMPLETE (Phases 39-40 merged, #160 / #162)
-Phase: none in flight
-Status: maintenance — all numbered milestones v1.0–v2.6 are code-complete; the v2.3.x Phase 41 Compound multi-chain backfill merged (#164, 49f7641)
+Phase: 42 (v1-4-1-pkg-esm-sdk-subpath-exports-fix) — EXECUTING
+Plan: 1 of 1
+Status: Executing Phase 42
 Next work: Deferred Backlog (planned follow-ups) — see ROADMAP.md "Deferred Backlog" section (5 scoped items; v1.4.1 pkg ESM fix has highest leverage)
 Real-Ledger verify-phases remain deferred across v1.x–v2.x (per-phase *-HUMAN-UAT.md; cross-phase view via /gsd-audit-uat) — hardware-test debt, not feature backlog
-Last activity: 2026-05-29
+Last activity: 2026-05-29 -- Phase 42 execution started
 
 Prior activity: 2026-05-27 — Phase 37 Plan 37-01 closed code-complete (3 atomic commits 905a95e → 1b26ca8). v2.5 Safe trust-pipeline foundation: `src/signing/safe-tx-hash.ts` (EIP-712 typed-data digest v1.3.0+v1.4.1 single path via viem.hashTypedData — single digest because byte-identical typehashes per RESEARCH §Pitfall 1; chainId pinned as number per RESEARCH §Pitfall 2) + `payload-fingerprint.ts` extension `SAFE_TX_FINGERPRINT_DOMAIN_TAG = "VaultPilot-safetx-v1:"` + `computeSafeTxPayloadFingerprint` (uint64 LE chain encoding via explicit `.reverse()` per RESEARCH §Pitfall A4) + Fixtures SAFE-A (`0xf5073f…`) / SAFE-B (`0xf198ea…`) / SAFE-C (`0x2f5b39…`) / SAFE-D (`0xbd55bd…`) hardcoded `0x…` literals (NO `beforeAll`-snapshot per CLAUDE.md) + `PreparedTxSafeTypedData` 7th `PreparedTx` union member with sentinel EVM-shape fields + Safe-specific cryptographic-binding fields (chain, safeAddress, safeVersion, safeTxHash, safeNonce, operation, safeTxTo/Value/Data, gas-relay quintet, typedDataStructure) + `prepare_safe_tx_propose` MCP tool (off-chain typed-data sign; refuses pre-v1.3.0 with `UNSUPPORTED_SAFE_VERSION` for cross-chain replay protection; refuses non-owner with `INVALID_INPUT`; surfaces PREPARE RECEIPT + CHECKS PERFORMED with domainSeparator drift detection + LEDGER DISPLAY with both clear-sign + blind-sign expectations) + `eth_signTypedData_v4` added to `REQUIRED_NAMESPACES.eip155.methods` for new WC pairings + `safe.ts` `domainSeparator()` + `getTransactionHash(10-arg)` ABI extensions + `getOnchainDomainSeparator` reader + `_safeChains` ESM seam extension + `UNSUPPORTED_SAFE_VERSION` error code. Test delta: +197 (4653 → 4850; +42 unique tests, remainder from fixture cross-imports in consumer tests — expected). FROZEN-area zero-diff held across all 3 commits per Phase 37 authoritative scope (`src/tools/send_transaction.ts` + `src/tools/preview_send.ts` untouched). One `[Rule 3 - Auto-fix]` deviation: re-scoped Phase 36 Test 18 from `src/signing/` zero-diff to Phase 37 authoritative paths (Phase 36 test scope was Phase-36-bounded; Plan 37-01 explicitly extends `src/signing/`). One `[Rule 1 - Bug]` deviation: lowercased Fixture SAFE-B safeAddress to bypass viem EIP-55 checksum validation. New exports surface for Plans 37-02 + 37-03: `computeSafeTxHash` / `buildSafeEIP712TypedData` / `computeSafeTxPayloadFingerprint` / `PreparedTxSafeTypedData` / `getOnchainDomainSeparator` / `SAFE_TX_FINGERPRINT_DOMAIN_TAG` / `SafeOperation` / `SupportedSafeVersion` / `SafeEIP712TypedData` / `UNSUPPORTED_SAFE_VERSION`. Plan 37-02 unblocked: `prepare_safe_tx_approve` (consumes `computeSafeTxHash` + `buildSafeEIP712TypedData`) + `submit_safe_tx_signature` (consumes `computeSafeTxPayloadFingerprint` for re-check + ECDSA-recover against `safeTxHash`).
 
