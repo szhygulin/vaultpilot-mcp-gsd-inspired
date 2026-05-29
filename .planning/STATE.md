@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v2.6
 milestone_name: Bridge facet decoders + cross-chain hardening
-status: executing
-last_updated: "2026-05-29T08:42:58.390Z"
-last_activity: 2026-05-29 -- Phase 42 execution started
+status: verifying
+last_updated: "2026-05-29T09:29:13.119Z"
+last_activity: 2026-05-29
 progress:
   total_phases: 2
   completed_phases: 2
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-05-12)
 ## Current Position
 
 Milestone: v2.6 (Bridge facet decoders + cross-chain hardening) — COMPLETE (Phases 39-40 merged, #160 / #162)
-Phase: 42 (v1-4-1-pkg-esm-sdk-subpath-exports-fix) — EXECUTING
-Plan: 1 of 1
-Status: Executing Phase 42
-Next work: Deferred Backlog (planned follow-ups) — see ROADMAP.md "Deferred Backlog" section (5 scoped items; v1.4.1 pkg ESM fix has highest leverage)
+Phase: 42 (v1-4-1-pkg-esm-sdk-subpath-exports-fix) — COMPLETE (Plan 42-01 code-complete; PR pending)
+Plan: 1 of 1 — DONE
+Status: Phase complete; v1.4.0 GA binary tag unblocked
+Next work: PR creation for Phase 42 + cross-platform binary UAT (macOS-arm64, windows-x64 deferred to HUMAN-UAT)
 Real-Ledger verify-phases remain deferred across v1.x–v2.x (per-phase *-HUMAN-UAT.md; cross-phase view via /gsd-audit-uat) — hardware-test debt, not feature backlog
-Last activity: 2026-05-29 -- Phase 42 execution started
+Last activity: 2026-05-29 — Phase 42 Plan 42-01 closed code-complete (4 atomic commits 57dfa0a → b88b918 + docs commit pending). pkg.sea=true + tronweb CJS patch + 4 iterative interop fixes (rpc-websockets/uuid override, multiformats/uint8arrays CJS scripts, @ledgerhq/* lib scripts, usb/node-hid native prebuilds assets). linux-x64 binary smoke: --version exits 0 (prints 0.0.0), MCP stdio initialize returns clean JSON-RPC. FROZEN zero-diff held: git diff origin/main -- src/ = 0. DIST-40 requirement marked complete.
 
 Prior activity: 2026-05-27 — Phase 37 Plan 37-01 closed code-complete (3 atomic commits 905a95e → 1b26ca8). v2.5 Safe trust-pipeline foundation: `src/signing/safe-tx-hash.ts` (EIP-712 typed-data digest v1.3.0+v1.4.1 single path via viem.hashTypedData — single digest because byte-identical typehashes per RESEARCH §Pitfall 1; chainId pinned as number per RESEARCH §Pitfall 2) + `payload-fingerprint.ts` extension `SAFE_TX_FINGERPRINT_DOMAIN_TAG = "VaultPilot-safetx-v1:"` + `computeSafeTxPayloadFingerprint` (uint64 LE chain encoding via explicit `.reverse()` per RESEARCH §Pitfall A4) + Fixtures SAFE-A (`0xf5073f…`) / SAFE-B (`0xf198ea…`) / SAFE-C (`0x2f5b39…`) / SAFE-D (`0xbd55bd…`) hardcoded `0x…` literals (NO `beforeAll`-snapshot per CLAUDE.md) + `PreparedTxSafeTypedData` 7th `PreparedTx` union member with sentinel EVM-shape fields + Safe-specific cryptographic-binding fields (chain, safeAddress, safeVersion, safeTxHash, safeNonce, operation, safeTxTo/Value/Data, gas-relay quintet, typedDataStructure) + `prepare_safe_tx_propose` MCP tool (off-chain typed-data sign; refuses pre-v1.3.0 with `UNSUPPORTED_SAFE_VERSION` for cross-chain replay protection; refuses non-owner with `INVALID_INPUT`; surfaces PREPARE RECEIPT + CHECKS PERFORMED with domainSeparator drift detection + LEDGER DISPLAY with both clear-sign + blind-sign expectations) + `eth_signTypedData_v4` added to `REQUIRED_NAMESPACES.eip155.methods` for new WC pairings + `safe.ts` `domainSeparator()` + `getTransactionHash(10-arg)` ABI extensions + `getOnchainDomainSeparator` reader + `_safeChains` ESM seam extension + `UNSUPPORTED_SAFE_VERSION` error code. Test delta: +197 (4653 → 4850; +42 unique tests, remainder from fixture cross-imports in consumer tests — expected). FROZEN-area zero-diff held across all 3 commits per Phase 37 authoritative scope (`src/tools/send_transaction.ts` + `src/tools/preview_send.ts` untouched). One `[Rule 3 - Auto-fix]` deviation: re-scoped Phase 36 Test 18 from `src/signing/` zero-diff to Phase 37 authoritative paths (Phase 36 test scope was Phase-36-bounded; Plan 37-01 explicitly extends `src/signing/`). One `[Rule 1 - Bug]` deviation: lowercased Fixture SAFE-B safeAddress to bypass viem EIP-55 checksum validation. New exports surface for Plans 37-02 + 37-03: `computeSafeTxHash` / `buildSafeEIP712TypedData` / `computeSafeTxPayloadFingerprint` / `PreparedTxSafeTypedData` / `getOnchainDomainSeparator` / `SAFE_TX_FINGERPRINT_DOMAIN_TAG` / `SafeOperation` / `SupportedSafeVersion` / `SafeEIP712TypedData` / `UNSUPPORTED_SAFE_VERSION`. Plan 37-02 unblocked: `prepare_safe_tx_approve` (consumes `computeSafeTxHash` + `buildSafeEIP712TypedData`) + `submit_safe_tx_signature` (consumes `computeSafeTxPayloadFingerprint` for re-check + ECDSA-recover against `safeTxHash`).
 
@@ -60,7 +60,7 @@ Prior activity: 2026-05-13 — Quick task 260513-c8e (issue #25 WC session persi
 
 Prior activity: 2026-05-12 — Phase 5 planned + executed. Planning bundle (RESEARCH + VALIDATION + PATTERNS + 3 PLAN files) shipped as PR #18 (PASS after 2 inline plan-checker fixes + 1 accepted residual; Q-CONTRADICTION-PREP Option B + Q-NPM resolved via AskUserQuestion before planning). Then 05-01 (demo state + persona registry + ErrorCode 13→14 with WRONG_MODE + get/set_demo_wallet) shipped as PR #19 (+29 tests, 3 ESM-mechanics deviations). Then 05-02 (Q-CONTRADICTION-PREP Option B — REMOVES demo refusal from prepare_native_send + preview_send; persona address as `from`; integration test re-anchors Fixture A + C under demo `from`) shipped as PR #20 (+9 net tests, zero substantive deviations). Finally 05-03 (DIAG tools + update check + auto-demo NOTICE dispatcher-wrap + INSTRUCTIONS rewrite) shipped as PR #21 (+26 tests, 2 minor deviations; secret-safety audit via 3-sentinel substring scan; dispatcher-wrap at src/server.ts one-change architectural-scope-correct per Phase 4 precedent).
 
-Progress: [█████████░] 86%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -108,6 +108,7 @@ Progress: [█████████░] 86%
 | Phase 40-mev-sandwich-slippage-hint-per-l2 P01 | 15 | 3 tasks | 11 files |
 | Phase 41 P41-01 | 12 | 2 tasks | 2 files |
 | Phase 41 P41-02 | 20 | 3 tasks | 21 files |
+| Phase 42 P01 | 120 | 5 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -380,6 +381,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-29T06:44:31.198Z
+Last session: 2026-05-29T09:29:07.562Z
 Stopped at: Completed 41-02-PLAN.md
 Resume file: None
