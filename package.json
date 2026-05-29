@@ -34,7 +34,8 @@
     ],
     "assets": [
       "package.json"
-    ]
+    ],
+    "sea": true
   },
   "engines": {
     "node": ">=18.17"
@@ -63,7 +64,7 @@
     "bs58": "^5.0.0",
     "bs58check": "^4.0.0",
     "tiny-secp256k1": "^2.2.4",
-    "tronweb": "^6.3.0",
+    "tronweb": "6.3.0",
     "viem": "^2.48.0",
     "zod": "^4.4.3"
   },
