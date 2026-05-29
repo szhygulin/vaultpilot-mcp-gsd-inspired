@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.5
-milestone_name: Safe positions + Tx Service
-current_plan: 2
-status: verifying
-last_updated: "2026-05-29T06:44:31.210Z"
+milestone: v2.6
+milestone_name: Bridge facet decoders + cross-chain hardening
+current_plan: null
+status: maintenance
+last_updated: "2026-05-29T18:00:00.000Z"
 last_activity: 2026-05-29
 progress:
-  total_phases: 3
-  completed_phases: 1
-  total_plans: 8
-  completed_plans: 6
-  percent: 33
+  total_phases: 2
+  completed_phases: 2
+  total_plans: 4
+  completed_plans: 4
+  percent: 100
 ---
 
 # Project State
@@ -21,15 +21,15 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-12)
 
 **Core value:** The user trusts what the Ledger screen shows — nothing else. Tampering at any layer between the agent and the device produces a visible mismatch on-screen before signing.
-**Current focus:** Phase 41 — compound-v3-multi-chain-expansion-polygon-arbitrum-base-opti
+**Current focus:** Maintenance — all numbered milestones (v1.0–v2.6) plus the v2.3.x Phase 41 Compound multi-chain backfill are code-complete and merged. Next active work = the Deferred Backlog (planned follow-ups) in ROADMAP.md.
 
 ## Current Position
 
-Phase: 41 (compound-v3-multi-chain-expansion-polygon-arbitrum-base-opti) — EXECUTING
-Plan: 2 of 2
-Current Plan: 2
-Total Plans in Phase: 2
-Status: Phase complete — ready for verification
+Milestone: v2.6 (Bridge facet decoders + cross-chain hardening) — COMPLETE (Phases 39-40 merged, #160 / #162)
+Phase: none in flight
+Status: maintenance — all numbered milestones v1.0–v2.6 are code-complete; the v2.3.x Phase 41 Compound multi-chain backfill merged (#164, 49f7641)
+Next work: Deferred Backlog (planned follow-ups) — see ROADMAP.md "Deferred Backlog" section (5 scoped items; v1.4.1 pkg ESM fix has highest leverage)
+Real-Ledger verify-phases remain deferred across v1.x–v2.x (per-phase *-HUMAN-UAT.md; cross-phase view via /gsd-audit-uat) — hardware-test debt, not feature backlog
 Last activity: 2026-05-29
 
 Prior activity: 2026-05-27 — Phase 37 Plan 37-01 closed code-complete (3 atomic commits 905a95e → 1b26ca8). v2.5 Safe trust-pipeline foundation: `src/signing/safe-tx-hash.ts` (EIP-712 typed-data digest v1.3.0+v1.4.1 single path via viem.hashTypedData — single digest because byte-identical typehashes per RESEARCH §Pitfall 1; chainId pinned as number per RESEARCH §Pitfall 2) + `payload-fingerprint.ts` extension `SAFE_TX_FINGERPRINT_DOMAIN_TAG = "VaultPilot-safetx-v1:"` + `computeSafeTxPayloadFingerprint` (uint64 LE chain encoding via explicit `.reverse()` per RESEARCH §Pitfall A4) + Fixtures SAFE-A (`0xf5073f…`) / SAFE-B (`0xf198ea…`) / SAFE-C (`0x2f5b39…`) / SAFE-D (`0xbd55bd…`) hardcoded `0x…` literals (NO `beforeAll`-snapshot per CLAUDE.md) + `PreparedTxSafeTypedData` 7th `PreparedTx` union member with sentinel EVM-shape fields + Safe-specific cryptographic-binding fields (chain, safeAddress, safeVersion, safeTxHash, safeNonce, operation, safeTxTo/Value/Data, gas-relay quintet, typedDataStructure) + `prepare_safe_tx_propose` MCP tool (off-chain typed-data sign; refuses pre-v1.3.0 with `UNSUPPORTED_SAFE_VERSION` for cross-chain replay protection; refuses non-owner with `INVALID_INPUT`; surfaces PREPARE RECEIPT + CHECKS PERFORMED with domainSeparator drift detection + LEDGER DISPLAY with both clear-sign + blind-sign expectations) + `eth_signTypedData_v4` added to `REQUIRED_NAMESPACES.eip155.methods` for new WC pairings + `safe.ts` `domainSeparator()` + `getTransactionHash(10-arg)` ABI extensions + `getOnchainDomainSeparator` reader + `_safeChains` ESM seam extension + `UNSUPPORTED_SAFE_VERSION` error code. Test delta: +197 (4653 → 4850; +42 unique tests, remainder from fixture cross-imports in consumer tests — expected). FROZEN-area zero-diff held across all 3 commits per Phase 37 authoritative scope (`src/tools/send_transaction.ts` + `src/tools/preview_send.ts` untouched). One `[Rule 3 - Auto-fix]` deviation: re-scoped Phase 36 Test 18 from `src/signing/` zero-diff to Phase 37 authoritative paths (Phase 36 test scope was Phase-36-bounded; Plan 37-01 explicitly extends `src/signing/`). One `[Rule 1 - Bug]` deviation: lowercased Fixture SAFE-B safeAddress to bypass viem EIP-55 checksum validation. New exports surface for Plans 37-02 + 37-03: `computeSafeTxHash` / `buildSafeEIP712TypedData` / `computeSafeTxPayloadFingerprint` / `PreparedTxSafeTypedData` / `getOnchainDomainSeparator` / `SAFE_TX_FINGERPRINT_DOMAIN_TAG` / `SafeOperation` / `SupportedSafeVersion` / `SafeEIP712TypedData` / `UNSUPPORTED_SAFE_VERSION`. Plan 37-02 unblocked: `prepare_safe_tx_approve` (consumes `computeSafeTxHash` + `buildSafeEIP712TypedData`) + `submit_safe_tx_signature` (consumes `computeSafeTxPayloadFingerprint` for re-check + ECDSA-recover against `safeTxHash`).
@@ -113,6 +113,7 @@ Progress: [█████████░] 86%
 
 ### Roadmap Evolution
 
+- 2026-05-29 — **Milestone-hygiene reconciliation (light reconcile, per .planning/MILESTONE-HYGIENE-PLAN.md)**: STATE frontmatter had drifted to `milestone: v2.5` / `status: verifying` / v2.5-scoped progress while v2.6 (#160 / #162) and the v2.3.x Phase 41 Compound backfill (#164) had already merged; the body still showed Phase 41 "EXECUTING / ready for verification". Reconciled frontmatter to `milestone: v2.6` (last numbered milestone shipped) / `status: maintenance` / milestone-scoped progress 100% (Phases 39-40, 4/4 plans), refreshed Current Position + Current focus to point at the Deferred Backlog as next active work, appended `→ 41` to the ROADMAP Execution-Order line, and corrected the Phases 3/4/5 progress-table rows (they read "Not started 0/N" though the entire downstream codebase depends on them — Phase 4 is the trust pipeline; Phase 5 shipped via PRs #19-21). Chose Option A (light reconcile, ROADMAP kept intact / no MILESTONES.md archival) over Option B (`/gsd-complete-milestone`) because this project ships milestones code-complete with verify-phases deferred and archival tooling may mis-mark open `*-HUMAN-UAT.md` debt. No code touched; docs-only. Note: `gsd-sdk query progress` still shows Phases 1-4 as "Planned" because they predate the SUMMARY.md convention (the I001 health-check notes) — a pre-existing artifact gap, not introduced here.
 - 2026-05-29 — **Phase 41 added (v2.3.x multi-chain Compound, deferred follow-up)**: Lifts the Phase 28 deferral — extends the Compound V3 lifecycle (already `chain`-parameterized from the Phase 8 multi-EVM fan-out) from Ethereum-only Comets to Polygon / Arbitrum / Base / Optimism. Additive port: per-chain Comet data into `COMPOUND_COMETS_RAW`, per-chain canonical-dispatch arms, per-chain regression coverage. Ethereum byte-identical (Fixtures R/S/T/U anchors hold); no new tools, no new error codes (21-code union FROZEN). Added after v2.6 close-out (Phases 39-40 merged, #160/#162). NOTE: STATE frontmatter `milestone` field still reads v2.5 — stale since the v2.6 work merged without a frontmatter bump; full milestone hygiene (gsd-complete-milestone for v2.5+v2.6) deferred by user choice in favor of shipping this feature.
 - 2026-05-20 — **v2.1-v2.6 milestone scaffolding**: Promoted v2.1 TRON / v2.2 BTC+LTC / v2.3 EVM lending+staking / v2.4 EVM DEX+LP+escape / v2.5 Safe / v2.6 Bridge+MEV from one-line bullets to full milestone sections (24 new phases, 17-40) mirroring v2.0 Solana expansion shape (PR #67). REQUIREMENTS.md expanded each milestone's `*-01..N` shorthand to discrete numbered requirements organized into per-milestone sub-sections: v2.1 TRON-PAIR/READ/PREP/W/DIAG (24 reqs); v2.2 BTC-PAIR/READ/PREP/PSBT/W + LTC equivalents + BTC-FORENSIC + BTC-INC (~35 reqs); v2.3 CMP/MOR/LIDO/EIG/RP (20 reqs); v2.4 UNI/CRV/CUSTOM (16 reqs); v2.5 SAFE-01..09 (9 reqs); v2.6 BRIDGE-T1 + MEV (7 reqs, with BRIDGE-T2 explicitly deferred). Total ~110 new numbered requirements. Total project plan-count rolls 60 → 129 (estimated 69 new plans across Phases 17-40). Cross-milestone shared-infra signals: LiFi bridging consumes `src/clients/lifi.ts` in v2.0 SOL-W-21 + v2.1 TRON-W-11 + v2.2 BTC-LIFI-01 + v2.6 BRIDGE-T1 (shared shelf factoring rule documented in Phase 20 CONTEXT.md); EigenLayer + Rocket Pool bundled in one phase due to small write surfaces; BTC + LTC bundled in one milestone per the "shared Esplora + Ledger BTC infra" PROJECT.md decision; v2.6 Phase 35 escape hatch lifts the Phase 8 FROZEN `etherscan.ts` per-chain plumbing gap as a free downstream effect.
 - 2026-05-20 — **v2.0 Solana milestone start**: Promoted v2.0 from one-line bullet ("Solana (MarginFi / Kamino / Jupiter / Marinade / Jito / native staking)") to full Phases 11-16 section. New PAIR-NEV-* requirement bucket (Persistent Non-EVM Account Cache) lands in Phase 11 and is reused by v2.1 TRON + v2.2 BTC/LTC milestones — mirrors PR #61 WC-session-persistence pattern (`src/wallet/session-manager.ts` eager-init at startServer). REQUIREMENTS.md expanded SOL-* from 3 one-line bullets to 39 numbered requirements; PROJECT.md Active section pivoted from v1.x MVP (now Validated) to v2.0 Solana. Total project plan-count rolls 39 → 60 (estimated 21 new plans across Phases 11-16). Frontmatter milestone moved v1.3 → v2.0 (the previous frontmatter milestone field had not been bumped after Phases 9/10 closed — opportunistic correction).

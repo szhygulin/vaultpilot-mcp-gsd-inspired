@@ -1183,15 +1183,15 @@ Each is sized as one milestone (4-6 phases). All blocked on v2.x maturity. (v3.0
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21 → 22 → 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21 → 22 → 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40 → 41
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
 | 1. Server skeleton + install | v1.0 | 3/3 | Complete (verify-phase open) | 2026-05-12 |
 | 2. Ethereum read-only portfolio | v1.0 | 4/4 | Complete (verified end-to-end against PublicNode) | 2026-05-12 |
-| 3. WalletConnect pairing | v1.0 | 0/2 | Not started | - |
-| 4. Native ETH send (the trust pipeline) | v1.0 | 0/5 | Not started | - |
-| 5. Demo mode + diagnostics | v1.0 | 0/3 | Not started | - |
+| 3. WalletConnect pairing | v1.0 | 2/2 | Complete (verify-phase open) | 2026-05-12 |
+| 4. Native ETH send (the trust pipeline) | v1.0 | 5/5 | Complete (verify-phase open) | 2026-05-12 |
+| 5. Demo mode + diagnostics | v1.0 | 3/3 | Complete (verify-phase open) | 2026-05-12 |
 | 6. ERC-20 lifecycle (transfer + approve + revoke + WETH unwrap) | v1.1 | 4/4 | Complete (verify-phase open) | 2026-05-13 |
 | 7. Aave V3 (Ethereum) | v1.1 | 4/4 | Complete (verify-phase open) | 2026-05-16 |
 | 8. Multi-EVM fan-out + token tooling | v1.2 | 5/5 | Complete (verify-phase open) | 2026-05-18 |
