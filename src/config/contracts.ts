@@ -235,26 +235,57 @@ export function getAaveV3IncentivesController(chainId: ChainId): Address {
 // hex digit flipped at rest — throws EIP-55 at module load.
 
 /**
- * The 6 base-asset symbols whose Compound V3 Comet markets ship on Ethereum
- * mainnet as of research-time 2026-05-20. v2.3.x widens once additional
- * chains land — but the type itself only grows when a new BASE asset (not a
- * new chain) is added. Each Comet contract's `baseToken()` returns the
- * specific ERC-20 corresponding to its symbol.
+ * The base-asset symbols used across Compound V3 Comet markets on Ethereum
+ * mainnet (Phase 28) and L2 chains (Phase 41 Plan 41-01: Arbitrum, Polygon,
+ * Base, Optimism). The type only grows when a new BASE asset (not a new chain)
+ * is added. Each Comet contract's `baseToken()` returns the specific ERC-20
+ * corresponding to its symbol.
+ *
+ * "USDC.e" — the bridged-USDC base asset used by both the Arbitrum legacy
+ * Comet (0xA5ED…dCA) and the Polygon Comet (0xF252…445). Per the Phase 41
+ * locked decision: Polygon's "usdc" Comet base token IS bridged USDC.e
+ * (0x2791…), NOT native Circle USDC. Using a distinct key avoids symbol
+ * confusion in agent-side routing.
+ *
+ * "AERO" — the Aerodrome governance token; a non-stablecoin / volatile base
+ * asset. Used exclusively by the Base AERO Comet (0x784e…). Borrow APR
+ * dynamics differ from stablecoin Comets but the ABI is identical.
  */
-export type CompoundCometBase = "USDC" | "USDT" | "WETH" | "USDS" | "wstETH" | "WBTC";
+export type CompoundCometBase =
+  | "USDC"
+  | "USDT"
+  | "WETH"
+  | "USDS"
+  | "wstETH"
+  | "WBTC"
+  | "USDC.e" // bridged USDC — Arbitrum legacy Comet + Polygon Comet (base token = 0x2791…)
+  | "AERO"; // Aerodrome token — volatile base asset, Base chain only (Phase 41)
 
 /**
  * Per-chain Compound V3 Comet contracts. Partial-on-chain AND partial-on-base
- * because v2.3.x will add chains (Polygon, Arbitrum, Base, Optimism) whose
- * Comet base-asset coverage is a STRICT SUBSET of Ethereum's. Getter helpers
+ * because each chain's Comet base-asset coverage is a STRICT SUBSET of
+ * Ethereum's. Phase 41 Plan 41-01 extends this table with 4 L2 chain rows
+ * (Arbitrum, Polygon, Base, Optimism — 13 new Comet addresses). Getter helpers
  * below return `Address | null` (single market) and `Address[]` (chain
  * fan-out, empty for chains without rows).
  *
- * Format-fanout-sentinel: the 6 Comet addresses live ONLY here. Plan 28-04
+ * Format-fanout-sentinel: all Comet addresses live ONLY here. Plan 28-04
  * regression-test asserts `grep -n "0xc3d688B6\|0x3Afdc9BC\|..." src/ -r`
- * outside of this file is empty.
+ * outside of this file is empty. The Phase 41 L2 addresses are likewise
+ * exclusively in this table; canonical-dispatch auto-extends from the SOT
+ * getter (`getAllCompoundCometsForChain`) with zero code change in
+ * `canonical-dispatch.ts`.
+ *
+ * WETH cross-SOT consistency: the WETH Comet base-token addresses on Arbitrum
+ * (0x82aF…3FBab1), Base (0x4200…0006), and Optimism (0x4200…0006) equal the
+ * corresponding `getWethAddress(chainId)` values — mirroring the
+ * EigenLayer/Lido cross-SOT pattern from Phase 31. (These are the base-token
+ * addresses verified against `configuration.json`; this row stores the Comet
+ * proxy, not the base token.)
  */
 const COMPOUND_COMETS_RAW: Partial<Record<ChainId, Partial<Record<CompoundCometBase, Address>>>> = {
+  // Ethereum mainnet (chainId 1) — UNCHANGED; Fixtures R/S/T/U are hardcoded
+  // against these 6 addresses. Do NOT mutate this row.
   1: {
     USDC: getAddress("0xc3d688B66703497DAA19211EEdff47f25384cdc3"),
     USDT: getAddress("0x3Afdc9BCA9213A35503b077a6072F3D0d5AB0840"),
@@ -262,6 +293,57 @@ const COMPOUND_COMETS_RAW: Partial<Record<ChainId, Partial<Record<CompoundCometB
     USDS: getAddress("0x5D409e56D886231aDAf00c8775665AD0f9897b56"),
     wstETH: getAddress("0x3D0bb1ccaB520A66e607822fC55BC921738fAFE3"),
     WBTC: getAddress("0xe85Dc543813B8c2CFEaAc371517b925a166a9293"),
+  },
+  // Arbitrum One (chainId 42161) — Phase 41 Plan 41-01. 4 Comets.
+  // Provenance: compound-finance/comet deployments/arbitrum/*/roots.json
+  // (research-time 2026-05-29, HIGH confidence).
+  //
+  // ADDRESS-COINCIDENCE NOTE: the Arbitrum USDC Comet proxy
+  // 0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf is the SAME address as the
+  // Base USDbC Comet proxy on chainId 8453. This is a genuine cross-chain
+  // coincidence (identical CREATE2 salt / governance reuse) — NOT a
+  // copy-paste error. It is harmless: canonical-dispatch sets are per-chain
+  // (`CANONICAL_DISPATCH_TARGETS[42161]` ≠ `CANONICAL_DISPATCH_TARGETS[8453]`).
+  42161: {
+    USDC: getAddress("0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf"), // native Circle USDC (launched Jan 2026); see ADDRESS-COINCIDENCE NOTE above
+    "USDC.e": getAddress("0xA5EDBDD9646f8dFF606d7448e414884C7d905dCA"), // bridged USDC.e legacy market (runs alongside native USDC to avoid liquidity shock)
+    USDT: getAddress("0xd98Be00b5D27fc98112BdE293e487f8D4cA57d07"),
+    WETH: getAddress("0x6f7D514bbD4aFf3BcD1140B7344b32f063dEe486"),
+  },
+  // Polygon PoS (chainId 137) — Phase 41 Plan 41-01. 2 Comets.
+  // Provenance: compound-finance/comet deployments/polygon/*/roots.json.
+  //
+  // NOTE: The "USDC.e" key maps to the Polygon "usdc" Comet directory in the
+  // compound-finance/comet repo — but the configuration.json base token is
+  // 0x2791bca1f2de4661ed88a30c99a7a9449aa84174 (bridged USDC.e), NOT native
+  // Circle USDC (0x3c499c…). Using "USDC.e" makes this explicit in the type
+  // system; getCompoundCometAddress(137, "USDC") returns null.
+  137: {
+    "USDC.e": getAddress("0xF25212E676D1F7F89Cd72fFEe66158f541246445"), // base token = 0x2791… bridged USDC.e (NOT native USDC per configuration.json)
+    USDT: getAddress("0xaeB318360f27748Acb200CE616E389A6C9409a07"),
+  },
+  // Base (chainId 8453) — Phase 41 Plan 41-01. 4 Comets.
+  // Provenance: compound-finance/comet deployments/base/*/roots.json.
+  //
+  // DELIBERATE EXCLUSION: the deprecated Base USDbC Comet
+  // 0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf (~$82k TVL, Gauntlet Dec-2024
+  // deprecation recommendation) is INTENTIONALLY excluded from this SOT per
+  // the Phase 41 locked decision. Users with legacy USDbC positions exit via
+  // the existing `prepare_custom_call` escape hatch (Phase 35). Do NOT add a
+  // USDbC row or a "USDbC" type key — the test in Plan 41-01 Task 2 asserts
+  // this address is absent from the Base arm.
+  8453: {
+    USDC: getAddress("0xb125E6687d4313864e53df431d5425969c15Eb2F"),
+    WETH: getAddress("0x46e6b214b524310239732D51387075E0e70970bf"),
+    USDS: getAddress("0x2c776041CCFe903071AF44aa147368a9c8EEA518"),
+    AERO: getAddress("0x784efeB622244d2348d4F2522f8860B96fbEcE89"), // Aerodrome governance token — volatile base asset (non-stablecoin Comet, Base only)
+  },
+  // OP Mainnet (chainId 10) — Phase 41 Plan 41-01. 3 Comets.
+  // Provenance: compound-finance/comet deployments/optimism/*/roots.json.
+  10: {
+    USDC: getAddress("0x2e44e174f7D53F0212823acC11C01A11d58c5bCB"),
+    USDT: getAddress("0x995E394b8B2437aC8Ce61Ee0bC610D617962B214"),
+    WETH: getAddress("0xE36A30D249f7761327fd973001A32010b521b6Fd"),
   },
 };
 
