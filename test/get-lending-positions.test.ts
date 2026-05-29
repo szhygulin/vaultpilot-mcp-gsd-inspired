@@ -577,7 +577,7 @@ describe("Phase 28 Plan 28-04 — Compound V3 branch + sources zero-anchor (T-LE
     expect(protocols).toContain("compound-v3");
   });
 
-  it("Non-mainnet chain (arbitrum): Compound arm empty (Phase 28 mainnet-only); only Aave path runs", async () => {
+  it("Arbitrum chain (Phase 41): Compound arm fires (Arbitrum has 4 Comets via 41-01 SOT); getAllCometStates called", async () => {
     vi.spyOn(_aaveChains, "getReservesData").mockResolvedValue({
       reserves: [mkReserve({ underlyingAsset: USDC, symbol: "USDC" })],
       baseCurrency: BASE_CURRENCY,
@@ -586,16 +586,17 @@ describe("Phase 28 Plan 28-04 — Compound V3 branch + sources zero-anchor (T-LE
       userReserves: [],
       userEModeCategoryId: 0,
     });
-    const compoundSpy = vi.spyOn(_compoundChains, "getAllCometStates");
+    const compoundSpy = vi.spyOn(_compoundChains, "getAllCometStates").mockResolvedValue([]);
 
     const result = await callTool({ chain: "arbitrum", wallet: WALLET });
     expect(result.isError).toBeUndefined();
-    // Compound branch short-circuits on non-mainnet — getAllCometStates never
-    // called (Promise.resolve([])); proves the mainnet-only gate.
-    expect(compoundSpy).not.toHaveBeenCalled();
+    // Phase 41 Plan 41-02: Arbitrum has 4 Comets — getAllCometStates IS called.
+    // This proves the mainnet-only gate was removed.
+    expect(compoundSpy).toHaveBeenCalled();
     const out = result.structuredContent as {
       sources: { compound: { perComet: unknown[] } };
     };
+    // Mock returns [] so no position rows, but the arm ran.
     expect(out.sources.compound.perComet).toEqual([]);
   });
 });

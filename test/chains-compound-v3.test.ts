@@ -384,10 +384,37 @@ describe("chains/compound-v3::getAllCometStates — chain fan-out", () => {
     expect(spy).toHaveBeenCalledTimes(6);
   });
 
-  it("chainId=42161 (Arbitrum) → [] (Phase 28 mainnet-only)", async () => {
+  it("chainId=42161 (Arbitrum) → 4 states (Phase 41 multi-chain expansion)", async () => {
+    // Phase 41 Plan 41-01 added 4 Arbitrum Comets; getAllCometStates must fan
+    // out over them rather than short-circuit to [].
+    const fakeState = {
+      comet: "0x0000000000000000000000000000000000000001" as Address,
+      baseToken: USDC,
+      baseSupplied: 0n,
+      baseBorrowed: 0n,
+      isBorrowCollateralized: true,
+      isLiquidatable: false,
+      supplyRate: 0n,
+      borrowRate: 0n,
+      utilization: 0n,
+      totalSupply: 0n,
+      totalBorrow: 0n,
+      numAssets: 0,
+      baseTokenPriceFeed: "0xfeed00000000000000000000000000000000feed" as Address,
+      baseTokenPriceUsd: 10n ** 8n,
+      collateral: [],
+    };
+    const spy = vi
+      .spyOn(_compoundChains, "getCometState")
+      .mockImplementation(async (_client, comet, _user) => ({ ...fakeState, comet }));
+
     const { client } = makeStateMockClient({});
     const result = await getAllCometStates(client, 42161, WALLET);
-    expect(result).toEqual([]);
+
+    const arbComets = getAllCompoundCometsForChain(42161);
+    expect(arbComets.length).toBe(4);
+    expect(result.length).toBe(4);
+    expect(spy).toHaveBeenCalledTimes(4);
   });
 });
 

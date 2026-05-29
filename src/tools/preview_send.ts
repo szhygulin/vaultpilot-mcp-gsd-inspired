@@ -1847,20 +1847,19 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
       selector === WETH9_SELECTORS.withdraw &&
       record.tx.to === getWethAddress(record.tx.chainId as ChainId);
 
-    // Phase 28 Plan 28-04: LEDGER NOTICE for Compound V3. Research § Topic 8
-    // — Compound NOT in the LedgerHQ ERC-7730 clear-signing registry as of
-    // 2026-05-20; the device WILL blind-sign every Compound V3 transaction.
-    // Conditional emission: tx.chainId === 1 (Phase 28 mainnet-only) AND
-    // tx.to is in the canonical Comets set AND the selector matches one of
-    // the 2 Compound selectors. Defense against an unrelated contract that
-    // happens to expose a matching selector — only the SOT-canonical Comets
-    // get the NOTICE.
+    // Phase 28 Plan 28-04 / Phase 41 Plan 41-02: LEDGER NOTICE for Compound V3.
+    // Research § Topic 8 — Compound NOT in the LedgerHQ ERC-7730 clear-signing
+    // registry as of 2026-05-20; the device WILL blind-sign every Compound V3
+    // transaction on ALL chains. Phase 41 widens from mainnet-only to any chain
+    // with Comets (Arbitrum / Polygon / Base / Optimism). The canonical-Comet
+    // guard fires against the per-chain allowlist so only SOT-canonical Comets
+    // get the NOTICE; an unrelated contract exposing the same selector on a
+    // chain with zero Comets (e.g. Scroll) would NOT trigger.
     const isCompoundComet =
       compoundDecoded !== null &&
-      record.tx.chainId === 1 &&
       (selector === COMPOUND_V3_SELECTORS.supply ||
         selector === COMPOUND_V3_SELECTORS.withdraw) &&
-      getAllCompoundCometsForChain(1).includes(record.tx.to);
+      getAllCompoundCometsForChain(record.tx.chainId as ChainId).includes(record.tx.to);
 
     // Phase 31 Plan 31-03 — LEDGER NOTICE for EigenLayer deposit (D-13).
     // StrategyManager.depositIntoStrategy is NOT in the Ledger Ethereum app's

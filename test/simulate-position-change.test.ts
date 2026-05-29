@@ -567,17 +567,22 @@ describe("simulate_position_change — Compound V3 dispatcher arm (Plan 28-04)",
     expect(result.content[0]?.text).toMatch(/not in the canonical/);
   });
 
-  it("protocol: \"compound-v3\" on non-mainnet → INVALID_INPUT (Phase 28 mainnet-only)", async () => {
+  it("protocol: \"compound-v3\" on arbitrum with canonical Arbitrum Comet succeeds (Phase 41 multi-chain)", async () => {
+    // Phase 41 removes the Ethereum-mainnet-only guard; Arbitrum Comets are
+    // now in the canonical allow-list so this must NOT return INVALID_INPUT.
+    vi.spyOn(_compoundChains, "getCometState").mockResolvedValueOnce(
+      mockCompoundState({ baseBorrowed: 0n, numAssets: 0 }),
+    );
+    const arbUsdcComet = getCompoundCometAddress(42161, "USDC")!;
     const result = await callTool({
       chain: "arbitrum",
       protocol: "compound-v3",
-      cometAddress: cUSDCv3,
+      cometAddress: arbUsdcComet,
       asset: USDC,
       action: "supply",
       amount: "100",
     });
-    expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toMatch(/Ethereum mainnet only/);
+    expect(result.isError).toBeFalsy();
   });
 
   it("supply action: with WBTC collateral on cUSDCv3 → adds collateral; ratio improves", async () => {
