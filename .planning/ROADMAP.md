@@ -18,8 +18,8 @@ The journey: a working trust pipeline first (one chain, one signing flow, end-to
 - 📋 **v2.4 EVM DEX + LP + escape hatch** — Phases 32-35 planned (Uniswap V3 swap / Uniswap V3 LP / Curve / `prepare_custom_call`)
 - 📋 **v2.5 Safe (Gnosis) multisig** — Phases 36-38 planned (Safe positions + Tx Service / three-step signing flow / `enableModule` + `delegateCall` hard-trigger second-LLM)
 - 📋 **v2.6 Bridge facet decoders + cross-chain hardening** — Phases 39-40 planned (Tier-1 facet decoders + Inv #6b final-recipient assertion / sandwich-MEV per-L2 thresholds; Tier-2 facets explicitly deferred)
-- 📋 **v2.3.x multi-chain Compound (deferred follow-up)** — Phase 41 (lift the Phase 28 deferral — Compound V3 lifecycle on Polygon / Arbitrum / Base / Optimism Comets; additive port, Ethereum byte-identical)
-- 📋 **v3.0** — Hosted MCP (HTTP/SSE / OAuth)
+- 🟡 **v2.3.x multi-chain Compound (deferred follow-up)** — Phase 41 **code-complete** (Compound V3 lifecycle on Polygon / Arbitrum / Base / Optimism Comets; additive port, Ethereum byte-identical; verify-phase pending real-Ledger L2 smoke)
+- 📋 **Deferred backlog (planned follow-ups)** — small follow-ups to already-shipped milestones (full detail in the "Deferred Backlog" section below): v1.4.1 pkg ESM binary fix (gates v1.4.0 GA) · v1.x ENS-resolver migration + `chains/ethereum.ts` compat-shim deletion · v2.0.x Solana durable-nonce setup tools · v2.4.x Curve legacy-pool `add_liquidity` · v2.2.x LiFi BTC/TRON bridging (blocked on LiFi deployment)
 - 📋 **v3.1** — NFT reads (portfolio / collection / history / listings)
 - 📋 **v3.2** — Contacts + read-only sharing
 - 📋 **v3.3** — Device-trust attestation
@@ -1156,11 +1156,24 @@ Plans:
 
 ---
 
-### 📋 v3.0+ Future Milestones (Planned)
+### 📋 Deferred Backlog (planned follow-ups)
 
-Each is sized as one milestone (4-6 phases). All blocked on v2.x maturity.
+Small, scoped follow-ups deferred out of already-shipped phases. Each is sized as a single phase (1-3 plans), not a full milestone. Promote one to an active phase via `/gsd-phase add` + `/gsd-plan-phase` when ready. Ordered roughly by leverage.
 
-- **v3.0 Hosted MCP** — HTTP/SSE transport, OAuth 2.1, operator-supplied API keys, multi-tenant. Unblocks claude.ai chat (web + native desktop). TRON/Solana/BTC/LTC USB-HID signing stays on local-stdio path regardless.
+- **v1.4.1 — pkg ESM `@modelcontextprotocol/sdk` subpath-exports fix** (from Phase 10 / 10-01). pkg's snapshot fs ignores the SDK's subpath `exports` field, so per-platform binaries fail at runtime with `ERR_MODULE_NOT_FOUND`. This **gates the v1.4.0 GA binary tag**. Recovery options (documented in 10-01 SUMMARY): `pkg.sea=true` backend swap OR a `package.json` `imports` field map. Highest leverage — unblocks distribution.
+- **v1.x — ENS-resolver migration + `src/chains/ethereum.ts` compat-shim deletion** (from Phase 8 / 08-01). The compat shim survives with 2 importers: the FROZEN `send_transaction.ts` and the out-of-scope `ens/resolver.ts`. Migrate the ENS resolver onto the multi-chain registry, then delete the shim. Requires addressing the FROZEN `send_transaction.ts` constraint — design carefully (the 3-gate region is byte-frozen).
+- **v2.0.x — Solana durable-nonce setup tools** (from Phase 12 / 12-04, plan-check FLAG-2). `prepare_solana_nonce_init` + `prepare_solana_nonce_close` for per-wallet durable-nonce accounts. Orthogonal to the cryptographic-binding chain (the 150-slot recent-blockhash window covers the ship gate). Surface to design: `NonceAuthorized` account-ownership semantics + multi-wallet authority gating — warrants its own design + verify-phase pass.
+- **v2.4.x — Curve legacy-pool `add_liquidity`** (from Phase 34 / 34-03). `prepare_curve_add_liquidity` is `stable_ng`-only; legacy pools are refused with `INVALID_INPUT "deferred to v2.4.x"`. Add the legacy `abiVersion` dispatch arm (mirrors the existing `prepare_curve_swap` per-`abiVersion` pattern).
+- **v2.2.x — LiFi BTC/TRON bridging** (from Phase 20 / 20-02, D-04b — **BLOCKED**). `src/clients/lifi.ts` shared client + `bridge-decoders/lifi-tron.ts` (Inv #6b `_bridgeData.receiver` decoder) + `prepare_tron_lifi_swap`. Blocked on an external precondition: LiFi has no TRON deployment as of 2026-05-21 (verified via live API + GitHub manifest + quote endpoint). Reschedule preconditions + `checkpoint:human-verify` signature are in `20-02-DEFERRED.md`. Do NOT plan until LiFi confirms a TRON/BTC deployment.
+
+> Note: the **deferred real-Ledger verify-phases** across v1.x–v2.x (each phase's `*-HUMAN-UAT.md`) are hardware-test debt, tracked separately — run `/gsd-audit-uat` for the cross-phase view. They are not feature backlog.
+
+---
+
+### 📋 v3.1+ Future Milestones (Planned)
+
+Each is sized as one milestone (4-6 phases). All blocked on v2.x maturity. (v3.0 Hosted MCP — HTTP/SSE + OAuth — removed from the plan.)
+
 - **v3.1 NFT reads** — `get_nft_portfolio` (cross-chain, Helius DAS for Solana), `get_nft_collection`, `get_nft_history`, `get_nft_listings` (EVM only); floor pricing via Magic Eden + Tensor (Solana) / Reservoir + OpenSea (EVM). Read-only browsing — marketplace fills (Seaport / Blur) deferred until typed-data signing surface lands.
 - **v3.2 Contacts + read-only sharing** — Local Ledger-signed address book, scoped read-only portfolio links, anonymized strategy sharing.
 - **v3.3 Device-trust attestation** — `verify_ledger_attestation` (Secure Element challenge), `verify_ledger_firmware` (version pin), `verify_ledger_live_codesign` (binary signature check).
