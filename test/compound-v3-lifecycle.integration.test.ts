@@ -113,6 +113,12 @@ vi.mock("viem/actions", async () => {
 
 import { _compoundChains } from "../src/chains/compound-v3.js";
 import { getCompoundCometAddress } from "../src/config/contracts.js";
+import {
+  FIXTURE_CMP_ARB_A,
+  FIXTURE_CMP_BASE_A,
+  FIXTURE_CMP_OPT_A,
+  FIXTURE_CMP_POLY_A,
+} from "./signing-fingerprint.test.js";
 import { _resetDemoModeForTesting } from "../src/config/env.js";
 import {
   _resetActivePersonaForTesting,
@@ -477,5 +483,144 @@ describe("Compound V3 — preview-time intent re-derivation (defense-in-depth)",
       decodedArgs: { intent: string };
     };
     expect(previewSc.decodedArgs.intent).toBe("repay-debt");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 41 Plan 41-02 — per-L2 lifecycle round-trips.
+//
+// Proves that Task 1's gate removal works end-to-end: each L2 chain reaches
+// the prepare → preview pipeline without a chainName-not-ethereum hard-refusal.
+//
+// Per-chain USDC base-token addresses (from 41-RESEARCH § Per-Chain Verified
+// Comet Table — base token column):
+//   Arbitrum native USDC:    0xaf88d065e77c8cC2239327C5EDb3A432268e5831
+//   Base native USDC:        0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+//   Optimism native USDC:    0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85
+//   Polygon bridged USDC.e:  0x2791bca1f2de4661ed88a30c99a7a9449aa84174
+//
+// The payloadFingerprint from each prepare call is cross-linked to the
+// corresponding FIXTURE_CMP_<CHAIN>_A hardcoded literal from Task 2
+// (test/signing-fingerprint.test.ts) — byte-identity enforced.
+//
+// NOTE on persona addresses: demo personas carry Ethereum addresses (0x...);
+// the same address is used for L2 chains because Compound's prepare tool
+// passes it as `from` and the payloadFingerprint preimage does NOT include
+// `from` (T-INTEGRATION-FROM-DRIFT-1 — chainId + to + value + data only).
+// The L2 payloadFingerprint is therefore from-INDEPENDENT and deterministic.
+// ---------------------------------------------------------------------------
+
+// Per-chain supply args (chain name, base-token address, comet getter key)
+const L2_SUPPLY_CASES = [
+  {
+    chainName: "arbitrum" as const,
+    chainId: 42161,
+    token: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+    cometKey: "USDC" as const,
+    fixture: FIXTURE_CMP_ARB_A,
+    label: "Arbitrum",
+  },
+  {
+    chainName: "base" as const,
+    chainId: 8453,
+    token: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    cometKey: "USDC" as const,
+    fixture: FIXTURE_CMP_BASE_A,
+    label: "Base",
+  },
+  {
+    chainName: "optimism" as const,
+    chainId: 10,
+    token: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+    cometKey: "USDC" as const,
+    fixture: FIXTURE_CMP_OPT_A,
+    label: "Optimism",
+  },
+  {
+    chainName: "polygon" as const,
+    chainId: 137,
+    token: "0x2791bca1f2de4661ed88a30c99a7a9449aa84174",
+    cometKey: "USDC.e" as const,
+    fixture: FIXTURE_CMP_POLY_A,
+    label: "Polygon",
+  },
+] as const;
+
+describe("Phase 41 — Compound V3 L2 lifecycle round-trips (per-chain gate-removal regression)", () => {
+  for (const { chainName, chainId, token, cometKey, fixture, label } of L2_SUPPLY_CASES) {
+    it(`${label} (${chainName}): prepare_compound_supply → preview_send — no chain-gate refusal; fingerprint matches FIXTURE_CMP_${label.toUpperCase().slice(0, 4)}_A`, async () => {
+      setActivePersona("whale");
+      vi.spyOn(_compoundChains, "deriveIntent").mockResolvedValue("supply-collateral");
+
+      const comet = getCompoundCometAddress(chainId, cometKey)!;
+
+      // --- prepare_compound_supply ---
+      const prepareResult = await callTool("prepare_compound_supply", {
+        chain: chainName,
+        comet,
+        asset: token,
+        amount: "100",
+      });
+
+      // Gate-removal regression: must NOT produce a chain-gate refusal
+      expect(prepareResult.isError, `${label} prepare unexpectedly errored`).toBeFalsy();
+      const prepareText = prepareResult.content[0]?.text ?? "";
+      expect(prepareText).not.toContain("v2.3 supports only");
+
+      const prepareSc = prepareResult.structuredContent as {
+        handle: string;
+        payloadFingerprint: string;
+      };
+
+      // Cross-link: fingerprint must byte-match the hardcoded FIXTURE_CMP_<CHAIN>_A
+      // literal pinned in test/signing-fingerprint.test.ts (Task 2).
+      expect(prepareSc.payloadFingerprint).toBe(fixture);
+
+      // --- preview_send (LEDGER NOTICE emitted — Compound has no CAL clear-sign) ---
+      const previewResult = await callTool("preview_send", {
+        handle: prepareSc.handle,
+      });
+      expect(previewResult.isError, `${label} preview unexpectedly errored`).toBeFalsy();
+      const previewText = previewResult.content[0]?.text ?? "";
+      expect(previewText).toContain("LEDGER NOTICE");
+      expect(previewText).toContain("Compound V3 supply / withdraw is NOT covered");
+
+      // --- send_transaction (demo simulation envelope) ---
+      const previewSc = previewResult.structuredContent as {
+        previewToken: string;
+      };
+      const sendResult = await callTool("send_transaction", {
+        handle: prepareSc.handle,
+        previewToken: previewSc.previewToken,
+        userDecision: "send",
+      });
+      expect(sendResult.isError, `${label} send unexpectedly errored`).toBeFalsy();
+    });
+  }
+
+  it("Persona-determinism on Arbitrum: same fingerprint across whale / stable-saver / defi-degen (from NOT in preimage)", async () => {
+    const arbComet = getCompoundCometAddress(42161, "USDC")!;
+    const arbToken = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
+
+    vi.spyOn(_compoundChains, "deriveIntent").mockResolvedValue("supply-collateral");
+
+    for (const persona of ["whale", "stable-saver", "defi-degen"] as const) {
+      setActivePersona(persona);
+      const result = await callTool("prepare_compound_supply", {
+        chain: "arbitrum",
+        comet: arbComet,
+        asset: arbToken,
+        amount: "100",
+      });
+      expect(result.isError).toBeFalsy();
+      const sc = result.structuredContent as {
+        from: string;
+        payloadFingerprint: string;
+      };
+      // `from` differs per persona — proves the preimage is from-independent.
+      expect(sc.from).toBe(personaAddress(persona));
+      // Fingerprint stays pinned at FIXTURE_CMP_ARB_A regardless of persona.
+      expect(sc.payloadFingerprint).toBe(FIXTURE_CMP_ARB_A);
+    }
   });
 });

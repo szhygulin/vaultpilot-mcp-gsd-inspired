@@ -32,6 +32,7 @@ import { _morphoChains } from "../chains/morpho-blue.js";
 import { getChainClient, isPublicNodeFallback } from "../chains/registry.js";
 import {
   chainIdFromName,
+  getAllCompoundCometsForChain,
   getMorphoBlueAddress,
   type ChainId,
   type ChainName,
@@ -54,12 +55,12 @@ import { loadTokenRegistry } from "../tokens/registry.js";
 import { registerTool } from "./index.js";
 
 const DESCRIPTION = [
-  "Read DeFi lending positions on a supported EVM chain for a wallet address (Aave V3 across all 5 chains; on Ethereum mainnet, also Compound V3 across the 6 canonical Comets).",
+  "Read DeFi lending positions on a supported EVM chain for a wallet address (Aave V3 across all 5 chains; Compound V3 on any chain with Comets: ethereum, arbitrum, polygon, base, optimism).",
   "Returns per-position rows with a discriminator `protocol: \"aave-v3\" | \"compound-v3\"`, aggregate per-protocol summaries under `sources.{aave, compound}`, and protocol-native health metrics (Aave health factor; Compound `isBorrowCollateralized` + `isLiquidatable` booleans + derived collateralization ratio).",
   "Use when the user asks about their Aave or Compound positions, lending balances, borrow position, or health factor.",
   "Do NOT use for non-lending wallet balances — call `get_portfolio_summary` for wallet-level holdings.",
   "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism. Aave V3 reserves differ per chain; the server resolves the per-chain UiPoolDataProvider via the typed SOT.",
-  "On Ethereum mainnet (chainId=1), the response ALSO returns Compound V3 positions across the 6 canonical Comets (cUSDCv3 / cUSDTv3 / cWETHv3 / cUSDSv3 / cwstETHv3 / cWBTCv3). Each position row carries a protocol discriminator (\"aave-v3\" | \"compound-v3\"); top-level `sources.{aave, compound}` summary surfaces both protocol arms with zero-value anchors (Compound arm zero-anchored on non-mainnet chains).",
+  "Compound V3 positions are returned on any chain that has Comets. Each position row carries a protocol discriminator (\"aave-v3\" | \"compound-v3\"); top-level `sources.{aave, compound}` summary surfaces both protocol arms (Compound arm empty on chains with no Comets).",
   "Returns `{ chain, chainId, wallet, positions: [...], totalCollateralUsd, totalDebtUsd, healthFactor, noDebt, liquidationRisk, userEModeCategoryId, sources: { aave: {...}, compound: { perComet: [...] } }, rpcDegraded? }`. `totalCollateralUsd` / `totalDebtUsd` / `healthFactor` / `noDebt` / `liquidationRisk` describe the AAVE arm (Compound carries its own per-Comet metrics under `sources.compound.perComet`).",
   "`healthFactor` is `null` when the Aave user has no debt (`noDebt: true`); the agent checks `noDebt` BEFORE comparing `healthFactor` numerically.",
   "`liquidationRisk` is one of `\"safe\"` (HF >= 1.50), `\"warning\"` (1.10 <= HF < 1.50), `\"danger\"` (HF < 1.10), or `\"noDebt\"`.",
@@ -625,9 +626,10 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
 
   const client = getChainClient(chainId);
 
-  // Phase 28 / 29 — three-protocol concurrent fan-out: Aave V3 + Compound V3 +
-  // Morpho Blue. Compound + Morpho are mainnet-only in v2.3; non-mainnet
-  // chains short-circuit to empty arrays. Aave runs on all 5 chains.
+  // Phase 28 / 29 / 41 — three-protocol concurrent fan-out: Aave V3 + Compound V3 +
+  // Morpho Blue. Compound V3 fires on any chain with Comets (Phase 41 — was
+  // mainnet-only in v2.3); Morpho remains mainnet-only (Phase 29 scope). Aave
+  // runs on all 5 chains.
   let aaveLeg: Awaited<ReturnType<typeof readAavePositions>>;
   let compoundLeg: CometStateDecoded[];
   let morphoLeg: {
@@ -637,7 +639,7 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
   try {
     [aaveLeg, compoundLeg, morphoLeg] = await Promise.all([
       readAavePositions(client, chainId, wallet),
-      chainId === 1
+      getAllCompoundCometsForChain(chainId).length > 0
         ? _compoundChains.getAllCometStates(client, chainId, wallet)
         : Promise.resolve<CometStateDecoded[]>([]),
       readMorphoPositionsForWallet(client, chainId, wallet),
@@ -759,11 +761,11 @@ registerTool("get_lending_positions", DESCRIPTION, INPUT_SCHEMA, async (args) =>
     );
   }
 
-  if (chainId === 1) {
+  if (getAllCompoundCometsForChain(chainId).length > 0) {
     summaryLines.push("");
     summaryLines.push(`Compound V3 positions for ${wallet}:`);
     if (compoundRows.length === 0) {
-      summaryLines.push("  (no supplied / borrowed / collateral positions across 6 Comets)");
+      summaryLines.push("  (no supplied / borrowed / collateral positions across the canonical Comets)");
     } else {
       for (const r of compoundRows) {
         const parts: string[] = [];

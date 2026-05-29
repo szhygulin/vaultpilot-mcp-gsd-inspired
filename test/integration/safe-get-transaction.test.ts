@@ -419,6 +419,21 @@ describe("get_safe_transaction :: FROZEN-area additive-arms-only (Phase 37 close
       // Site (c): existing effectiveDecodedArgsBlock ternary tail —
       //   `: decodedArgsBlock;`  →  ternary chain extension
       ": decodedArgsBlock;",
+      // Phase 41 Plan 41-02: isCompoundComet condition — removing the
+      // `record.tx.chainId === 1` mainnet-only guard and replacing the
+      // hardcoded getAllCompoundCometsForChain(1) call with the per-chain
+      // variant getAllCompoundCometsForChain(record.tx.chainId as ChainId).
+      "record.tx.chainId === 1 &&",
+      "getAllCompoundCometsForChain(1).includes(record.tx.to);",
+      // Comment lines that reference the old Phase 28 mainnet-only wording.
+      "// Phase 28 Plan 28-04: LEDGER NOTICE for Compound V3. Research § Topic 8",
+      "// — Compound NOT in the LedgerHQ ERC-7730 clear-signing registry as of",
+      "// 2026-05-20; the device WILL blind-sign every Compound V3 transaction.",
+      "// Conditional emission: tx.chainId === 1 (Phase 28 mainnet-only) AND",
+      "// tx.to is in the canonical Comets set AND the selector matches one of",
+      "// the 2 Compound selectors. Defense against an unrelated contract that",
+      "// happens to expose a matching selector — only the SOT-canonical Comets",
+      "// get the NOTICE.",
     ];
     const unauthorized = previewDeletions.filter(
       (l) => !authorizedFragments.some((f) => l.includes(f)),

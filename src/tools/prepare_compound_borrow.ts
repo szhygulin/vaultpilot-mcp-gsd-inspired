@@ -75,16 +75,16 @@ function errEnvelope(
 }
 
 const DESCRIPTION = [
-  "Prepare an unsigned Compound V3 borrow on Ethereum mainnet — borrows the Comet's base asset against a healthy collateral position. Compound V3's withdraw(base, amount) against a wallet with zero base-supply position IS the borrow operation at the protocol level; this tool emits that exact calldata with the agent-facing intent named explicitly as `borrow`.",
+  "Prepare an unsigned Compound V3 borrow on the specified chain — borrows the Comet's base asset against a healthy collateral position. Supported chains: ethereum, arbitrum, polygon, base, optimism. Compound V3's withdraw(base, amount) against a wallet with zero base-supply position IS the borrow operation at the protocol level; this tool emits that exact calldata with the agent-facing intent named explicitly as `borrow`.",
   "Returns a handle the agent passes to preview_send before send_transaction.",
   "Use when the user wants to borrow the Comet's base asset (USDC for cUSDCv3; WETH for cWETHv3; etc.) against collateral they've previously supplied to the same Comet.",
   "REQUIRES the Comet's base asset. REFUSES with INVALID_INPUT + structuredContent.hintTool: \"prepare_compound_withdraw\" in two scenarios: (a) `asset` is a collateral asset (non-base) — that's a collateral withdraw, call prepare_compound_withdraw; (b) `asset` is the base asset AND the wallet has an existing supply position — Compound treats that as a base-asset withdraw (returns supplied principal), not a new borrow.",
   "Does NOT accept amount: \"max\" — borrowing the entire credit ceiling is an anti-pattern (over-borrows to liquidation; not a meaningful default). Pass a concrete decimal amount.",
   "Do NOT use for supply / withdraw / repay — call prepare_compound_supply / prepare_compound_withdraw / prepare_compound_repay respectively.",
   "Do NOT use for non-Compound lending — Aave V3 doesn't have a prepare_aave_borrow tool in v1.x (v2.4+ scope); Morpho / Spark / etc. are v2.4+ scope.",
-  "`chain` is REQUIRED and v2.3-locked to \"ethereum\". v2.3.x widens to Polygon / Arbitrum / Base / Optimism once Compound V3 mainnet markets are seeded for those chains.",
-  "`comet` is REQUIRED — the explicit Comet address (one of 6 canonical Ethereum mainnet markets: cUSDCv3 / cUSDTv3 / cWETHv3 / cUSDSv3 / cwstETHv3 / cWBTCv3). The server validates against the canonical allowlist BEFORE any RPC read.",
-  "`asset` is the underlying ERC-20 contract address — MUST be the Comet's base asset (cUSDCv3 → USDC; cWETHv3 → WETH; cUSDTv3 → USDT; cUSDSv3 → USDS; cwstETHv3 → wstETH; cWBTCv3 → WBTC). `amount` is a DECIMAL STRING in human units (e.g. \"100.5\" for 100.5 USDC).",
+  "`chain` is REQUIRED — one of: ethereum, arbitrum, polygon, base, optimism. No default-pick.",
+  "`comet` is REQUIRED — the explicit Comet contract address for the target chain. The server validates against the per-chain canonical Comet allowlist BEFORE any RPC read.",
+  "`asset` is the underlying ERC-20 contract address — MUST be the Comet's base asset for the specified chain and Comet. `amount` is a DECIMAL STRING in human units (e.g. \"100.5\" for 100.5 USDC).",
   "Compound V3 calldata is NOT covered by the Ledger ERC-7730 clear-sign registry — the device will BLIND-SIGN (display a raw hash). preview_send emits a LEDGER NOTICE block at preview time explaining the blind-sign expectation; the cryptographic anchor is the on-device hash match against the PREDICTED hash this tool produces.",
   "Pass `from` when the user wants to act from a non-default approved account (visible in `get_ledger_status.accountsByChain[chainId]`); otherwise omit and the active account is used. The borrowed tokens are transferred to msg.sender — passing `from` redirects both the sender and the recipient to that account.",
   "Requires a paired Ledger (real mode) or active persona (demo mode).",
@@ -97,15 +97,15 @@ const INPUT_SCHEMA = {
   properties: {
     chain: {
       type: "string",
-      enum: ["ethereum"],
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
       description:
-        "Chain identifier (required). v2.3 supports ONLY ethereum; v2.3.x widens to Polygon / Arbitrum / Base / Optimism.",
+        "Chain identifier (required). Supported: ethereum, arbitrum, polygon, base, optimism.",
     },
     comet: {
       type: "string",
       pattern: "^0x[0-9a-fA-F]{40}$",
       description:
-        "The Compound V3 Comet contract address (required). MUST be one of the 6 canonical Ethereum mainnet markets: cUSDCv3 / cUSDTv3 / cWETHv3 / cUSDSv3 / cwstETHv3 / cWBTCv3. Refused (INVALID_INPUT) if not in the canonical allowlist.",
+        "The Compound V3 Comet contract address (required). MUST be a canonical Comet for the specified chain. Refused (INVALID_INPUT) if not in the per-chain canonical allowlist.",
     },
     asset: {
       type: "string",
@@ -149,21 +149,6 @@ async function resolveDecimals(
 registerTool("prepare_compound_borrow", DESCRIPTION, INPUT_SCHEMA, async (args) => {
   try {
     const chainName = args.chain as ChainName;
-    if (chainName !== "ethereum") {
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: `error: invalid 'chain': Compound V3 v2.3 supports only 'ethereum', got "${chainName}"`,
-          },
-        ],
-        structuredContent: errEnvelope(
-          "INVALID_INPUT",
-          `invalid 'chain': Compound V3 v2.3 supports only 'ethereum', got "${chainName}"`,
-        ),
-      };
-    }
     const chainId = chainIdFromName(chainName);
 
     const rawComet = typeof args.comet === "string" ? args.comet : "";

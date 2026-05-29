@@ -282,12 +282,14 @@ describe("Phase 28 Plan 28-04 — Compound V3 Comets in Ethereum-arm allowlist",
     }
   });
 
-  it("getAllCompoundCometsForChain returns [] on non-mainnet — SOT cross-check", () => {
-    // The allowlist builder consumes this SOT getter directly; an empty
-    // return guarantees zero contamination across the Ethereum-arm extension.
-    const otherChains: readonly ChainId[] = [42161, 137, 8453, 10];
-    for (const chainId of otherChains) {
-      expect(getAllCompoundCometsForChain(chainId)).toEqual([]);
+  it("getAllCompoundCometsForChain returns non-empty arrays for all 5 supported chains (Phase 41)", () => {
+    // Phase 41 Plan 41-01 added Comets for all 4 L2s. The SOT getter must
+    // return non-empty arrays so the allowlist builder extends the per-chain
+    // CANONICAL_DISPATCH_TARGETS correctly.
+    const l2Counts: Record<ChainId, number> = { 1: 6, 42161: 4, 137: 2, 8453: 4, 10: 3 };
+    for (const [chainIdStr, expectedCount] of Object.entries(l2Counts)) {
+      const chainId = Number(chainIdStr) as ChainId;
+      expect(getAllCompoundCometsForChain(chainId).length).toBe(expectedCount);
     }
   });
 

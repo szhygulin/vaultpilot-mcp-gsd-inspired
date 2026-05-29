@@ -294,12 +294,12 @@ Each protocol is a phase with its own read tools, prepare tools, allowlist entri
 
 #### Compound V3 (CMP-*)
 
-- [ ] **CMP-01**: `get_compound_positions({ wallet, chain? })` returns Compound V3 supplied + borrowed per Comet with health-factor equivalent
-- [ ] **CMP-02**: `get_compound_market_info({ chain, cometAddress })` returns the Comet's supply APR + borrow APR + collateral factors + liquidation threshold
-- [ ] **CMP-03**: `prepare_compound_supply({ chain, cometAddress, asset, amount })` produces an unsigned Comet `supply(asset, amount)` call
-- [ ] **CMP-04**: `prepare_compound_withdraw({ chain, cometAddress, asset, amount })` produces an unsigned `withdraw(asset, amount)` call
-- [ ] **CMP-05**: `prepare_compound_borrow` + `prepare_compound_repay` cover the borrow lifecycle; `prepare_compound_repay({ amount: "max" })` accepted as full-position close (resolved server-side to outstanding-debt amount + small buffer)
-- [ ] **CMP-06**: Compound V3 Comet addresses sourced from `src/config/contracts.ts` per-chain typed slots (Ethereum mainnet first; multi-chain — Arbitrum / Polygon / Base / Optimism — added in v2.3.x follow-up if Compound's per-chain Comet deployment is mature at planning time); canonical-dispatch allowlist Compound arm wiring
+- [x] **CMP-01**: `get_compound_positions({ wallet, chain? })` returns Compound V3 supplied + borrowed per Comet with health-factor equivalent
+- [x] **CMP-02**: `get_compound_market_info({ chain, cometAddress })` returns the Comet's supply APR + borrow APR + collateral factors + liquidation threshold
+- [x] **CMP-03**: `prepare_compound_supply({ chain, cometAddress, asset, amount })` produces an unsigned Comet `supply(asset, amount)` call
+- [x] **CMP-04**: `prepare_compound_withdraw({ chain, cometAddress, asset, amount })` produces an unsigned `withdraw(asset, amount)` call
+- [x] **CMP-05**: `prepare_compound_borrow` + `prepare_compound_repay` cover the borrow lifecycle; `prepare_compound_repay({ amount: "max" })` accepted as full-position close (resolved server-side to outstanding-debt amount + small buffer)
+- [x] **CMP-06**: Compound V3 Comet addresses sourced from `src/config/contracts.ts` per-chain typed slots (Ethereum mainnet first; multi-chain — Arbitrum / Polygon / Base / Optimism — added in v2.3.x follow-up if Compound's per-chain Comet deployment is mature at planning time); canonical-dispatch allowlist Compound arm wiring
 
 #### Morpho Blue (MOR-*)
 

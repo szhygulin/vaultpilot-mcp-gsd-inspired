@@ -52,13 +52,13 @@ async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResul
 }
 
 describe("get_compound_market_info tool — register-all wiring + tool description", () => {
-  it("tool registered + description names Compound V3 + lists Comets", () => {
+  it("tool registered + description names Compound V3 + lists all 5 supported chains (Phase 41 Plan 41-02)", () => {
     const tool = getRegisteredTool("get_compound_market_info");
     expect(tool).toBeDefined();
     expect(tool?.name).toBe("get_compound_market_info");
     expect(tool?.description).toMatch(/Compound V3 market metadata/);
-    expect(tool?.description).toMatch(/cUSDCv3/);
-    expect(tool?.description).toMatch(/cWETHv3/);
+    expect(tool?.description).toMatch(/arbitrum/);
+    expect(tool?.description).toMatch(/polygon/);
     expect(tool?.description).toMatch(/INVALID_INPUT/);
   });
 });

@@ -1149,8 +1149,10 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 41-01-PLAN.md — SOT extension: 13 verified L2 Comet rows into `COMPOUND_COMETS_RAW` (Arbitrum 4 / Polygon 2 / Base 4 / Optimism 3) + widen `CompoundCometBase` with `USDC.e` + `AERO` + cross-chain-coincidence / USDbC-exclusion / WETH-consistency comments + per-chain config-contracts assertions
-- [ ] 41-02-PLAN.md — tool chain-gate removal (4 prepare tools + `get_compound_market_info` enum + `get_lending_positions` + `simulate_position_change` chainId guards) + cross-chain distinctness Fixtures `FIXTURE_CMP_{ARB,BASE,OPT,POLY}_A` + NEW `canonical-dispatch-compound-l2.test.ts` + per-L2 lifecycle integration round-trips
+- [x] 41-01-PLAN.md — SOT extension: 13 verified L2 Comet rows into `COMPOUND_COMETS_RAW` (Arbitrum 4 / Polygon 2 / Base 4 / Optimism 3) + widen `CompoundCometBase` with `USDC.e` + `AERO` + cross-chain-coincidence / USDbC-exclusion / WETH-consistency comments + per-chain config-contracts assertions
+- [x] 41-02-PLAN.md — tool chain-gate removal (4 prepare tools + `get_compound_market_info` enum + `get_lending_positions` + `simulate_position_change` chainId guards) + cross-chain distinctness Fixtures `FIXTURE_CMP_{ARB,BASE,OPT,POLY}_A` + NEW `canonical-dispatch-compound-l2.test.ts` + per-L2 lifecycle integration round-trips
+
+**Status**: code-complete; verification PASSED (7/7 success criteria; 5254 tests green; FROZEN zero-diff held — cryptographic-binding chain + `send_transaction` 3-gate + `canonical-dispatch.ts` + 21-code error union all untouched). v2.3.x verify-phase pending real-Ledger L2 mainnet smoke (`41-HUMAN-UAT.md` — Compound supply/withdraw/borrow/repay-max on Arbitrum/Base/Optimism + bridged-USDC.e disambiguation on Polygon + cross-chain fingerprint distinctness on-device; bundled per the 2026-05-16 directive). 13 verified L2 Comets added (Arbitrum 4, Polygon 2, Base 4 incl. AERO / excl. deprecated USDbC, Optimism 3); `preview_send` Compound LEDGER NOTICE widened to all chains with Comets; canonical-dispatch auto-extended via the SOT getter (zero dispatch code change).
 
 ---
 

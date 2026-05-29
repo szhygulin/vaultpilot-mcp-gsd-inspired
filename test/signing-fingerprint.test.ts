@@ -141,6 +141,21 @@ export const FIXTURE_P_FP = "0xb137028a94f1af0a98dc0f96102101ad4efc756784fa54dc0
  * three-step integration test can cross-link. */
 export const FIXTURE_SAFE_D_FP = "0xbd55bd01d22779249cb10b8ecea6f87c85f511a024175b7dc0aa3ac1c7dad71b";
 
+// Phase 41 — Plan 41-02. Cross-chain Compound V3 distinctness fixtures.
+// Arbitrum (chainId 42161): supply(native-USDC 0xaf88...5831, 100e6) on cUSDCv3-arb.
+// Exported so test/compound-v3-lifecycle.integration.test.ts L2 round-trips can cross-link.
+export const FIXTURE_CMP_ARB_A =
+  "0x5b68428571eb9758a23878282c1c09f102ca11695254b08df202a9a45ce53667" as const;
+// Base (chainId 8453): supply(native-USDC 0x8335...2913, 100e6) on cUSDCv3-base.
+export const FIXTURE_CMP_BASE_A =
+  "0x7bf1a90996c9c666f762531ba076845ff49404a8ee07ac29b41623efa0226949" as const;
+// Optimism (chainId 10): supply(native-USDC 0x0b2C...Ff85, 100e6) on cUSDCv3-opt.
+export const FIXTURE_CMP_OPT_A =
+  "0xebb6db9ace2a8364753602664e31cc6ce3d8622442b35600e8c36958fe487c92" as const;
+// Polygon (chainId 137): supply(USDC.e 0x2791...4174, 100e6) on cUSDCe-poly.
+export const FIXTURE_CMP_POLY_A =
+  "0x9036d9c04ed47d633242eb64b2381c3f34bf0c3f39eb4f6a727cbab148cdaa8f" as const;
+
 describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
   it("Fixture A — native send → 0x7e1867b2... byte-for-byte", () => {
     const fp = computePayloadFingerprint({
@@ -410,6 +425,86 @@ describe("computePayloadFingerprint — PREP-03 + T-BIND-1", () => {
     // (Plan 28-03) — the prepare tool emits this exact calldata when
     // `amount: "max"`.
     expect(fp).toBe("0x287f7b8731dbe64fbfcaf023382eb31c385a33938b52548887daef807f7e480c");
+  });
+
+  // ==========================================================================
+  // Phase 41 — Plan 41-02. Fixtures FIXTURE_CMP_ARB_A / _BASE_A / _OPT_A /
+  // _POLY_A — Compound V3 cross-chain distinctness anchors.
+  //
+  // Each fixture pins the payloadFingerprint for supply(per-chain-USDC, 100e6)
+  // into the per-chain native-USDC Comet (USDC.e for Polygon). The distinctness
+  // test asserts that chainId + tx.to both flow into the preimage — four distinct
+  // L2 fingerprints plus Fixture R prove the cross-chain fingerprint distinctness
+  // property (Phase 41 SC-6).
+  //
+  // Computation script (recorded for reproducibility — extend the Phase 28
+  // Fixture R/S/T/U script to include the L2 shapes):
+  //   node -e "
+  //     const { encodeFunctionData, parseAbi, keccak256, concat, numberToBytes, hexToBytes, toBytes } = require('viem');
+  //     const ABI = parseAbi(['function supply(address,uint256)']);
+  //     const TAG = toBytes('VaultPilot-txverify-v1:');
+  //     const chains = [
+  //       { label: 'ARB',  chainId: 42161, token: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831', comet: '0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf' },
+  //       { label: 'BASE', chainId: 8453,  token: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913', comet: '0xb125E6687d4313864e53df431d5425969c15Eb2F' },
+  //       { label: 'OPT',  chainId: 10,    token: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85', comet: '0x2e44e174f7D53F0212823acC11C01A11d58c5bCB' },
+  //       { label: 'POLY', chainId: 137,   token: '0x2791bca1f2de4661ed88a30c99a7a9449aa84174', comet: '0xF25212E676D1F7F89Cd72fFEe66158f541246445' },
+  //     ];
+  //     for (const { label, chainId, token, comet } of chains) {
+  //       const data = encodeFunctionData({ abi: ABI, functionName: 'supply', args: [token, 100_000_000n] });
+  //       const preimage = concat([TAG, numberToBytes(chainId, {size:32}), hexToBytes(comet), numberToBytes(0n,{size:32}), hexToBytes(data)]);
+  //       console.log(label, keccak256(preimage));
+  //     }
+  //   "
+  //
+  // Export: each constant exported so consumer tests can cross-link byte-identity
+  // (test/compound-v3-lifecycle.integration.test.ts Task 3 L2 round-trips).
+
+  it("Fixture CMP_ARB_A — Compound V3 supply(arb-native-USDC, 100e6) on cUSDCv3-arb fingerprint (Phase 41 / Plan 41-02)", () => {
+    const comet = getCompoundCometAddress(42161, "USDC")!;
+    const token = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" as Address;
+    const supplyData = encodeCompoundSupply(token, 100_000_000n);
+    const fp = computePayloadFingerprint({ chainId: 42161, to: comet, valueWei: 0n, data: supplyData });
+    // Hardcoded literal anchor (Phase 41 Plan 41-02). Cross-linked from
+    // test/compound-v3-lifecycle.integration.test.ts L2 round-trips.
+    expect(fp).toBe(FIXTURE_CMP_ARB_A);
+  });
+
+  it("Fixture CMP_BASE_A — Compound V3 supply(base-USDC, 100e6) on cUSDCv3-base fingerprint (Phase 41 / Plan 41-02)", () => {
+    const comet = getCompoundCometAddress(8453, "USDC")!;
+    const token = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
+    const supplyData = encodeCompoundSupply(token, 100_000_000n);
+    const fp = computePayloadFingerprint({ chainId: 8453, to: comet, valueWei: 0n, data: supplyData });
+    // Hardcoded literal anchor (Phase 41 Plan 41-02). Cross-linked from
+    // test/compound-v3-lifecycle.integration.test.ts L2 round-trips.
+    expect(fp).toBe(FIXTURE_CMP_BASE_A);
+  });
+
+  it("Fixture CMP_OPT_A — Compound V3 supply(opt-USDC, 100e6) on cUSDCv3-opt fingerprint (Phase 41 / Plan 41-02)", () => {
+    const comet = getCompoundCometAddress(10, "USDC")!;
+    const token = "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85" as Address;
+    const supplyData = encodeCompoundSupply(token, 100_000_000n);
+    const fp = computePayloadFingerprint({ chainId: 10, to: comet, valueWei: 0n, data: supplyData });
+    // Hardcoded literal anchor (Phase 41 Plan 41-02). Cross-linked from
+    // test/compound-v3-lifecycle.integration.test.ts L2 round-trips.
+    expect(fp).toBe(FIXTURE_CMP_OPT_A);
+  });
+
+  it("Fixture CMP_POLY_A — Compound V3 supply(poly-USDC.e, 100e6) on cUSDCe-poly fingerprint (Phase 41 / Plan 41-02)", () => {
+    const comet = getCompoundCometAddress(137, "USDC.e")!;
+    const token = "0x2791bca1f2de4661ed88a30c99a7a9449aa84174" as Address;
+    const supplyData = encodeCompoundSupply(token, 100_000_000n);
+    const fp = computePayloadFingerprint({ chainId: 137, to: comet, valueWei: 0n, data: supplyData });
+    // Hardcoded literal anchor (Phase 41 Plan 41-02). Cross-linked from
+    // test/compound-v3-lifecycle.integration.test.ts L2 round-trips.
+    expect(fp).toBe(FIXTURE_CMP_POLY_A);
+  });
+
+  it("Phase 41 cross-chain distinctness — five Compound USDC supply fingerprints are all distinct (chainId + to both flow into preimage; Phase 41 SC-6)", () => {
+    // Fixture R (Ethereum cUSDCv3, chainId=1) is the anchor; the four L2
+    // fixtures prove the fingerprint is chain-discriminating.
+    const FIXTURE_R_FP = "0x09410c3060d1da3b7434450f172e9951928c22b838193be3f7b9956a603dfa9d";
+    const distinct = new Set([FIXTURE_R_FP, FIXTURE_CMP_ARB_A, FIXTURE_CMP_BASE_A, FIXTURE_CMP_OPT_A, FIXTURE_CMP_POLY_A]);
+    expect(distinct.size).toBe(5);
   });
 
   // ==========================================================================

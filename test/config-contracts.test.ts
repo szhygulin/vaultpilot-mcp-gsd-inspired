@@ -453,13 +453,10 @@ describe("src/config/contracts.ts — Compound V3 Comet SOT (Phase 28 Plan 28-01
     expect(new Set(comets)).toEqual(expected);
   });
 
-  // T8 — Compound-absent chain returns []. Polygon (137) is a valid
-  // ChainId per Phase 8 widening but COMPOUND_COMETS_RAW has no row for it
-  // (v2.3.x extends). The runtime returns [], NOT undefined / throw — the
-  // canonical-dispatch allowlist in Plan 28-04 iterates this safely.
-  it("Test 8a — getAllCompoundCometsForChain(137) (Polygon — valid ChainId, no Comet row yet) returns []", () => {
-    expect(getAllCompoundCometsForChain(137)).toEqual([]);
-  });
+  // T8 — Phase 41 Plan 41-01 extended Polygon with 2 Comet rows (USDC.e +
+  // USDT); see the Phase 41 describe block below for per-chain assertions.
+  // The stale "returns []" assertion for chainId 137 is intentionally removed
+  // here — it would now be false.
 
   // T8b — Compile-time narrowing: getAllCompoundCometsForChain(999) is a TS
   // error (999 not in the 5-chain ChainId union). The @ts-expect-error
@@ -507,6 +504,129 @@ describe("src/config/contracts.ts — Compound V3 Comet SOT (Phase 28 Plan 28-01
       expect(addr).not.toBeNull();
       expect(addr).toBe(getAddress(addr!));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Compound V3 L2 SOT — Phase 41 Plan 41-01.
+// Per-chain length + set-equality assertions for Arbitrum/Polygon/Base/Optimism;
+// Ethereum-row-unchanged guard; USDbC deliberate-exclusion guard; USDC.e
+// distinctness assertions.
+// ---------------------------------------------------------------------------
+
+describe("src/config/contracts.ts — Compound V3 L2 Comet SOT (Phase 41 Plan 41-01)", () => {
+  // -----------------------------------------------------------------------
+  // Arbitrum One (chainId 42161) — 4 Comets: USDC, USDC.e, USDT, WETH.
+  // -----------------------------------------------------------------------
+  it("Arbitrum — getAllCompoundCometsForChain(42161).length === 4", () => {
+    expect(getAllCompoundCometsForChain(42161).length).toBe(4);
+  });
+
+  it("Arbitrum — getAllCompoundCometsForChain(42161) set-equals { USDC, USDC.e, USDT, WETH } lookups", () => {
+    const comets = getAllCompoundCometsForChain(42161);
+    const expected = new Set<string>([
+      getCompoundCometAddress(42161, "USDC")!,
+      getCompoundCometAddress(42161, "USDC.e")!,
+      getCompoundCometAddress(42161, "USDT")!,
+      getCompoundCometAddress(42161, "WETH")!,
+    ]);
+    expect(new Set(comets)).toEqual(expected);
+  });
+
+  it("Arbitrum — getCompoundCometAddress(42161, 'USDC') and 'USDC.e' are both non-null and distinct", () => {
+    const usdc = getCompoundCometAddress(42161, "USDC");
+    const usdce = getCompoundCometAddress(42161, "USDC.e");
+    expect(usdc).not.toBeNull();
+    expect(usdce).not.toBeNull();
+    expect(usdc).not.toBe(usdce);
+  });
+
+  // -----------------------------------------------------------------------
+  // Polygon PoS (chainId 137) — 2 Comets: USDC.e, USDT.
+  // -----------------------------------------------------------------------
+  it("Polygon — getAllCompoundCometsForChain(137).length === 2", () => {
+    expect(getAllCompoundCometsForChain(137).length).toBe(2);
+  });
+
+  it("Polygon — getAllCompoundCometsForChain(137) set-equals { USDC.e, USDT } lookups", () => {
+    const comets = getAllCompoundCometsForChain(137);
+    const expected = new Set<string>([
+      getCompoundCometAddress(137, "USDC.e")!,
+      getCompoundCometAddress(137, "USDT")!,
+    ]);
+    expect(new Set(comets)).toEqual(expected);
+  });
+
+  it("Polygon — getCompoundCometAddress(137, 'USDC') is null (no native-USDC Comet); 'USDC.e' is non-null", () => {
+    // Security: the agent cannot route native USDC as the Polygon base asset
+    // by symbol confusion — the key "USDC" is absent; only "USDC.e" resolves.
+    expect(getCompoundCometAddress(137, "USDC")).toBeNull();
+    expect(getCompoundCometAddress(137, "USDC.e")).not.toBeNull();
+  });
+
+  // -----------------------------------------------------------------------
+  // Base (chainId 8453) — 4 Comets: USDC, WETH, USDS, AERO.
+  // USDbC deliberately excluded (Gauntlet Dec-2024 deprecation).
+  // -----------------------------------------------------------------------
+  it("Base — getAllCompoundCometsForChain(8453).length === 4", () => {
+    expect(getAllCompoundCometsForChain(8453).length).toBe(4);
+  });
+
+  it("Base — getAllCompoundCometsForChain(8453) set-equals { USDC, WETH, USDS, AERO } lookups", () => {
+    const comets = getAllCompoundCometsForChain(8453);
+    const expected = new Set<string>([
+      getCompoundCometAddress(8453, "USDC")!,
+      getCompoundCometAddress(8453, "WETH")!,
+      getCompoundCometAddress(8453, "USDS")!,
+      getCompoundCometAddress(8453, "AERO")!,
+    ]);
+    expect(new Set(comets)).toEqual(expected);
+  });
+
+  it("Base — deprecated USDbC proxy 0x9c4ec768… is NOT in the Base arm (deliberate exclusion guard)", () => {
+    // The deprecated USDbC Comet proxy (0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf)
+    // is intentionally excluded. It coincides with the Arbitrum USDC proxy on
+    // a different chain — per-chain sets are disjoint; this assertion proves
+    // the address is absent from the Base 8453 arm.
+    const deprecatedUSDbC = getAddress("0x9c4ec768c28520B50860ea7a15bd7213a9fF58bf");
+    const baseComets = getAllCompoundCometsForChain(8453);
+    expect(baseComets).not.toContain(deprecatedUSDbC);
+  });
+
+  // -----------------------------------------------------------------------
+  // OP Mainnet (chainId 10) — 3 Comets: USDC, USDT, WETH.
+  // -----------------------------------------------------------------------
+  it("Optimism — getAllCompoundCometsForChain(10).length === 3", () => {
+    expect(getAllCompoundCometsForChain(10).length).toBe(3);
+  });
+
+  it("Optimism — getAllCompoundCometsForChain(10) set-equals { USDC, USDT, WETH } lookups", () => {
+    const comets = getAllCompoundCometsForChain(10);
+    const expected = new Set<string>([
+      getCompoundCometAddress(10, "USDC")!,
+      getCompoundCometAddress(10, "USDT")!,
+      getCompoundCometAddress(10, "WETH")!,
+    ]);
+    expect(new Set(comets)).toEqual(expected);
+  });
+
+  // -----------------------------------------------------------------------
+  // Ethereum-row-unchanged guard (byte-identity regression anchor).
+  // Proves Task 1 did NOT perturb the 1: row; Fixtures R/S/T/U hardcoded
+  // against these addresses remain valid.
+  // -----------------------------------------------------------------------
+  it("Ethereum-unchanged — getAllCompoundCometsForChain(1).length still === 6 after Phase 41 extension", () => {
+    expect(getAllCompoundCometsForChain(1).length).toBe(6);
+  });
+
+  it("Ethereum-unchanged — getAllCompoundCometsForChain(1) set still equals { USDC, USDT, WETH, USDS, wstETH, WBTC } lookups", () => {
+    const comets = getAllCompoundCometsForChain(1);
+    const expected = new Set<string>(
+      (["USDC", "USDT", "WETH", "USDS", "wstETH", "WBTC"] as CompoundCometBase[]).map(
+        (b) => getCompoundCometAddress(1, b)!,
+      ),
+    );
+    expect(new Set(comets)).toEqual(expected);
   });
 });
 

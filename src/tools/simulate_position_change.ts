@@ -31,6 +31,7 @@ import { getChainClient, isPublicNodeFallback } from "../chains/registry.js";
 import {
   chainIdFromName,
   getAllCompoundCometsForChain,
+  type ChainId,
   type ChainName,
 } from "../config/contracts.js";
 import { isDemoMode } from "../config/env.js";
@@ -73,8 +74,8 @@ const DESCRIPTION = [
   "Use when the user asks 'what if I supply / withdraw / borrow / repay X?' or to surface a risk warning BEFORE the agent prepares the actual transaction.",
   "Do NOT use this as a signing precondition — the trust anchor is the on-device hash match at send_transaction. The simulation is informational only.",
   "`chain` is REQUIRED — pass one of ethereum, arbitrum, polygon, base, optimism. No default-pick; omitting the arg refuses at the dispatch boundary.",
-  "`protocol` is OPTIONAL — `\"aave-v3\"` (default for back-compat) or `\"compound-v3\"`. Compound V3 is Ethereum mainnet only (chainId 1) in v2.3.",
-  "`cometAddress` is REQUIRED when `protocol: \"compound-v3\"` — one of the 6 canonical mainnet Comets (cUSDCv3 / cUSDTv3 / cWETHv3 / cUSDSv3 / cwstETHv3 / cWBTCv3).",
+  "`protocol` is OPTIONAL — `\"aave-v3\"` (default for back-compat) or `\"compound-v3\"`. Compound V3 is supported on any chain with Comets: ethereum, arbitrum, polygon, base, optimism.",
+  "`cometAddress` is REQUIRED when `protocol: \"compound-v3\"` — must be a canonical Comet for the specified chain (validated against the per-chain allowlist before any RPC read).",
   "`action: \"supply\" | \"withdraw\" | \"borrow\" | \"repay\"`.",
   "`amount` is a DECIMAL STRING in human units (e.g. \"100.5\" USDC). The server resolves the asset's decimals via the registry / live RPC.",
   "Returns (Aave) `{ chain, chainId, protocol: \"aave-v3\", asset, action, amount, healthFactorBefore, healthFactorAfter, liquidationRiskBefore, liquidationRiskAfter, warning?, rpcDegraded? }`.",
@@ -97,13 +98,13 @@ const INPUT_SCHEMA = {
       type: "string",
       enum: ["aave-v3", "compound-v3"] as const,
       description:
-        "Lending protocol to simulate against (optional; defaults to \"aave-v3\" for back-compat). \"compound-v3\" is Ethereum mainnet only in v2.3 and requires cometAddress.",
+        "Lending protocol to simulate against (optional; defaults to \"aave-v3\" for back-compat). \"compound-v3\" is supported on any chain with Comets and requires cometAddress.",
     },
     cometAddress: {
       type: "string",
       pattern: "^0x[0-9a-fA-F]{40}$",
       description:
-        "Required when `protocol: \"compound-v3\"`. Must be one of the 6 canonical Compound V3 mainnet Comets.",
+        "Required when `protocol: \"compound-v3\"`. Must be a canonical Compound V3 Comet for the specified chain.",
     },
     asset: {
       type: "string",
@@ -513,7 +514,7 @@ export type { HealthFactorInput };
 
 interface SimulateCompoundInput {
   chainName: ChainName;
-  chainId: number;
+  chainId: ChainId;
   rawAsset: string;
   assetAddr: Address;
   action: Action;
@@ -523,23 +524,6 @@ interface SimulateCompoundInput {
 }
 
 async function simulateCompoundV3(input: SimulateCompoundInput) {
-  // Compound V3 v2.3 scope: Ethereum mainnet only.
-  if (input.chainId !== 1) {
-    return {
-      isError: true,
-      content: [
-        {
-          type: "text" as const,
-          text: `error: protocol \"compound-v3\" is Ethereum mainnet only in v2.3 (got chain ${input.chainName}, chainId ${input.chainId})`,
-        },
-      ],
-      structuredContent: errEnvelope(
-        "INVALID_INPUT",
-        `protocol "compound-v3" requires chainId 1 (got ${input.chainId})`,
-      ),
-    };
-  }
-
   if (!/^0x[0-9a-fA-F]{40}$/.test(input.cometAddressRaw) ||
       !isAddress(input.cometAddressRaw, { strict: false })) {
     return {
@@ -558,24 +542,24 @@ async function simulateCompoundV3(input: SimulateCompoundInput) {
   }
 
   const cometAddr = getAddress(input.cometAddressRaw);
-  const allowlist = getAllCompoundCometsForChain(1);
+  const allowlist = getAllCompoundCometsForChain(input.chainId);
   if (!allowlist.includes(cometAddr)) {
     return {
       isError: true,
       content: [
         {
           type: "text" as const,
-          text: `error: cometAddress ${cometAddr} is not in the canonical Compound V3 mainnet allowlist (${allowlist.length} entries)`,
+          text: `error: cometAddress ${cometAddr} is not in the canonical Compound V3 allowlist for chain ${input.chainName} (${allowlist.length} entries)`,
         },
       ],
       structuredContent: errEnvelope(
         "INVALID_INPUT",
-        `cometAddress ${cometAddr} not in canonical Compound V3 allowlist`,
+        `cometAddress ${cometAddr} not in canonical Compound V3 allowlist for chainId ${input.chainId}`,
       ),
     };
   }
 
-  const client = getChainClient(1);
+  const client = getChainClient(input.chainId);
 
   let state: Awaited<ReturnType<typeof _compoundChains.getCometState>>;
   let collateral: Awaited<ReturnType<typeof _compoundChains.getCometCollateralPositions>>;

@@ -531,14 +531,14 @@ describe("prepare_compound_repay — register-all wiring (smoke)", () => {
     expect(names).toContain("prepare_compound_repay");
   });
 
-  it("inputSchema requires chain + comet + asset + amount; chain enum locked to ['ethereum']", () => {
+  it("inputSchema requires chain + comet + asset + amount; chain enum widened to all 5 chains (Phase 41 Plan 41-02)", () => {
     const tool = getRegisteredTool("prepare_compound_repay");
     expect(tool).toBeDefined();
     if (!tool) return;
     expect(tool.inputSchema.required).toEqual(["chain", "comet", "asset", "amount"]);
     expect(tool.inputSchema.properties?.chain).toMatchObject({
       type: "string",
-      enum: ["ethereum"],
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"],
     });
   });
 });
