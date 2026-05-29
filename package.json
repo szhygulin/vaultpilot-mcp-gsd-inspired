@@ -30,10 +30,18 @@
   },
   "pkg": {
     "scripts": [
-      "dist/**/*.js"
+      "dist/**/*.js",
+      "node_modules/multiformats/cjs/src/**/*.js",
+      "node_modules/uint8arrays/cjs/src/**/*.js",
+      "node_modules/@ledgerhq/devices/lib/**/*.js",
+      "node_modules/@ledgerhq/hw-transport/lib/**/*.js",
+      "node_modules/@ledgerhq/errors/lib/**/*.js"
     ],
     "assets": [
-      "package.json"
+      "package.json",
+      "node_modules/usb/prebuilds/**",
+      "node_modules/@serialport/bindings-cpp/prebuilds/**",
+      "node_modules/node-hid/build/**"
     ],
     "sea": true
   },
@@ -43,7 +51,10 @@
   "overrides": {
     "@ledgerhq/hw-transport-node-hid": "6.32.0",
     "@ledgerhq/hw-app-solana": "7.9.0",
-    "@ledgerhq/hw-app-trx": "6.34.0"
+    "@ledgerhq/hw-app-trx": "6.34.0",
+    "rpc-websockets": {
+      "uuid": "8.3.2"
+    }
   },
   "license": "BUSL-1.1",
   "author": "Slava Zhygulin",
