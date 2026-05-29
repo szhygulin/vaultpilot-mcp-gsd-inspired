@@ -43,12 +43,12 @@ function errEnvelope(
 const SECONDS_PER_YEAR: bigint = 31_536_000n;
 
 const DESCRIPTION = [
-  "Read Compound V3 market metadata for a specified Comet (Ethereum mainnet — 6 canonical Comets: cUSDCv3 / cUSDTv3 / cWETHv3 / cUSDSv3 / cwstETHv3 / cWBTCv3).",
+  "Read Compound V3 market metadata for a specified Comet on a supported chain (ethereum, arbitrum, polygon, base, optimism).",
   "Returns per-Comet supply APR, borrow APR, utilization, total supply, total borrow, and per-collateral metadata (borrowCollateralFactor, liquidateCollateralFactor, liquidationFactor, supplyCap, currentSupply, priceUsd).",
   "Use BEFORE prepare_compound_supply / _borrow to surface APRs and collateral capacity (helps the agent communicate yield + capacity to the user before the prepare-tool call).",
-  "Does NOT return per-wallet positions — call `get_lending_positions` with `chain: \"ethereum\"` for that (returns positions for both Aave V3 and Compound V3).",
+  "Does NOT return per-wallet positions — call `get_lending_positions` for that (returns positions for both Aave V3 and Compound V3 on any supported chain).",
   "Returns `{ chain, chainId, cometAddress, baseToken, utilizationPercent, supplyAprPercent, borrowAprPercent, totalSupply, totalBorrow, baseTokenPriceUsd, collateralAssets: [...], rpcDegraded? }`.",
-  "Failure modes: INTERNAL_ERROR (RPC unreachable; the public-node fallback path has already been tried); INVALID_INPUT (cometAddress not in the canonical mainnet allowlist).",
+  "Failure modes: INTERNAL_ERROR (RPC unreachable; the public-node fallback path has already been tried); INVALID_INPUT (cometAddress not in the per-chain canonical allowlist).",
 ].join(" ");
 
 const INPUT_SCHEMA = {
@@ -56,8 +56,8 @@ const INPUT_SCHEMA = {
   properties: {
     chain: {
       type: "string",
-      enum: ["ethereum"] as const,
-      description: "Chain identifier. Phase 28: Ethereum mainnet only; v2.3.x widens.",
+      enum: ["ethereum", "arbitrum", "polygon", "base", "optimism"] as const,
+      description: "Chain identifier (required). Supported: ethereum, arbitrum, polygon, base, optimism.",
     },
     cometAddress: {
       type: "string",
