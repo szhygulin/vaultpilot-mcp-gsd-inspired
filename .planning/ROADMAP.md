@@ -1160,13 +1160,38 @@ Plans:
 
 Small, scoped follow-ups deferred out of already-shipped phases. Each is sized as a single phase (1-3 plans), not a full milestone. Promote one to an active phase via `/gsd-phase add` + `/gsd-plan-phase` when ready. Ordered roughly by leverage.
 
-- **v1.4.1 — pkg ESM `@modelcontextprotocol/sdk` subpath-exports fix** (from Phase 10 / 10-01). pkg's snapshot fs ignores the SDK's subpath `exports` field, so per-platform binaries fail at runtime with `ERR_MODULE_NOT_FOUND`. This **gates the v1.4.0 GA binary tag**. Recovery options (documented in 10-01 SUMMARY): `pkg.sea=true` backend swap OR a `package.json` `imports` field map. Highest leverage — unblocks distribution.
+- ~~**v1.4.1 — pkg ESM `@modelcontextprotocol/sdk` subpath-exports fix** (from Phase 10 / 10-01)~~ — **PROMOTED to Phase 42 (2026-05-29)**. pkg's snapshot fs ignores the SDK's subpath `exports` field, so per-platform binaries fail at runtime with `ERR_MODULE_NOT_FOUND`. This **gates the v1.4.0 GA binary tag**. Recovery options (documented in 10-01 SUMMARY): `pkg.sea=true` backend swap OR a `package.json` `imports` field map. Highest leverage — unblocks distribution.
 - **v1.x — ENS-resolver migration + `src/chains/ethereum.ts` compat-shim deletion** (from Phase 8 / 08-01). The compat shim survives with 2 importers: the FROZEN `send_transaction.ts` and the out-of-scope `ens/resolver.ts`. Migrate the ENS resolver onto the multi-chain registry, then delete the shim. Requires addressing the FROZEN `send_transaction.ts` constraint — design carefully (the 3-gate region is byte-frozen).
 - **v2.0.x — Solana durable-nonce setup tools** (from Phase 12 / 12-04, plan-check FLAG-2). `prepare_solana_nonce_init` + `prepare_solana_nonce_close` for per-wallet durable-nonce accounts. Orthogonal to the cryptographic-binding chain (the 150-slot recent-blockhash window covers the ship gate). Surface to design: `NonceAuthorized` account-ownership semantics + multi-wallet authority gating — warrants its own design + verify-phase pass.
 - **v2.4.x — Curve legacy-pool `add_liquidity`** (from Phase 34 / 34-03). `prepare_curve_add_liquidity` is `stable_ng`-only; legacy pools are refused with `INVALID_INPUT "deferred to v2.4.x"`. Add the legacy `abiVersion` dispatch arm (mirrors the existing `prepare_curve_swap` per-`abiVersion` pattern).
 - **v2.2.x — LiFi BTC/TRON bridging** (from Phase 20 / 20-02, D-04b — **BLOCKED**). `src/clients/lifi.ts` shared client + `bridge-decoders/lifi-tron.ts` (Inv #6b `_bridgeData.receiver` decoder) + `prepare_tron_lifi_swap`. Blocked on an external precondition: LiFi has no TRON deployment as of 2026-05-21 (verified via live API + GitHub manifest + quote endpoint). Reschedule preconditions + `checkpoint:human-verify` signature are in `20-02-DEFERRED.md`. Do NOT plan until LiFi confirms a TRON/BTC deployment.
 
 > Note: the **deferred real-Ledger verify-phases** across v1.x–v2.x (each phase's `*-HUMAN-UAT.md`) are hardware-test debt, tracked separately — run `/gsd-audit-uat` for the cross-phase view. They are not feature backlog.
+
+### 📋 v1.4.1 pkg ESM SDK subpath-exports fix (deferred follow-up) (Phase 42)
+
+**Milestone Goal:** Lift the Phase 10-01 deferral that gates the v1.4.0 GA binary tag. The `@yao-pkg/pkg` build pipeline (DF-1 LOCKED, shipped in Plan 10-01) produces all four per-platform binaries cleanly, but they fail at runtime with `ERR_MODULE_NOT_FOUND` because pkg's snapshot filesystem does not honor the `@modelcontextprotocol/sdk` package's `exports` subpath map (`server/index.js`, `server/stdio.js`, `validation/ajv`). The fix makes the binaries actually run — `vaultpilot-mcp --version` and full MCP stdio startup succeed on the native build target — **without touching FROZEN `src/`**. The cryptographic-binding chain stays byte-identical; this is a build-tooling + packaging-config change only.
+
+#### Phase 42: pkg ESM `@modelcontextprotocol/sdk` subpath-export resolution fix
+
+**Goal**: The pkg-built binary runs end-to-end on its native target: `./dist-binaries/vaultpilot-mcp --version` exits 0 and prints the version, and the MCP server completes stdio handshake startup — with ZERO `ERR_MODULE_NOT_FOUND` for any `@modelcontextprotocol/sdk` subpath. Achieved without editing any FROZEN file (cryptographic-binding chain + `send_transaction` 3-gate + `preview_send` + all `prepare_*` + Fixtures A-F byte-identical; `git diff origin/main -- src/` stays ZERO except, at most, a non-FROZEN module if research proves it unavoidable). The fix is packaging-config-scoped: `package.json` (`pkg.sea`, `imports` field, or `pkg.assets`/`scripts`) and/or build-script flags only.
+**Depends on**: Phase 10 (Plan 10-01 — `@yao-pkg/pkg` pipeline + `--fallback-to-source` + `pkg` config block) — and current `main` (v2.6 close-out)
+**Requirements**: DIST-40 (binary distribution — runtime-correctness completion; the build half shipped in Phase 10, the runtime half lands here)
+**Success Criteria** (what must be TRUE):
+
+  1. Root cause confirmed empirically: a reproduction of the `ERR_MODULE_NOT_FOUND` against the current `main` binary build is captured (build-time warnings + runtime error text) before any fix is applied
+  2. The chosen recovery option is selected by empirical test, not assertion — research builds the binary under each candidate (option a: `pkg.sea=true`; option c: `package.json` `imports` subpath map; option b deep-CJS-imports REJECTED up front because it edits FROZEN `src/server.ts`) and records which actually resolves the SDK subpaths at runtime, plus binary-size / cold-start / build-time deltas
+  3. `npm run build:binary:<native-target>` produces a binary that runs `--version` (exit 0) AND completes MCP stdio startup with no module-resolution error
+  4. FROZEN-area zero-diff held: `git diff origin/main -- src/` is ZERO across the cryptographic-binding chain, `send_transaction.ts` 3-gate, `preview_send.ts`, all `prepare_*`, and `test/signing-fingerprint*.test.ts` Fixtures A-F (if the selected option somehow requires a `src/` touch, that is a hard STOP + AskUserQuestion, not a silent deviation)
+  5. The full existing test suite stays green (no regression from any `package.json` / build-config change); `npm run typecheck` + `npm run build` (tsc) remain clean
+  6. The release workflow (`.github/workflows/release.yml`) is updated only if the fix requires a build-invocation change (e.g. a new flag); otherwise it stays byte-identical and the fix is purely in `package.json`
+  7. SECURITY.md `## v1.4 Residual Risks (Distribution)` is reconciled if the fix changes the supply-chain/runtime-resolution posture (e.g. SEA backend swap); otherwise unchanged
+  8. The v1.4.0 GA tag is no longer blocked by this regression — documented as resolved in the phase SUMMARY with the GA gate cleared (the real-binary smoke remains a deferred hardware/cross-platform verify item, captured as HUMAN-UAT, not a blocker for code-completion)
+
+**Plans:** 1 plan
+
+Plans:
+- [ ] 42-01-PLAN.md — pkg.sea=true + tronweb CJS-forcing patch (patches/tronweb+6.3.0.patch) + tronweb pin 6.3.0 + empirical linux-x64 binary smoke (--version + MCP stdio handshake) + FROZEN zero-diff gate
 
 ---
 
