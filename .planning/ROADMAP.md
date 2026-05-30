@@ -1241,6 +1241,30 @@ Plans:
 
 ---
 
+### Phase 45: ENS resolver migration + chains/ethereum.ts shim deletion (partial)
+
+Promotes Deferred Backlog DB-2. Migrates `src/ens/resolver.ts` off the legacy `chains/ethereum.ts` compat shim onto the multi-chain registry — `getEthereumClient()` → `getChainClient(1)` — and migrates the existing `test/ens-resolver.test.ts` to mock the registry. This removes ONE of the shim's two runtime importers.
+
+**The FROZEN-importer fork (resolved against the actual code, which diverged from the originating brief):** both shim importers pull the SAME symbol `getEthereumClient` (the brief assumed different symbols / a `getEthereumChainId` that does not exist), and the registry drop-in is `getChainClient(1)` (no `getMainnetClient` exists). The second importer, `send_transaction.ts:58`, lives in a file Phase 42 froze to a **whole-file** zero-diff (`git diff origin/main -- src/tools/send_transaction.ts` must be EMPTY) — there is no marked "free" import region. **Chosen: Option (b-minimal)** — migrate the ENS resolver only; leave `send_transaction.ts` byte-identical and KEEP the shim for its one remaining FROZEN importer. Rejected: (a) edit only send_transaction's import line (violates the whole-file zero-diff gate); (c) delete the shim + re-anchor send_transaction in this phase (couples a trivial cleanup to a deliberate edit of the byte-frozen signing file — surfaced for the reviewer as a separate future "unfreeze + re-anchor" phase). **Residual:** full shim deletion remains blocked on that future re-anchor.
+
+**Depends on**: Phase 8 (registry — `getChainClient`); current `main`.
+**Requirements**: DB-2.
+**Success Criteria** (what must be TRUE):
+
+  1. `src/ens/resolver.ts` imports `getChainClient` from `chains/registry.js`; both call sites use `getChainClient(1)`; ENS forward + reverse behaviour preserved (`normalize()` + `null`-mapping unchanged)
+  2. `test/ens-resolver.test.ts` migrated to mock `chains/registry.js` (`getChainClient`), not the shim; both existing cases pass
+  3. **FROZEN zero-diff held**: `git diff origin/main -- src/tools/send_transaction.ts` is EMPTY (the byte-frozen signing file is not touched)
+  4. `src/chains/ethereum.ts` is KEPT (NOT deleted); `grep -rn 'chains/ethereum' src/` returns exactly one hit — the FROZEN `send_transaction.ts:58` importer
+  5. `grep -rn 'chains/ethereum' src/ens/` and `grep -rn 'chains/ethereum' test/ens-resolver.test.ts` both return zero hits
+  6. `tsc --noEmit` clean; full `vitest` suite green (incl. unchanged `test/chains-ethereum.test.ts` + `test/send-transaction*.test.ts`)
+
+**Plans:** 1 plan
+
+Plans:
+- [ ] 45-01-PLAN.md — ENS resolver `getEthereumClient()` → `getChainClient(1)` + ENS test re-mock onto the registry + FROZEN whole-file zero-diff gate on `send_transaction.ts` + shim kept (1 remaining importer)
+
+---
+
 ### 📋 v3.1+ Future Milestones (Planned)
 
 Each is sized as one milestone (4-6 phases). All blocked on v2.x maturity. (v3.0 Hosted MCP — HTTP/SSE + OAuth — removed from the plan.)
