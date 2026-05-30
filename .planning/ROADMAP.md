@@ -1207,10 +1207,10 @@ Plans:
   5. Fixture **CRV-D** (legacy fixed-array add_liquidity `payloadFingerprint`) added as a hardcoded `0x…` literal in `test/signing-fingerprint.test.ts` (NO `beforeAll`-snapshot), cross-linked from `prepare-curve-add-liquidity` + `protocols-curve` consumer tests, per CLAUDE.md cryptographic-binding fixture discipline
   6. FROZEN-area zero-diff held: `git diff origin/main -- src/signing/payload-fingerprint.ts src/signing/presign-hash.ts src/signing/handle-store.ts src/tools/send_transaction.ts` empty; `preview_send.ts` touched additively only; full vitest suite + `npm run typecheck` + `npm run build` green
 
-**Plans:** 0 plans (run /gsd-plan-phase 43 to break down — likely 1 plan: ABI shelf + protocol encoder/decoder/selector + tool dispatch arm + preview decode + Fixture CRV-D + tests)
+**Plans:** 1 plan
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 43 to break down)
+- [ ] 43-01-PLAN.md — legacy ABI shelf (`CURVE_LEGACY_ADD_LIQUIDITY_ABI` + `CURVE_LEGACY_CALC_TOKEN_AMOUNT_ABI` + `getCurveLegacyCalcTokenAmount`) + protocol selector/encoder/decoder (`addLiquidityLegacy` 0x0b4c7e4d + `encodeAddLiquidityLegacy` + `"add_liquidity-legacy"` decode branch) + tool dispatch arm (delete refusal, ETH-in valueWei, ETH-sentinel approval skip) + `preview_send` additive `[CURVE ADD LIQUIDITY]` legacy case + Fixtures CRV-D/CRV-E + 4-file regression + FROZEN zero-diff
 
 ---
 
