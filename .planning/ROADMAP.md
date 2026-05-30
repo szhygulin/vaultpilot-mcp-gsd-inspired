@@ -1162,7 +1162,7 @@ Small, scoped follow-ups deferred out of already-shipped phases. Each is sized a
 
 - ~~**v1.4.1 — pkg ESM `@modelcontextprotocol/sdk` subpath-exports fix** (from Phase 10 / 10-01)~~ — **PROMOTED to Phase 42 (2026-05-29)**. pkg's snapshot fs ignores the SDK's subpath `exports` field, so per-platform binaries fail at runtime with `ERR_MODULE_NOT_FOUND`. This **gates the v1.4.0 GA binary tag**. Recovery options (documented in 10-01 SUMMARY): `pkg.sea=true` backend swap OR a `package.json` `imports` field map. Highest leverage — unblocks distribution.
 - **v1.x — ENS-resolver migration + `src/chains/ethereum.ts` compat-shim deletion** (from Phase 8 / 08-01). The compat shim survives with 2 importers: the FROZEN `send_transaction.ts` and the out-of-scope `ens/resolver.ts`. Migrate the ENS resolver onto the multi-chain registry, then delete the shim. Requires addressing the FROZEN `send_transaction.ts` constraint — design carefully (the 3-gate region is byte-frozen).
-- **v2.0.x — Solana durable-nonce setup tools** (from Phase 12 / 12-04, plan-check FLAG-2). `prepare_solana_nonce_init` + `prepare_solana_nonce_close` for per-wallet durable-nonce accounts. Orthogonal to the cryptographic-binding chain (the 150-slot recent-blockhash window covers the ship gate). Surface to design: `NonceAuthorized` account-ownership semantics + multi-wallet authority gating — warrants its own design + verify-phase pass.
+- ~~**v2.0.x — Solana durable-nonce setup tools** (from Phase 12 / 12-04, plan-check FLAG-2)~~ — **PROMOTED to Phase 44 (2026-05-30)** (DB-3). `prepare_solana_nonce_init` + `prepare_solana_nonce_close` for per-wallet durable-nonce accounts. Orthogonal to — and zero-diff against — the FROZEN cryptographic-binding chain (the 150-slot recent-blockhash window covers the ship gate). Design fork resolved: `NonceAuthorized` authority is always the paired wallet; close is gated by an on-chain authority assertion (`VP_S005`). See Phase 44 below.
 - **v2.4.x — Curve legacy-pool `add_liquidity`** (from Phase 34 / 34-03). `prepare_curve_add_liquidity` is `stable_ng`-only; legacy pools are refused with `INVALID_INPUT "deferred to v2.4.x"`. Add the legacy `abiVersion` dispatch arm (mirrors the existing `prepare_curve_swap` per-`abiVersion` pattern).
 - **v2.2.x — LiFi BTC/TRON bridging** (from Phase 20 / 20-02, D-04b — **BLOCKED**). `src/clients/lifi.ts` shared client + `bridge-decoders/lifi-tron.ts` (Inv #6b `_bridgeData.receiver` decoder) + `prepare_tron_lifi_swap`. Blocked on an external precondition: LiFi has no TRON deployment as of 2026-05-21 (verified via live API + GitHub manifest + quote endpoint). Reschedule preconditions + `checkpoint:human-verify` signature are in `20-02-DEFERRED.md`. Do NOT plan until LiFi confirms a TRON/BTC deployment.
 
@@ -1211,6 +1211,33 @@ Plans:
 
 Plans:
 - [ ] 43-01-PLAN.md — legacy ABI shelf (`CURVE_LEGACY_ADD_LIQUIDITY_ABI` + `CURVE_LEGACY_CALC_TOKEN_AMOUNT_ABI` + `getCurveLegacyCalcTokenAmount`) + protocol selector/encoder/decoder (`addLiquidityLegacy` 0x0b4c7e4d + `encodeAddLiquidityLegacy` + `"add_liquidity-legacy"` decode branch) + tool dispatch arm (delete refusal, ETH-in valueWei, ETH-sentinel approval skip) + `preview_send` additive `[CURVE ADD LIQUIDITY]` legacy case + Fixtures CRV-D/CRV-E + 4-file regression + FROZEN zero-diff
+
+---
+
+### 📋 Solana durable-nonce setup tools (deferred follow-up) (Phase 44)
+
+**Milestone Goal:** Lift the Phase 12 / 12-04 deferral (DB-3). Add per-wallet Solana durable-nonce account setup + teardown so prepare → sign flows can outlive the ~150-slot recent-blockhash window. A UX extension orthogonal to — and byte-identical against — the FROZEN Solana cryptographic-binding chain.
+
+#### Phase 44: Solana durable-nonce setup tools
+
+**Goal**: Add `prepare_solana_nonce_init` + `prepare_solana_nonce_close` for per-wallet durable-nonce accounts, extending the signing window beyond the ~150-slot recent-blockhash limit. The nonce authority is always the paired wallet; close is gated by an on-chain authority assertion. Orthogonal to — and zero-diff against — the FROZEN Solana cryptographic-binding chain.
+**Depends on**: Phase 12 (Solana native + SPL trust pipeline) — and current `main`
+**Requirements**: R-SOL-09, R-SOL-10
+**Success Criteria** (what must be TRUE):
+
+  1. `prepare_solana_nonce_init` builds `createAccount` + `nonceInitialize`, authority = the paired wallet (never a caller param), funded to the rent-exempt minimum for an 80-byte account (resolved live via `getMinimumBalanceForRentExemption`).
+  2. `prepare_solana_nonce_close` builds a full-balance `nonceWithdraw`; refuses with `VP_S005` when the on-chain stored authority ≠ the paired wallet (no handle minted), and the withdraw instruction requires the authority as on-device signer.
+  3. `payloadFingerprint` flows through the FROZEN `computeSolanaPayloadFingerprint`, unchanged; `payload-fingerprint-solana.ts` + `presign-hash-solana.ts` are byte-identical to `main` (git-diff-empty gate).
+  4. `HandleKind` extended additively (`solana_nonce_init`, `solana_nonce_close`); `VP_S005` is the only new error code; no existing code renumbered.
+  5. Fixtures M (nonce_init) + N (nonce_close) pinned as `0x` literals (no `beforeAll` snapshot); persona-swap byte-identity re-anchored.
+  6. Both tools ride the existing six-layer trust pipeline (schema → persona → simulate → fingerprint → presign → device); the only nonce-specific addition is the pre-build authority assertion in close.
+
+**Plans**: 1 plan
+
+Plans:
+- [ ] 44-01-PLAN.md — System Program nonce encoders (createAccount + nonceInitialize + nonceWithdraw) + `getMinimumBalanceForRentExemption` RPC + `prepare_solana_nonce_init` + `prepare_solana_nonce_close` (authority-gated, `VP_S005`) + additive `HandleKind` members + Fixtures M/N + FROZEN zero-diff gate
+
+**Status**: planning. Design fork resolved (authority = paired wallet, per-persona scoping, close-as-full-withdraw); reviewer ratification point — `noncePubkey` surfaced as a tool input (Model 1) vs server-derived (one-arg simplification, identical message bytes). See `44-CONTEXT.md` §Design Fork.
 
 ---
 
@@ -1271,3 +1298,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 38. `enableModule` + `delegateCall: true` hard-trigger second-LLM check (Inv #12.5) | v2.5 | 0/2 | Not started | - |
 | 39. Tier-1 bridge facet decoders + final-recipient assertion (Inv #6b) | v2.6 | 3/3 | Complete   | 2026-05-28 |
 | 40. Sandwich-MEV slippage hint per-L2 thresholds | v2.6 | 1/1 | Complete   | 2026-05-28 |
+| 44. Solana durable-nonce setup tools (DB-3 follow-up) | v2.x | 0/1 | Planning | - |
