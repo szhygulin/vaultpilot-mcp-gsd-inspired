@@ -1,22 +1,28 @@
 // MCP tool: prepare_curve_add_liquidity({ chain, poolAddress, amounts, slippageBps, from? })
 //
-// Phase 34 — Plan 34-03 Task 3 (CRV-03). Produces an unsigned Curve `add_liquidity`
-// transaction for stable_ng plain pools only.
+// Phase 34 — Plan 34-03 Task 3 (CRV-03). Phase 43 — legacy dispatch arm added.
+// Produces an unsigned Curve `add_liquidity` transaction for stable_ng plain
+// pools AND the legacy stETH/ETH fixed-array pool.
 //
 // Key invariants:
-//   - Legacy pools REFUSED with INVALID_INPUT "deferred to v2.4.x" (LOAD-BEARING refusal)
+//   - Per-abiVersion dispatch (legacy fixed uint256[2] vs stable_ng dynamic uint256[])
 //   - amounts.length MUST equal pool.coins.length (Pitfall 5 anchor)
 //   - Per-element parseAmountStrict with index identified in error message
-//   - On-chain calc_token_amount quote re-fetched at prepare time (NEVER cached)
+//   - On-chain calc_token_amount quote re-fetched at prepare time (NEVER cached);
+//     legacy uses getCurveLegacyCalcTokenAmount (fixed uint256[2]), stable_ng uses
+//     getCurveCalcTokenAmount (dynamic uint256[])
 //   - bigint min_mint_amount: (quoted * (10000n - BigInt(slippageBps))) / 10000n
 //   - slippageBps REQUIRED, range [1, 5000]
-//   - add_liquidity is non-payable (even for coins containing ETH sentinel) — valueWei = 0n
+//   - stable_ng add_liquidity is non-payable → valueWei = 0n
+//   - legacy add_liquidity is @payable: ETH-in (coin0 sentinel, amounts[0]>0) →
+//     valueWei = amounts[0]; approval pre-flight skips the ETH-sentinel coin
 //   - Per-coin ERC-20 approval pre-flight for each non-zero amount (surfaces hints, NOT refusal)
 //   - No sandwich-MEV gate (documented in CHECKS PERFORMED)
 //
-// Selector: 0xb72df5de — add_liquidity(uint256[],uint256) [stable_ng]
+// Selectors: 0xb72df5de add_liquidity(uint256[],uint256) [stable_ng];
+//            0x0b4c7e4d add_liquidity(uint256[2],uint256) [legacy]
 //
-// Analog: src/tools/prepare_curve_swap.ts (Phase 34-03 Task 2)
+// Analog: src/tools/prepare_curve_swap.ts (Phase 34-03 Task 2 — abiVersion dispatch)
 // Pattern map: PATTERNS.md §prepare_curve_add_liquidity.ts
 
 import {
@@ -32,6 +38,10 @@ import { getChainClient } from "../chains/registry.js";
 import { _curveChain } from "../chains/curve.js";
 import { getCurvePoolByAddress } from "../config/contracts.js";
 import { _curveProtocol } from "../protocols/curve.js";
+// ETH sentinel (legacy stETH/ETH pool coin 0) — copied from prepare_curve_swap.ts.
+const ETH_SENTINEL: Address = getAddress(
+  "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
+);
 import { InvalidAmountError, parseAmountStrict } from "../signing/amount.js";
 import {
   type ErrorCode,
@@ -64,8 +74,9 @@ function errEnvelope(
 
 const DESCRIPTION = [
   "Prepare an unsigned Curve Finance `add_liquidity` transaction on Ethereum mainnet.",
-  "Supported pools: stable_ng plain pools only (see get_curve_positions for positions).",
-  "REFUSED for: legacy pools (deferred to v2.4.x — use prepare_curve_swap to swap instead); non-curated pools (INVALID_INPUT).",
+  "Supported pools: stable_ng plain pools + the legacy stETH/ETH fixed-array pool (see get_curve_positions for positions).",
+  "Per-abiVersion dispatch: stable_ng uses add_liquidity(uint256[],uint256); legacy stETH/ETH uses add_liquidity(uint256[2],uint256) @payable. Legacy ETH-in (amounts[0]>0 on coin0 ETH sentinel): tx.value carries the ETH. All stable_ng paths: tx.value=0.",
+  "REFUSED for: non-curated pools (INVALID_INPUT).",
   "NOT for: Uniswap LP (use prepare_uniswap_mint_position), swaps (use prepare_curve_swap).",
   "amounts[] must contain one decimal string per pool coin, in coin order (same as pool.coins[]).",
   "On-chain calc_token_amount quote re-fetched at prepare time (NOT cached from agent prior call).",
@@ -169,26 +180,9 @@ registerTool("prepare_curve_add_liquidity", DESCRIPTION, INPUT_SCHEMA, async (ar
     }
 
     // -----------------------------------------------------------------------
-    // Step 3: Legacy refusal (LOAD-BEARING — add_liquidity ABI differs between versions)
-    // Legacy pools use add_liquidity(uint256[N],uint256) with fixed N — deferred to v2.4.x.
-    // This check MUST run BEFORE amounts validation.
+    // Step 3 (Phase 43): legacy refusal DELETED — both abiVersions proceed.
+    // The legacy/stable_ng split happens at the QUOTE + ENCODE steps below.
     // -----------------------------------------------------------------------
-    if (pool.abiVersion === "legacy") {
-      return {
-        isError: true,
-        content: [
-          {
-            type: "text",
-            text: `error: prepare_curve_add_liquidity does not support legacy pools; deferred to v2.4.x. Use prepare_curve_swap to swap on the legacy stETH/ETH pool instead.`,
-          },
-        ],
-        structuredContent: errEnvelope(
-          "INVALID_INPUT",
-          `prepare_curve_add_liquidity does not support legacy pools; deferred to v2.4.x. Use prepare_curve_swap to swap on the legacy stETH/ETH pool instead.`,
-          "legacy-add-liquidity-refused",
-        ),
-      };
-    }
 
     // -----------------------------------------------------------------------
     // Step 4: amounts.length validation (Pitfall 5 anchor)
@@ -274,14 +268,22 @@ registerTool("prepare_curve_add_liquidity", DESCRIPTION, INPUT_SCHEMA, async (ar
 
     // -----------------------------------------------------------------------
     // Step 8: On-chain calc_token_amount quote (re-fetched at prepare time — NEVER cached)
-    // stable_ng: calc_token_amount(amounts[], is_deposit=true)
+    // abiVersion-dispatched: legacy uses the fixed uint256[2] reader, stable_ng
+    // uses the dynamic uint256[] reader (Pitfall 1 — wrong reader mis-encodes).
     // -----------------------------------------------------------------------
     const client = getChainClient(chainId);
-    const quotedLp = await _curveChain.getCurveCalcTokenAmount(
-      client,
-      pool.address,
-      parsedAmounts,
-    );
+    const isLegacy = pool.abiVersion === "legacy";
+    const quotedLp = isLegacy
+      ? await _curveChain.getCurveLegacyCalcTokenAmount(
+          client,
+          pool.address,
+          [parsedAmounts[0]!, parsedAmounts[1]!],
+        )
+      : await _curveChain.getCurveCalcTokenAmount(
+          client,
+          pool.address,
+          parsedAmounts,
+        );
 
     // -----------------------------------------------------------------------
     // Step 9: bigint min_mint_amount derivation (no float arithmetic — CLAUDE.md invariant)
@@ -289,14 +291,32 @@ registerTool("prepare_curve_add_liquidity", DESCRIPTION, INPUT_SCHEMA, async (ar
     const minMintAmount = (quotedLp * (10000n - BigInt(slippageBps))) / 10000n;
 
     // -----------------------------------------------------------------------
-    // Step 10: Encode calldata — stable_ng add_liquidity(uint256[], uint256)
-    // valueWei = 0n always (add_liquidity is non-payable even for pools with ETH sentinel)
+    // Step 10: abiVersion dispatch — calldata + valueWei (mirror prepare_curve_swap).
+    // legacy add_liquidity is @payable: ETH-in (coin0 sentinel, amounts[0]>0) →
+    // valueWei = amounts[0]; the amount still rides in the calldata array too.
+    // stable_ng add_liquidity is non-payable → valueWei = 0n (BYTE-IDENTICAL to
+    // the pre-Phase-43 path — Fixture CRV-C anchors this).
     // -----------------------------------------------------------------------
-    const data: Hex = _curveProtocol.encodeAddLiquidityStableNg({
-      amounts: parsedAmounts,
-      minMintAmount,
-    });
-    const valueWei = 0n;
+    const isEthIn =
+      isLegacy &&
+      parsedAmounts[0]! > 0n &&
+      getAddress(pool.coins[0]!) === ETH_SENTINEL;
+
+    let data: Hex;
+    let valueWei: bigint;
+    if (isLegacy) {
+      data = _curveProtocol.encodeAddLiquidityLegacy({
+        amounts: [parsedAmounts[0]!, parsedAmounts[1]!],
+        minMintAmount,
+      });
+      valueWei = isEthIn ? parsedAmounts[0]! : 0n;
+    } else {
+      data = _curveProtocol.encodeAddLiquidityStableNg({
+        amounts: parsedAmounts,
+        minMintAmount,
+      });
+      valueWei = 0n;
+    }
 
     // -----------------------------------------------------------------------
     // Step 11: Per-coin ERC-20 approval pre-flight
@@ -308,6 +328,14 @@ registerTool("prepare_curve_add_liquidity", DESCRIPTION, INPUT_SCHEMA, async (ar
       const coinAmount = parsedAmounts[idx]!;
       if (coinAmount === 0n) continue; // skip zero-amount deposits
       const coinAddr: Address = getAddress(pool.coins[idx]!);
+      // Phase 43 (Pitfall 8 / D-03): the ETH sentinel is NOT an ERC-20 — never
+      // read ERC20.allowance on it. The ETH leg rides as tx.value (@payable).
+      if (coinAddr === ETH_SENTINEL) {
+        approvalHints.push(
+          `Coin[${idx}] is native ETH (sentinel) — no ERC-20 approval needed; tx.value carries the ETH.`,
+        );
+        continue;
+      }
       const coinDecimals = pool.coinDecimals[idx]!;
       try {
         const allowance = await client.readContract({
@@ -374,12 +402,12 @@ registerTool("prepare_curve_add_liquidity", DESCRIPTION, INPUT_SCHEMA, async (ar
       `CHECKS PERFORMED — prepare_curve_add_liquidity`,
       `Pool:               ${pool.displayName}`,
       `abiVersion:         ${pool.abiVersion}`,
-      `Legacy refusal:     not triggered (stable_ng pool)`,
       `amounts.length:     ${parsedAmounts.length} (matches pool coins.length)`,
       `Quoted LP:          ${quotedLp} wei`,
       `min_mint_amount:    ${minMintAmount} wei`,
       `Slippage applied:   ${slippageBps} bps`,
-      `tx.value (valueWei): 0 (add_liquidity is non-payable)`,
+      `ETH-in path:        ${isEthIn}`,
+      `tx.value (valueWei): ${valueWei}${isEthIn ? " (legacy @payable ETH-in)" : ""}`,
       ...approvalHints,
       `Sandwich-MEV gate: not applied to Curve (low MEV exposure on stable pools)`,
       `payloadFingerprint: ${payloadFingerprint}`,
@@ -399,6 +427,7 @@ registerTool("prepare_curve_add_liquidity", DESCRIPTION, INPUT_SCHEMA, async (ar
         data,
         payloadFingerprint,
         abiVersion: pool.abiVersion,
+        isEthIn,
         parsedAmounts: parsedAmounts.map(String),
         quotedLp: quotedLp.toString(),
         minMintAmount: minMintAmount.toString(),
