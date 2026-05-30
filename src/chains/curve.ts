@@ -100,6 +100,30 @@ export const CURVE_NG_CALC_TOKEN_AMOUNT_ABI = parseAbi([
 ]);
 
 /**
+ * Phase 43 — Legacy stETH/ETH pool add_liquidity ABI.
+ * Source: StableSwapSTETH.vy — @payable, FIXED uint256[2], returns uint256.
+ * Selector 0x0b4c7e4d (RESEARCH-VERIFIED: Etherscan + viem), DISTINCT from
+ * stable_ng 0xb72df5de. viem encodes uint256[2] as TWO inline 32-byte words
+ * (NO offset/length prefix) — do NOT reuse the dynamic-array NG ABI (Pitfall 1).
+ *
+ * Caller note: when amounts[0] > 0 (ETH-in), set tx.value = amounts[0] (@payable).
+ */
+export const CURVE_LEGACY_ADD_LIQUIDITY_ABI = parseAbi([
+  "function add_liquidity(uint256[2] amounts, uint256 min_mint_amount) payable returns (uint256)",
+]);
+
+/**
+ * Phase 43 — Legacy stETH/ETH pool calc_token_amount ABI.
+ * Fixed uint256[2] + bool is_deposit. Selector 0xed8e84f3 (RESEARCH-VERIFIED viem).
+ * Distinct from the stable_ng dynamic uint256[] form — do NOT reuse the NG reader
+ * (it encodes a dynamic-array offset+length the legacy fixed-array contract does
+ * not expect → revert / wrong decode).
+ */
+export const CURVE_LEGACY_CALC_TOKEN_AMOUNT_ABI = parseAbi([
+  "function calc_token_amount(uint256[2] amounts, bool is_deposit) view returns (uint256)",
+]);
+
+/**
  * Standard ERC-20 `balanceOf` ABI fragment — used for LP-token balance reads.
  * Selector: 0x70a08231.
  *
@@ -170,6 +194,33 @@ export async function getCurveCalcTokenAmount(
 }
 
 /**
+ * Phase 43 — Quote `calc_token_amount([eth, steth], true)` on the legacy
+ * stETH/ETH pool using the FIXED-ARRAY ABI.
+ *
+ * @param client - PublicClient for the relevant chain (chainId=1).
+ * @param poolAddress - The legacy pool contract address.
+ * @param amounts - 2-tuple of input amounts (bigint, fixed uint256[2]).
+ * @returns Estimated LP tokens to be minted (bigint, 18 decimals).
+ *
+ * ALWAYS passes `true` as `is_deposit` (deposit direction; `false` computes a
+ * withdrawal-direction estimate — the wrong bound for add_liquidity, Pitfall 4).
+ * Do NOT reuse `getCurveCalcTokenAmount` — its uint256[] ABI mis-encodes against
+ * the fixed-array contract (Pitfall 1).
+ */
+export async function getCurveLegacyCalcTokenAmount(
+  client: PublicClient,
+  poolAddress: Address,
+  amounts: [bigint, bigint],
+): Promise<bigint> {
+  return (await client.readContract({
+    address: poolAddress,
+    abi: CURVE_LEGACY_CALC_TOKEN_AMOUNT_ABI,
+    functionName: "calc_token_amount",
+    args: [amounts, true], // true = deposit direction
+  })) as bigint;
+}
+
+/**
  * Read LP-token `balanceOf(wallet)` for a Curve pool.
  *
  * @param client - PublicClient for the relevant chain.
@@ -202,4 +253,9 @@ export async function getCurveLpBalance(
 // exports are no-ops for internal calls).
 // ---------------------------------------------------------------------------
 
-export const _curveChain = { getCurveGetDy, getCurveCalcTokenAmount, getCurveLpBalance };
+export const _curveChain = {
+  getCurveGetDy,
+  getCurveCalcTokenAmount,
+  getCurveLegacyCalcTokenAmount,
+  getCurveLpBalance,
+};

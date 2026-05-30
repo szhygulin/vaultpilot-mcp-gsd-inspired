@@ -35,6 +35,7 @@ import {
   CURVE_LEGACY_EXCHANGE_ABI,
   CURVE_NG_EXCHANGE_ABI,
   CURVE_NG_ADD_LIQUIDITY_ABI,
+  CURVE_LEGACY_ADD_LIQUIDITY_ABI,
 } from "../chains/curve.js";
 
 // Re-export SOT getters — callers inside src/protocols/, src/chains/, src/tools/
@@ -78,6 +79,10 @@ export const CURVE_SELECTORS = {
   getDy: "0x5e0d443f" as Hex,
   /** calc_token_amount — stable_ng. selector = 0x3db06dd8 */
   calcTokenAmount: "0x3db06dd8" as Hex,
+  /** Phase 43 — Legacy add_liquidity(uint256[2],uint256) — stETH/ETH pool.
+   *  selector = 0x0b4c7e4d (RESEARCH-VERIFIED Etherscan + viem; distinct from
+   *  stable_ng 0xb72df5de). */
+  addLiquidityLegacy: "0x0b4c7e4d" as Hex,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -101,6 +106,12 @@ export interface ExchangeStableNgParams {
 
 export interface AddLiquidityStableNgParams {
   amounts: bigint[];
+  minMintAmount: bigint;
+}
+
+/** Phase 43 — legacy fixed-array add_liquidity params (2-coin stETH/ETH pool). */
+export interface AddLiquidityLegacyParams {
+  amounts: [bigint, bigint];
   minMintAmount: bigint;
 }
 
@@ -155,6 +166,25 @@ export function encodeAddLiquidityStableNg(params: AddLiquidityStableNgParams): 
   });
 }
 
+/**
+ * Phase 43 — Encode `add_liquidity(uint256[2] amounts, uint256 min_mint_amount)`
+ * calldata for the legacy stETH/ETH pool (CURVE_LEGACY_ADD_LIQUIDITY_ABI,
+ * selector 0x0b4c7e4d).
+ *
+ * viem encodes uint256[2] as TWO inline 32-byte words (NO dynamic offset/length
+ * prefix) — byte-distinct from the stable_ng dynamic uint256[] form (Pitfall 1).
+ * The pool is @payable: when amounts[0] > 0 (ETH leg), the caller sets
+ * tx.value = amounts[0] (Pitfall 2). amounts[0] is STILL carried in the calldata
+ * array regardless.
+ */
+export function encodeAddLiquidityLegacy(params: AddLiquidityLegacyParams): Hex {
+  return encodeFunctionData({
+    abi: CURVE_LEGACY_ADD_LIQUIDITY_ABI,
+    functionName: "add_liquidity",
+    args: [params.amounts, params.minMintAmount],
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Decoder return type — discriminated union
 // ---------------------------------------------------------------------------
@@ -187,6 +217,14 @@ export type CurveDecoded =
       pool: CurvePoolEntry;
       amounts: bigint[];
       minMintAmount: bigint;
+    }
+  | {
+      // Phase 43 — legacy fixed-array add_liquidity (2-coin stETH/ETH pool).
+      kind: "add_liquidity-legacy";
+      pool: CurvePoolEntry;
+      amounts: [bigint, bigint];
+      minMintAmount: bigint;
+      isEthIn: boolean; // amounts[0] > 0 && coins[0] === ETH_SENTINEL
     };
 
 // ---------------------------------------------------------------------------
@@ -296,6 +334,26 @@ export function decodeCurveCall(
       };
     }
 
+    if (pool.abiVersion === "legacy" && sel === CURVE_SELECTORS.addLiquidityLegacy) {
+      // Phase 43 — legacy add_liquidity(uint256[2] amounts, uint256 min_mint_amount).
+      // Tuple-guarded on (legacy, 0x0b4c7e4d) — selector-alone dispatch is
+      // prohibited (a stable_ng pool carrying 0x0b4c7e4d must NOT decode here).
+      const { args } = decodeFunctionData({
+        abi: CURVE_LEGACY_ADD_LIQUIDITY_ABI,
+        data,
+      });
+      const [amounts, minMintAmount] = args as [readonly [bigint, bigint], bigint];
+      const isEthIn =
+        amounts[0] > 0n && getAddress(pool.coins[0] as Address) === ETH_SENTINEL;
+      return {
+        kind: "add_liquidity-legacy",
+        pool,
+        amounts: [amounts[0], amounts[1]],
+        minMintAmount,
+        isEthIn,
+      };
+    }
+
     // Any other (abiVersion, sel) tuple → unrecognized.
     return null;
   } catch {
@@ -316,5 +374,6 @@ export const _curveProtocol = {
   encodeExchangeLegacy,
   encodeExchangeStableNg,
   encodeAddLiquidityStableNg,
+  encodeAddLiquidityLegacy,
   decodeCurveCall,
 };
