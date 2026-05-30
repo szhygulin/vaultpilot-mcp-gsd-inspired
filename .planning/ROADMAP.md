@@ -1193,6 +1193,16 @@ Small, scoped follow-ups deferred out of already-shipped phases. Each is sized a
 Plans:
 - [x] 42-01-PLAN.md — pkg.sea=true + tronweb CJS-forcing patch (patches/tronweb+6.3.0.patch) + tronweb pin 6.3.0 + empirical linux-x64 binary smoke (--version + MCP stdio handshake) + FROZEN zero-diff gate
 
+### Phase 43: Curve add_liquidity legacy StableSwap fixed-array
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 42
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 43 to break down)
+
 ---
 
 ### 📋 v3.1+ Future Milestones (Planned)
