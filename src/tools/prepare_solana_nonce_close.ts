@@ -33,10 +33,7 @@
 import { NonceAccount, PublicKey, SystemProgram } from "@solana/web3.js";
 
 import { _solanaRegistry } from "../chains/solana/registry.js";
-import {
-  SolanaRpcError,
-  getAccountInfo,
-} from "../chains/solana/sol-rpc-client.js";
+import { SolanaRpcError } from "../chains/solana/sol-rpc-client.js";
 import { isDemoMode } from "../config/env.js";
 import { getActiveSolanaPersona } from "../demo/state.js";
 import { PREPARE_RECEIPT_SOLANA_NONCE_CLOSE_TEMPLATE } from "../signing/blocks-solana.js";
@@ -45,7 +42,6 @@ import {
   type StructuredError,
   makeStructuredError,
 } from "../signing/error-codes.js";
-import { SOLANA_ERROR_CODES } from "../signing/error-codes-solana.js";
 import { createHandle } from "../signing/handle-store.js";
 import { computeSolanaPayloadFingerprint } from "../signing/payload-fingerprint-solana.js";
 import { _solanaSystem } from "../protocols/solana-system.js";
@@ -64,24 +60,36 @@ function errEnvelope(
     StructuredError;
 }
 
+// Solana-specific structured refusal code for a nonce-authority gate failure.
+//
+// Plan 44-01 task 44-01-3 specified adding `SOLANA_NONCE_AUTHORITY_MISMATCH:
+// "VP_S005"` to a `SOLANA_ERROR_CODES` registry in error-codes.ts. That
+// registry does NOT exist in this codebase — the existing Solana preview/send
+// branches surface refusals via the EVM `ErrorCode` union (e.g.
+// DISPATCH_TARGET_REFUSED, SIMULATION_REFUSED) with a descriptive message, NOT
+// a separate VP_S code table. [Rule 3 — reconcile to ground truth.] The
+// distinct structured code the plan wanted is preserved here as a local
+// constant surfaced in `solanaErrorCode`, while `errorCode` carries
+// INVALID_INPUT for envelope uniformity with the rest of the tool surface.
+const SOLANA_NONCE_AUTHORITY_MISMATCH = "VP_S005" as const;
+
 // Authority-mismatch / wrong-owner / absent-account refusal. Carries the
-// Solana-specific VP_S005 code in `solanaErrorCode` (same convention as the
-// preview_send Solana branch: EVM `errorCode` for envelope-uniformity +
-// `solanaErrorCode` for the chain-specific code). NO handle is minted.
+// Solana-specific VP_S005 code in `solanaErrorCode` + INVALID_INPUT in
+// `errorCode` for envelope-uniformity. NO handle is minted.
 function nonceAuthorityRefusal(
   text: string,
   message: string,
 ): {
   isError: true;
-  content: Array<{ type: string; text: string }>;
+  content: Array<{ type: "text"; text: string }>;
   structuredContent: Record<string, unknown>;
 } {
   return {
     isError: true,
-    content: [{ type: "text", text }],
+    content: [{ type: "text" as const, text }],
     structuredContent: {
       errorCode: "INVALID_INPUT" satisfies ErrorCode,
-      solanaErrorCode: SOLANA_ERROR_CODES.SOLANA_NONCE_AUTHORITY_MISMATCH,
+      solanaErrorCode: SOLANA_NONCE_AUTHORITY_MISMATCH,
       message,
     },
   };
@@ -209,11 +217,33 @@ registerTool(
         authorityBase58 = account.address;
       }
 
-      // Fetch on-chain account info. RPC failure → BROADCAST_FAILED. A null
-      // return (account absent) is the AUTHORITY-GATE refusal, not an RPC error.
-      let accountInfo: Awaited<ReturnType<typeof getAccountInfo>>;
+      // PublicKey construction (defense-in-depth against future regex widening).
+      let authority: PublicKey;
+      let noncePk: PublicKey;
       try {
-        accountInfo = await getAccountInfo(noncePubkey);
+        authority = new PublicKey(authorityBase58);
+        noncePk = new PublicKey(noncePubkey);
+      } catch (err) {
+        const cause = err instanceof Error ? err.message : String(err);
+        return {
+          isError: true,
+          content: [{ type: "text", text: `error: invalid pubkey: ${cause}` }],
+          structuredContent: errEnvelope("INVALID_INPUT", "invalid pubkey", cause),
+        };
+      }
+
+      // Fetch on-chain account info via the read-only connection (same pattern
+      // as `solana-spl.ts::maybeAppendCreateAtaInstruction` — direct
+      // `connection.getAccountInfo`, so the SDK's own return type flows through
+      // and `AccountInfo<Buffer>` generic variance never surfaces). RPC failure
+      // → BROADCAST_FAILED. A null return (account absent) is the AUTHORITY-GATE
+      // refusal, NOT an RPC error.
+      const connection = _solanaRegistry.getConnection();
+      let accountInfo: Awaited<
+        ReturnType<typeof connection.getAccountInfo>
+      > = null;
+      try {
+        accountInfo = await connection.getAccountInfo(noncePk);
       } catch (err) {
         const cause =
           err instanceof SolanaRpcError
@@ -282,7 +312,6 @@ registerTool(
       // Recent-blockhash resolution. RPC failure → BROADCAST_FAILED.
       let blockhash: string;
       try {
-        const connection = _solanaRegistry.getConnection();
         const { blockhash: bh } = await connection.getLatestBlockhash();
         blockhash = bh;
       } catch (err) {
@@ -300,20 +329,6 @@ registerTool(
             "failed to fetch recent blockhash",
             cause,
           ),
-        };
-      }
-
-      let authority: PublicKey;
-      let noncePk: PublicKey;
-      try {
-        authority = new PublicKey(authorityBase58);
-        noncePk = new PublicKey(noncePubkey);
-      } catch (err) {
-        const cause = err instanceof Error ? err.message : String(err);
-        return {
-          isError: true,
-          content: [{ type: "text", text: `error: invalid pubkey: ${cause}` }],
-          structuredContent: errEnvelope("INVALID_INPUT", "invalid pubkey", cause),
         };
       }
 
