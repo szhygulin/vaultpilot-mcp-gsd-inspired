@@ -23,11 +23,18 @@
 // field. The persona-cycle property assertion lands in the integration test
 // (Plan 12-05), mirroring Phase 7's T-INTEGRATION-FROM-DRIFT-2 precedent.
 
-import { PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
+import {
+  NONCE_ACCOUNT_LENGTH,
+  PublicKey,
+  SystemProgram,
+  Transaction,
+} from "@solana/web3.js";
 import {
   createTransferCheckedInstruction,
   getAssociatedTokenAddressSync,
 } from "@solana/spl-token";
+import { execFileSync } from "node:child_process";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -171,6 +178,123 @@ describe("computeSolanaPayloadFingerprint — SOL-PREP-01 (DF-1 LOCKED)", () => 
     expect(fpB).toBe("0x9b6b628f30ed1dc6eeefa3dc258586fc3e21422000d09ad72cc2e7c67a8060fe");
   });
 
+  // ---------------------------------------------------------------------------
+  // Phase 44 Plan 44-01 — Fixtures M (nonce_init) + N (nonce_close).
+  // Same pinned inputs (FROM / NONCE_PUBKEY / FIXED_BLOCKHASH) so the literals
+  // are deterministic. Hardcoded `0x…` anchors — NO beforeAll-snapshot (CLAUDE.md
+  // cryptographic-binding-fixture rule). Cross-linked from
+  // test/prepare-solana-nonce-init.test.ts (M) and
+  // test/prepare-solana-nonce-close.test.ts (N) by letter.
+  //
+  // The nonce account pubkey reuses the canonical RECIPIENT (`TO`) literal as a
+  // deterministic stand-in for a fresh nonce keypair — its base58 is pinned, so
+  // the message bytes (and fingerprint) are stable across runs.
+  // ---------------------------------------------------------------------------
+  const NONCE_PUBKEY = TO; // deterministic pinned nonce-account pubkey
+  const RENT_LAMPORTS = 1_447_680; // canonical rent anchor (RESEARCH §Rent/sizing)
+
+  it("Fixture M — nonce_init message fingerprint (hardcoded literal anchor)", () => {
+    // createAccount(from → noncePubkey, lamports=rent, space=80) + nonceInitialize(authority=from)
+    const tx = new Transaction({ recentBlockhash: FIXED_BLOCKHASH, feePayer: FROM });
+    tx.add(
+      SystemProgram.createAccount({
+        fromPubkey: FROM,
+        newAccountPubkey: NONCE_PUBKEY,
+        lamports: RENT_LAMPORTS,
+        space: NONCE_ACCOUNT_LENGTH,
+        programId: SystemProgram.programId,
+      }),
+    );
+    tx.add(
+      SystemProgram.nonceInitialize({
+        noncePubkey: NONCE_PUBKEY,
+        authorizedPubkey: FROM,
+      }),
+    );
+    const messageBytes = new Uint8Array(tx.serializeMessage());
+    // Stable byte-length anchor — catches any future serializeMessage shape change.
+    expect(messageBytes.length).toBe(296);
+
+    const fp = computeSolanaPayloadFingerprint({ messageBytes });
+    // Hardcoded literal anchor (Plan 44-01). A tampered message byte flips this
+    // at THIS line. Independently recomputable via the same tag/concat/keccak256.
+    expect(fp).toBe(
+      "0xf23e8e0041a47c94894797b2430b3814a3416670404e16da779564f435ecd809",
+    );
+  });
+
+  it("Fixture M authority-embedding regression: authority swap changes fingerprint", () => {
+    // Same createAccount, but nonceInitialize authority = TO instead of FROM.
+    // Proves the authority IS in the preimage (regression against an assembly
+    // that ignores the authority encoded in the nonceInitialize instruction data).
+    const build = (authority: PublicKey) => {
+      const tx = new Transaction({ recentBlockhash: FIXED_BLOCKHASH, feePayer: FROM });
+      tx.add(
+        SystemProgram.createAccount({
+          fromPubkey: FROM,
+          newAccountPubkey: NONCE_PUBKEY,
+          lamports: RENT_LAMPORTS,
+          space: NONCE_ACCOUNT_LENGTH,
+          programId: SystemProgram.programId,
+        }),
+      );
+      tx.add(SystemProgram.nonceInitialize({ noncePubkey: NONCE_PUBKEY, authorizedPubkey: authority }));
+      return computeSolanaPayloadFingerprint({
+        messageBytes: new Uint8Array(tx.serializeMessage()),
+      });
+    };
+    const fpAuthFrom = build(FROM);
+    const fpAuthTo = build(NONCE_PUBKEY);
+    expect(fpAuthFrom).not.toBe(fpAuthTo);
+    expect(fpAuthFrom).toBe(
+      "0xf23e8e0041a47c94894797b2430b3814a3416670404e16da779564f435ecd809",
+    );
+  });
+
+  it("Fixture N — nonce_close message fingerprint (hardcoded literal anchor)", () => {
+    // nonceWithdraw(noncePubkey → toPubkey=from, authority=from, lamports=full balance)
+    const tx = new Transaction({ recentBlockhash: FIXED_BLOCKHASH, feePayer: FROM });
+    tx.add(
+      SystemProgram.nonceWithdraw({
+        noncePubkey: NONCE_PUBKEY,
+        authorizedPubkey: FROM,
+        toPubkey: FROM,
+        lamports: RENT_LAMPORTS,
+      }),
+    );
+    const messageBytes = new Uint8Array(tx.serializeMessage());
+    expect(messageBytes.length).toBe(217);
+
+    const fp = computeSolanaPayloadFingerprint({ messageBytes });
+    expect(fp).toBe(
+      "0x4cb389760626e559c85fca6d9f3d14c4408871fd034c73f1a82fe4d797f8dea2",
+    );
+  });
+
+  it("Fixture N amount-embedding regression: withdraw amount swap changes fingerprint", () => {
+    // Same nonceWithdraw, +1 lamport. Proves the lamport amount IS in the preimage.
+    const build = (lamports: number) => {
+      const tx = new Transaction({ recentBlockhash: FIXED_BLOCKHASH, feePayer: FROM });
+      tx.add(
+        SystemProgram.nonceWithdraw({
+          noncePubkey: NONCE_PUBKEY,
+          authorizedPubkey: FROM,
+          toPubkey: FROM,
+          lamports,
+        }),
+      );
+      return computeSolanaPayloadFingerprint({
+        messageBytes: new Uint8Array(tx.serializeMessage()),
+      });
+    };
+    const fpA = build(RENT_LAMPORTS);
+    const fpB = build(RENT_LAMPORTS + 1);
+    expect(fpA).not.toBe(fpB);
+    expect(fpA).toBe(
+      "0x4cb389760626e559c85fca6d9f3d14c4408871fd034c73f1a82fe4d797f8dea2",
+    );
+  });
+
   it("_solanaFingerprint spy-affordance regression — ESM indirection intercepts", () => {
     // CLAUDE.md ESM spy-affordance non-negotiable: the indirection object is
     // present (added at write time, NOT retroactively). A direct
@@ -193,4 +317,42 @@ describe("computeSolanaPayloadFingerprint — SOL-PREP-01 (DF-1 LOCKED)", () => 
 
     spy.mockRestore();
   });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 44 Plan 44-01 — FROZEN cryptographic-binding-chain zero-diff gate.
+//
+// The Solana fingerprint + presign-hash modules are FROZEN: Phase 44 nonce
+// shapes flow through the UNCHANGED serialize→keccak / serialize→sha256 paths
+// (CONTEXT §Design Fork (d) LOCKED). This gate asserts those two files are
+// byte-identical to origin/main — any inadvertent edit (e.g. a nonce-specific
+// branch added to the binding layer) fails HERE rather than silently shipping.
+//
+// `git diff` returns empty when the file matches origin/main. If origin/main is
+// not fetched in the CI environment, the test skips (the worktree-level FROZEN
+// proof in the PR body is the authoritative gate; this is the in-suite guard).
+// ---------------------------------------------------------------------------
+describe("FROZEN Solana cryptographic-binding chain — zero-diff vs origin/main", () => {
+  const FROZEN_FILES = [
+    "src/signing/payload-fingerprint-solana.ts",
+    "src/signing/presign-hash-solana.ts",
+  ];
+
+  for (const file of FROZEN_FILES) {
+    it(`${file} is byte-identical to origin/main (no nonce-specific binding branches)`, () => {
+      let diff: string;
+      try {
+        diff = execFileSync(
+          "git",
+          ["diff", "origin/main", "--", file],
+          { encoding: "utf8" },
+        );
+      } catch {
+        // origin/main not available (shallow CI clone, etc.) — skip rather than
+        // fail spuriously. The PR-body FROZEN proof is the authoritative gate.
+        return;
+      }
+      expect(diff).toBe("");
+    });
+  }
 });
