@@ -224,6 +224,25 @@ export async function getMintDecimals(
   }
 }
 
+/**
+ * Phase 44 Plan 44-01 — minimum lamport balance for a rent-exempt account of
+ * `size` bytes. Read-only; NEVER signs or holds a keypair. Used by
+ * `prepare_solana_nonce_init` to fund an 80-byte durable-nonce account to the
+ * rent-exempt minimum at prepare time. Rent params are a cluster setting that
+ * can drift, so the value MUST be resolved live (never hardcoded in tool code —
+ * RESEARCH §Rent/sizing). Rethrows as `SolanaRpcError` on any failure.
+ */
+export async function getMinimumBalanceForRentExemption(
+  size: number,
+): Promise<number> {
+  try {
+    const connection = _solanaRegistry.getConnection();
+    return await connection.getMinimumBalanceForRentExemption(size);
+  } catch (e) {
+    throw new SolanaRpcError(e);
+  }
+}
+
 // Internal test surface — exposes `formatLamportsToSol` + the lamports
 // constant for direct regression coverage. NOT a production export;
 // consumers go through `getNativeBalance`.
