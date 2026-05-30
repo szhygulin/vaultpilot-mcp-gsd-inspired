@@ -73,6 +73,56 @@ export const PREPARE_RECEIPT_SOLANA_SPL_TEMPLATE: string = [
 ].join("\n");
 
 /**
+ * PREPARE RECEIPT — Solana durable-nonce INIT (Phase 44 — Plan 44-01).
+ * Substituted by `prepare_solana_nonce_init.ts`. `{FROM_PERSONA}` /
+ * `{NONCE_PUBKEY}` are RAW agent args (PREP-02 verbatim). `{AUTHORITY}` /
+ * `{RENT_LAMPORTS}` / `{RECENT_BLOCKHASH}` are server-derived. AUTHORITY is the
+ * paired wallet by construction — surfaced so the agent + user can see who
+ * controls the new nonce account.
+ *
+ * noncePubkey-input-vs-derived decision (RESEARCH §Account creation): noncePubkey
+ * is a TOOL INPUT (Model 1) — surfaced verbatim here.
+ */
+export const PREPARE_RECEIPT_SOLANA_NONCE_INIT_TEMPLATE: string = [
+  "PREPARE RECEIPT (Solana — durable-nonce init)",
+  "  chain:           solana mainnet-beta",
+  "  fromPersona:     {FROM_PERSONA}",
+  "  noncePubkey:     {NONCE_PUBKEY}",
+  "  authority:       {AUTHORITY}",
+  "  rent (lamports): {RENT_LAMPORTS}",
+  "  recentBlockhash: {RECENT_BLOCKHASH}",
+  "  ----",
+  "  This creates a durable-nonce account and sets its AUTHORITY to your paired",
+  "  wallet (shown above) — only that wallet can ever advance or close it. The",
+  "  account is funded to the rent-exempt minimum (resolved live). Verify the",
+  "  values BEFORE calling preview_send. The on-device Ledger display is the",
+  "  final trust anchor.",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT — Solana durable-nonce CLOSE (Phase 44 — Plan 44-01).
+ * Substituted by `prepare_solana_nonce_close.ts`. `{FROM_PERSONA}` /
+ * `{NONCE_PUBKEY}` are RAW agent args. `{DESTINATION}` / `{WITHDRAW_LAMPORTS}` /
+ * `{RECENT_BLOCKHASH}` server-derived. Withdraw amount = FULL on-chain balance
+ * (closes the account); not a caller param. Destination is the paired wallet.
+ */
+export const PREPARE_RECEIPT_SOLANA_NONCE_CLOSE_TEMPLATE: string = [
+  "PREPARE RECEIPT (Solana — durable-nonce close)",
+  "  chain:               solana mainnet-beta",
+  "  fromPersona:         {FROM_PERSONA}",
+  "  noncePubkey:         {NONCE_PUBKEY}",
+  "  destination:         {DESTINATION}",
+  "  withdraw (lamports): {WITHDRAW_LAMPORTS}",
+  "  recentBlockhash:     {RECENT_BLOCKHASH}",
+  "  ----",
+  "  This withdraws the FULL on-chain balance from the nonce account (closing",
+  "  it) and returns the rent to your paired wallet (destination above). The",
+  "  server verified the on-chain nonce authority matches your wallet before",
+  "  building this. Verify the values BEFORE calling preview_send. The on-device",
+  "  Ledger display is the final trust anchor.",
+].join("\n");
+
+/**
  * LEDGER BLIND-SIGN HASH (Solana) — DF-2 device-display hash surface, emitted
  * UNCONDITIONALLY by preview_send Solana branch (Plan 12-04). Two slots:
  *   - `{HASH_FULL_64HEX}`            — full 64-char hex (with 0x prefix) of the
