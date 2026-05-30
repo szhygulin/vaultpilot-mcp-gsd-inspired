@@ -1195,10 +1195,19 @@ Plans:
 
 ### Phase 43: Curve add_liquidity legacy StableSwap fixed-array
 
-**Goal:** [To be planned]
-**Requirements**: TBD
-**Depends on:** Phase 42
-**Plans:** 0 plans
+**Goal:** Lift the Phase 34 / 34-03 deferral. `prepare_curve_add_liquidity` currently hard-refuses `abiVersion: "legacy"` pools with `INVALID_INPUT "deferred to v2.4.x"` (`prepare_curve_add_liquidity.ts:177-185`). This phase replaces that refusal with a legacy dispatch arm — encoding the fixed-size `add_liquidity(uint256[N_COINS] amounts, uint256 min_mint_amount)` calldata (vs the shipped `stable_ng` dynamic `uint256[]` arm) and handling the `@payable` ETH-in path — mirroring the existing per-`abiVersion` dispatch in `prepare_curve_swap` (`prepare_curve_swap.ts:100-125`). Scope is the one legacy pool already in the curated registry: stETH/ETH (`0xDC24316b9AE028F1497c275EB9192a3Ea0f67022`, 2 coins). Ethereum-only. Cryptographic-binding chain stays byte-identical (additive only).
+**Requirements**: CRV add-liquidity (v2.4 follow-up; originating Phase 34 / 34-03 deferral — see Deferred Backlog "v2.4.x — Curve legacy-pool add_liquidity")
+**Depends on:** Phase 34 (Curve swap + add_liquidity stable_ng arm + registry + protocol decoder + Fixtures CRV-A/B/C)
+**Success Criteria** (what must be TRUE):
+
+  1. `prepare_curve_add_liquidity` accepts the legacy stETH/ETH pool (no longer returns `INVALID_INPUT "deferred"`); produces an unsigned `add_liquidity(uint256[2], uint256)` tx whose calldata uses the FIXED-size array ABI (distinct selector from the `stable_ng` `0xb72df5de`)
+  2. ETH-in path: when `amounts[0] > 0` (ETH sentinel coin), `valueWei === parsedAmounts[0]`; stETH-only path (`amounts[0] = "0"`) → `valueWei === 0n`. ERC-20 allowance pre-flight skips the ETH-sentinel coin and checks only the stETH leg
+  3. `min_mint_amount` derived from an on-chain quote (research-confirmed `calc_token_amount` signature on the legacy pool) reduced by `slippageBps`; if the legacy pool exposes no usable `calc_token_amount`, the fallback quote strategy is documented and the slippage floor still enforced
+  4. `preview_send` decodes and surfaces the legacy add_liquidity args in a `[CURVE ADD LIQUIDITY]` block (new `"add_liquidity-legacy"` `CurveDecoded` discriminant + decode branch); the legacy pool address already flows through the canonical-dispatch allowlist (`getAllCurvePoolsForChain`) — no allowlist change needed
+  5. Fixture **CRV-D** (legacy fixed-array add_liquidity `payloadFingerprint`) added as a hardcoded `0x…` literal in `test/signing-fingerprint.test.ts` (NO `beforeAll`-snapshot), cross-linked from `prepare-curve-add-liquidity` + `protocols-curve` consumer tests, per CLAUDE.md cryptographic-binding fixture discipline
+  6. FROZEN-area zero-diff held: `git diff origin/main -- src/signing/payload-fingerprint.ts src/signing/presign-hash.ts src/signing/handle-store.ts src/tools/send_transaction.ts` empty; `preview_send.ts` touched additively only; full vitest suite + `npm run typecheck` + `npm run build` green
+
+**Plans:** 0 plans (run /gsd-plan-phase 43 to break down — likely 1 plan: ABI shelf + protocol encoder/decoder/selector + tool dispatch arm + preview decode + Fixture CRV-D + tests)
 
 Plans:
 - [ ] TBD (run /gsd-plan-phase 43 to break down)
