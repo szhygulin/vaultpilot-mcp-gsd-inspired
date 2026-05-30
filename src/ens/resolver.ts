@@ -1,7 +1,7 @@
 import type { Address } from "viem";
 import { getEnsAddress, getEnsName, normalize } from "viem/ens";
 
-import { getEthereumClient } from "../chains/ethereum.js";
+import { getChainClient } from "../chains/registry.js";
 
 /**
  * Forward-resolve an ENS name to an address using viem's Universal Resolver.
@@ -11,7 +11,7 @@ import { getEthereumClient } from "../chains/ethereum.js";
  * unnormalizable input throws — let the caller surface that as a tool error.
  */
 export async function resolveEnsName(name: string): Promise<Address | null> {
-  const client = getEthereumClient();
+  const client = getChainClient(1);
   const normalized = normalize(name);
   return client.getEnsAddress({ name: normalized });
 }
@@ -24,7 +24,7 @@ export async function resolveEnsName(name: string): Promise<Address | null> {
  * non-null result has already been verified to point back at this address.
  */
 export async function reverseResolveEns(address: Address): Promise<string | null> {
-  const client = getEthereumClient();
+  const client = getChainClient(1);
   return client.getEnsName({ address });
 }
 
