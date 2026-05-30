@@ -229,6 +229,22 @@ function buildStableNgAddLiquidity(): Hex {
   });
 }
 
+function buildLegacyAddLiquidityEthIn(): Hex {
+  // Phase 43 — legacy add_liquidity([1e18 ETH, 0], minMint=950e15) on stETH/ETH.
+  return _curveProtocol.encodeAddLiquidityLegacy({
+    amounts: [1_000000000000000000n, 0n],
+    minMintAmount: 950_000000000000000n,
+  });
+}
+
+function buildLegacyAddLiquidityStEthOnly(): Hex {
+  // Phase 43 — legacy add_liquidity([0, 1e18 stETH], minMint=950e15) on stETH/ETH.
+  return _curveProtocol.encodeAddLiquidityLegacy({
+    amounts: [0n, 1_000000000000000000n],
+    minMintAmount: 950_000000000000000n,
+  });
+}
+
 // ===========================================================================
 // T1: Legacy stETH/ETH exchange → [CURVE SWAP] block
 // ===========================================================================
@@ -445,5 +461,60 @@ describe("preview_send — Curve selector byte-coverage sanity", () => {
       .map(c => c.text)
       .join("\n");
     expect(text).toContain("[CURVE ADD LIQUIDITY]");
+  });
+});
+
+// ===========================================================================
+// Phase 43 — legacy add_liquidity preview decode (additive arm)
+// ===========================================================================
+describe("preview_send — Curve legacy add_liquidity arm (Phase 43)", () => {
+  it("legacy add_liquidity ETH-in (selector 0x0b4c7e4d) → [CURVE ADD LIQUIDITY] block with ETH-in + MEV line", async () => {
+    scriptStdMocks();
+    const data = buildLegacyAddLiquidityEthIn();
+    expect(data.slice(0, 10).toLowerCase()).toBe(CURVE_SELECTORS.addLiquidityLegacy);
+    // @payable ETH-in: valueWei = amounts[0] = 1 ETH.
+    const handle = seedHandle(STETH_ETH_POOL, 1_000000000000000000n, data);
+
+    const result = await callTool({ handle, userDecision: "preview" });
+    expect(result.isError).toBeFalsy();
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .map(c => c.text)
+      .join("\n");
+
+    expect(text).toContain("[CURVE ADD LIQUIDITY]");
+    expect(text).toContain("stETH/ETH (legacy)");
+    expect(text).toContain("legacy");
+    // ETH-in state surfaced for on-device verification.
+    expect(text).toMatch(/ETH-in.*true|isEthIn.*true/i);
+    // Sandwich-MEV documentation line.
+    expect(text).toContain("Sandwich-MEV gate: not applied to Curve (low MEV exposure on stable pools)");
+  });
+
+  it("legacy add_liquidity stETH-only → [CURVE ADD LIQUIDITY] block with ETH-in false", async () => {
+    scriptStdMocks();
+    const data = buildLegacyAddLiquidityStEthOnly();
+    const handle = seedHandle(STETH_ETH_POOL, 0n, data);
+
+    const result = await callTool({ handle, userDecision: "preview" });
+    expect(result.isError).toBeFalsy();
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .map(c => c.text)
+      .join("\n");
+
+    expect(text).toContain("[CURVE ADD LIQUIDITY]");
+    expect(text).toMatch(/ETH-in.*false|isEthIn.*false/i);
+  });
+
+  it("LOAD-BEARING: legacy add_liquidity selector (0x0b4c7e4d) against a NON-registry tx.to does NOT emit a [CURVE ADD LIQUIDITY] block", async () => {
+    scriptStdMocks();
+    const data = buildLegacyAddLiquidityEthIn(); // starts with 0x0b4c7e4d
+    const handle = seedHandle(NON_CURVE_ADDR, 0n, data);
+
+    const result = await callTool({ handle, userDecision: "preview" });
+    const text = (result.content as Array<{ type: string; text: string }>)
+      .map(c => c.text)
+      .join("\n");
+    // Tuple gate: non-registry tx.to never reaches the decoder regardless of selector.
+    expect(text).not.toContain("[CURVE ADD LIQUIDITY]");
   });
 });

@@ -1507,7 +1507,8 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
             } else if (
               sel === CURVE_SELECTORS.exchangeLegacy ||
               sel === CURVE_SELECTORS.exchangeNg ||
-              sel === CURVE_SELECTORS.addLiquidityNg
+              sel === CURVE_SELECTORS.addLiquidityNg ||
+              sel === CURVE_SELECTORS.addLiquidityLegacy // Phase 43 — legacy fixed-array
             ) {
               // Phase 34 Plan 34-03 — Curve (tx.to, selector) TUPLE dispatch.
               // ANY Vyper StableSwap pool could share these 4-byte selectors —
@@ -1753,6 +1754,25 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
           `  abiVersion:     ${curvePool.abiVersion}`,
           ...amtLines,
           `  minMintAmount:  ${formatUnits(minMintAmount, 18)} (${minMintAmount} wei)`,
+          `  ${MEV_LINE}`,
+        ].join("\n");
+      }
+      if (decoded.kind === "add_liquidity-legacy") {
+        // Phase 43 — legacy fixed-array add_liquidity. ETH-in surfaces the @payable
+        // ETH leg (tx.value carries amounts[0]) for on-device verification.
+        const { amounts, minMintAmount, isEthIn } = decoded;
+        const amtLines = amounts.map((a, idx) => {
+          const dec = curvePool.coinDecimals[idx] ?? 18;
+          return `  amounts[${idx}]:  ${formatUnits(a, dec)} (${a} wei)`;
+        });
+        return [
+          `[CURVE ADD LIQUIDITY]`,
+          `  Pool:           ${curvePool.displayName}`,
+          `  abiVersion:     ${curvePool.abiVersion}`,
+          ...amtLines,
+          `  minMintAmount:  ${formatUnits(minMintAmount, 18)} (${minMintAmount} wei)`,
+          `  ETH-in:         ${isEthIn}`,
+          `  tx.value:       ${formatUnits(record.tx.valueWei, 18)} (${record.tx.valueWei} wei)`,
           `  ${MEV_LINE}`,
         ].join("\n");
       }
