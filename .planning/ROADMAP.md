@@ -1161,7 +1161,7 @@ Plans:
 Small, scoped follow-ups deferred out of already-shipped phases. Each is sized as a single phase (1-3 plans), not a full milestone. Promote one to an active phase via `/gsd-phase add` + `/gsd-plan-phase` when ready. Ordered roughly by leverage.
 
 - ~~**v1.4.1 — pkg ESM `@modelcontextprotocol/sdk` subpath-exports fix** (from Phase 10 / 10-01)~~ — **PROMOTED to Phase 42 (2026-05-29)**. pkg's snapshot fs ignores the SDK's subpath `exports` field, so per-platform binaries fail at runtime with `ERR_MODULE_NOT_FOUND`. This **gates the v1.4.0 GA binary tag**. Recovery options (documented in 10-01 SUMMARY): `pkg.sea=true` backend swap OR a `package.json` `imports` field map. Highest leverage — unblocks distribution.
-- **v1.x — ENS-resolver migration + `src/chains/ethereum.ts` compat-shim deletion** (from Phase 8 / 08-01). The compat shim survives with 2 importers: the FROZEN `send_transaction.ts` and the out-of-scope `ens/resolver.ts`. Migrate the ENS resolver onto the multi-chain registry, then delete the shim. Requires addressing the FROZEN `send_transaction.ts` constraint — design carefully (the 3-gate region is byte-frozen).
+- ~~**v1.x — ENS-resolver migration + `src/chains/ethereum.ts` compat-shim deletion** (from Phase 8 / 08-01)~~ — **PROMOTED to Phase 45 (2026-05-30), partially.** The compat shim has 2 runtime importers, both pulling `getEthereumClient`: the FROZEN `send_transaction.ts:58` and `ens/resolver.ts:4`. Phase 45 migrates the ENS resolver onto the registry (`getChainClient(1)`), removing ONE importer. **Full shim DELETION stays blocked:** Phase 42 froze `send_transaction.ts` to a WHOLE-FILE zero-diff (`git diff origin/main -- src/tools/send_transaction.ts` must be EMPTY), so its import line cannot change without an explicit unfreeze + re-anchor. That re-anchor is re-scoped as a future phase (re-point send_transaction's import to `getChainClient(1)`, take a fresh zero-diff baseline, then delete the shim + `test/chains-ethereum.test.ts`).
 - ~~**v2.0.x — Solana durable-nonce setup tools** (from Phase 12 / 12-04, plan-check FLAG-2)~~ — **PROMOTED to Phase 44 (2026-05-30)** (DB-3). `prepare_solana_nonce_init` + `prepare_solana_nonce_close` for per-wallet durable-nonce accounts. Orthogonal to — and zero-diff against — the FROZEN cryptographic-binding chain (the 150-slot recent-blockhash window covers the ship gate). Design fork resolved: `NonceAuthorized` authority is always the paired wallet; close is gated by an on-chain authority assertion (`VP_S005`). See Phase 44 below.
 - **v2.4.x — Curve legacy-pool `add_liquidity`** (from Phase 34 / 34-03). `prepare_curve_add_liquidity` is `stable_ng`-only; legacy pools are refused with `INVALID_INPUT "deferred to v2.4.x"`. Add the legacy `abiVersion` dispatch arm (mirrors the existing `prepare_curve_swap` per-`abiVersion` pattern).
 - **v2.2.x — LiFi BTC/TRON bridging** (from Phase 20 / 20-02, D-04b — **BLOCKED**). `src/clients/lifi.ts` shared client + `bridge-decoders/lifi-tron.ts` (Inv #6b `_bridgeData.receiver` decoder) + `prepare_tron_lifi_swap`. Blocked on an external precondition: LiFi has no TRON deployment as of 2026-05-21 (verified via live API + GitHub manifest + quote endpoint). Reschedule preconditions + `checkpoint:human-verify` signature are in `20-02-DEFERRED.md`. Do NOT plan until LiFi confirms a TRON/BTC deployment.
@@ -1238,6 +1238,30 @@ Plans:
 - [ ] 44-01-PLAN.md — System Program nonce encoders (createAccount + nonceInitialize + nonceWithdraw) + `getMinimumBalanceForRentExemption` RPC + `prepare_solana_nonce_init` + `prepare_solana_nonce_close` (authority-gated, `VP_S005`) + additive `HandleKind` members + Fixtures M/N + FROZEN zero-diff gate
 
 **Status**: planning. Design fork resolved (authority = paired wallet, per-persona scoping, close-as-full-withdraw); reviewer ratification point — `noncePubkey` surfaced as a tool input (Model 1) vs server-derived (one-arg simplification, identical message bytes). See `44-CONTEXT.md` §Design Fork.
+
+---
+
+### Phase 45: ENS resolver migration + chains/ethereum.ts shim deletion (partial)
+
+Promotes Deferred Backlog DB-2. Migrates `src/ens/resolver.ts` off the legacy `chains/ethereum.ts` compat shim onto the multi-chain registry — `getEthereumClient()` → `getChainClient(1)` — and migrates the existing `test/ens-resolver.test.ts` to mock the registry. This removes ONE of the shim's two runtime importers.
+
+**The FROZEN-importer fork (resolved against the actual code, which diverged from the originating brief):** both shim importers pull the SAME symbol `getEthereumClient` (the brief assumed different symbols / a `getEthereumChainId` that does not exist), and the registry drop-in is `getChainClient(1)` (no `getMainnetClient` exists). The second importer, `send_transaction.ts:58`, lives in a file Phase 42 froze to a **whole-file** zero-diff (`git diff origin/main -- src/tools/send_transaction.ts` must be EMPTY) — there is no marked "free" import region. **Chosen: Option (b-minimal)** — migrate the ENS resolver only; leave `send_transaction.ts` byte-identical and KEEP the shim for its one remaining FROZEN importer. Rejected: (a) edit only send_transaction's import line (violates the whole-file zero-diff gate); (c) delete the shim + re-anchor send_transaction in this phase (couples a trivial cleanup to a deliberate edit of the byte-frozen signing file — surfaced for the reviewer as a separate future "unfreeze + re-anchor" phase). **Residual:** full shim deletion remains blocked on that future re-anchor.
+
+**Depends on**: Phase 8 (registry — `getChainClient`); current `main`.
+**Requirements**: DB-2.
+**Success Criteria** (what must be TRUE):
+
+  1. `src/ens/resolver.ts` imports `getChainClient` from `chains/registry.js`; both call sites use `getChainClient(1)`; ENS forward + reverse behaviour preserved (`normalize()` + `null`-mapping unchanged)
+  2. `test/ens-resolver.test.ts` migrated to mock `chains/registry.js` (`getChainClient`), not the shim; both existing cases pass
+  3. **FROZEN zero-diff held**: `git diff origin/main -- src/tools/send_transaction.ts` is EMPTY (the byte-frozen signing file is not touched)
+  4. `src/chains/ethereum.ts` is KEPT (NOT deleted); `grep -rn 'chains/ethereum' src/` returns exactly one hit — the FROZEN `send_transaction.ts:58` importer
+  5. `grep -rn 'chains/ethereum' src/ens/` and `grep -rn 'chains/ethereum' test/ens-resolver.test.ts` both return zero hits
+  6. `tsc --noEmit` clean; full `vitest` suite green (incl. unchanged `test/chains-ethereum.test.ts` + `test/send-transaction*.test.ts`)
+
+**Plans:** 1 plan
+
+Plans:
+- [ ] 45-01-PLAN.md — ENS resolver `getEthereumClient()` → `getChainClient(1)` + ENS test re-mock onto the registry + FROZEN whole-file zero-diff gate on `send_transaction.ts` + shim kept (1 remaining importer)
 
 ---
 
