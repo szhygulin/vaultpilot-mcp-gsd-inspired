@@ -434,6 +434,12 @@ describe("get_safe_transaction :: FROZEN-area additive-arms-only (Phase 37 close
       "// the 2 Compound selectors. Defense against an unrelated contract that",
       "// happens to expose a matching selector — only the SOT-canonical Comets",
       "// get the NOTICE.",
+      // Phase 43: Curve legacy add_liquidity additive selector-set extension —
+      // the existing `sel === CURVE_SELECTORS.addLiquidityNg` line gained a
+      // trailing `||` to admit `addLiquidityLegacy` (0x0b4c7e4d). Single-line
+      // modification of an existing OR-chain; the new arm itself is purely
+      // additive (rendered via a new `add_liquidity-legacy` case).
+      "sel === CURVE_SELECTORS.addLiquidityNg",
     ];
     const unauthorized = previewDeletions.filter(
       (l) => !authorizedFragments.some((f) => l.includes(f)),

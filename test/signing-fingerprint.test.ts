@@ -79,6 +79,7 @@ import {
   CURVE_NG_EXCHANGE_ABI,
   CURVE_NG_ADD_LIQUIDITY_ABI,
 } from "../src/chains/curve.js";
+import { encodeAddLiquidityLegacy } from "../src/protocols/curve.js";
 import { encodeFunctionData } from "viem";
 
 // ===========================================================================
@@ -108,6 +109,19 @@ export const FIXTURE_CRV_B_FP = "0x91232f051349d2711e4259458489444ed3d9018073d92
  * on PayPool (0x383E6b4437b59fff47B619CBA855CA29342A8559).
  * Proves dynamic-array calldata is byte-stable. */
 export const FIXTURE_CRV_C_FP = "0x2762d8badc0a798a9947b77dd56a5127bd4c65eb17b1daf6465590810edc063b";
+
+/** Phase 43 — Fixture CRV-D: legacy add_liquidity([1e18 ETH, 0], min_mint=950e15)
+ * on the legacy stETH/ETH pool (0xDC24316b9AE028F1497c275EB9192a3Ea0f67022),
+ * ETH-in path (valueWei = amounts[0] = 1e18). Anchors the fixed-array uint256[2]
+ * calldata byte-shape AND a non-zero valueWei flowing into the preimage.
+ * Computed at write-time via the placeholder-literal workflow; NO beforeAll-snapshot. */
+export const FIXTURE_CRV_D_FP = "0x4af107b15f98df5a0e7bd75d1d58ecb87152fe2e09a4eda4230be5515203dfc2";
+
+/** Phase 43 — Fixture CRV-E: legacy add_liquidity([0, 1e18 stETH], min_mint=950e15)
+ * on the legacy stETH/ETH pool, stETH-only path (valueWei = 0n). Anchors the
+ * valueWei=0 branch — distinct fingerprint from CRV-D (different valueWei AND
+ * amounts ordering). Computed at write-time; NO beforeAll-snapshot. */
+export const FIXTURE_CRV_E_FP = "0x762c6ca7365ff373b3e1ed2f39d2efcc69a6dafd307a947f47e8fabdb9da0c8e";
 
 /** Fixture P (escape-hatch baseline, Phase 35 / Plan 35-03 / CUSTOM-01):
  * prepare_custom_call({ chain: ethereum, to: 0x0000...DeaDBeef, value: 0,

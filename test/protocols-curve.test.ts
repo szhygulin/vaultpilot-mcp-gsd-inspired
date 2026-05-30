@@ -18,6 +18,7 @@ import {
   encodeExchangeLegacy,
   encodeExchangeStableNg,
   encodeAddLiquidityStableNg,
+  encodeAddLiquidityLegacy,
   decodeCurveCall,
   _curveProtocol,
 } from "../src/protocols/curve.js";
@@ -26,6 +27,8 @@ import {
   FIXTURE_CRV_A_FP,
   FIXTURE_CRV_B_FP,
   FIXTURE_CRV_C_FP,
+  FIXTURE_CRV_D_FP,
+  FIXTURE_CRV_E_FP,
 } from "./signing-fingerprint.test.js";
 
 // ---------------------------------------------------------------------------
@@ -74,6 +77,18 @@ describe("CURVE_SELECTORS byte-identity (Phase 34 Plan 34-03)", () => {
       toFunctionSelector("function calc_token_amount(uint256[],bool)"),
     );
   });
+
+  // Phase 43 — legacy fixed-array add_liquidity selector (RESEARCH-VERIFIED 0x0b4c7e4d).
+  it("addLiquidityLegacy === toFunctionSelector('function add_liquidity(uint256[2],uint256)') === 0x0b4c7e4d", () => {
+    expect(CURVE_SELECTORS.addLiquidityLegacy).toBe(
+      toFunctionSelector("function add_liquidity(uint256[2],uint256)"),
+    );
+    expect(CURVE_SELECTORS.addLiquidityLegacy).toBe("0x0b4c7e4d");
+  });
+
+  it("addLiquidityLegacy !== addLiquidityNg (0x0b4c7e4d != 0xb72df5de — fixed vs dynamic array, Pitfall 5)", () => {
+    expect(CURVE_SELECTORS.addLiquidityLegacy).not.toBe(CURVE_SELECTORS.addLiquidityNg);
+  });
 });
 
 // ===========================================================================
@@ -116,6 +131,24 @@ describe("Curve calldata encoders — selector prefix + length (Phase 34 Plan 34
     expect(data.slice(0, 10).toLowerCase()).toBe("0xb72df5de");
     // Minimum length: 4 selector + 32 offset + 32 minMintAmount + 32 length + N*32 elements
     expect(data.length).toBeGreaterThan(10); // trivially true
+  });
+
+  // Phase 43 — legacy fixed-array add_liquidity encoder.
+  it("encodeAddLiquidityLegacy — 4-byte prefix is 0x0b4c7e4d", () => {
+    const data = encodeAddLiquidityLegacy({ amounts: [1_000000000000000000n, 0n], minMintAmount: 0n });
+    expect(data.slice(0, 10).toLowerCase()).toBe("0x0b4c7e4d");
+  });
+
+  it("encodeAddLiquidityLegacy — FIXED uint256[2] inline encoding (no dynamic offset/length, Pitfall 1)", () => {
+    const data = encodeAddLiquidityLegacy({ amounts: [0x11n, 0x22n], minMintAmount: 0x33n });
+    // selector(4) + 3 inline 32-byte words (amounts[0], amounts[1], min_mint) = 100 bytes.
+    // 0x + 8 hex selector + 3 × 64 hex = 2 + 8 + 192 = 202 chars. NO offset/length prefix.
+    expect(data.length).toBe(202);
+    expect(data.slice(0, 10).toLowerCase()).toBe("0x0b4c7e4d");
+    // amounts[0] = 0x11 inline in word 1 (no offset word ahead of it).
+    expect(data.slice(10, 10 + 64)).toBe("0".repeat(62) + "11");
+    expect(data.slice(10 + 64, 10 + 128)).toBe("0".repeat(62) + "22");
+    expect(data.slice(10 + 128, 10 + 192)).toBe("0".repeat(62) + "33");
   });
 });
 
@@ -241,19 +274,61 @@ describe("decodeCurveCall — (tx.to, selector) tuple dispatch (Phase 34 Plan 34
     const decoded = decodeCurveCall(data, NON_REGISTRY_ADDR, CHAIN_ID);
     expect(decoded).toBeNull();
   });
+
+  // Phase 43 — legacy add_liquidity decode branch (OQ-3).
+  it("decode legacy add_liquidity against stETH/ETH pool (ETH-in) → kind: add_liquidity-legacy, isEthIn=true", () => {
+    const data = encodeAddLiquidityLegacy({
+      amounts: [1_000000000000000000n, 0n], // 1 ETH (coin 0 = ETH sentinel), 0 stETH
+      minMintAmount: 950_000000000000000n,
+    });
+    const decoded = decodeCurveCall(data, STETH_ETH_POOL, CHAIN_ID);
+    expect(decoded).not.toBeNull();
+    expect(decoded!.kind).toBe("add_liquidity-legacy");
+    if (decoded!.kind === "add_liquidity-legacy") {
+      expect(decoded!.amounts).toEqual([1_000000000000000000n, 0n]);
+      expect(decoded!.minMintAmount).toBe(950_000000000000000n);
+      expect(decoded!.isEthIn).toBe(true);
+    }
+  });
+
+  it("decode legacy add_liquidity against stETH/ETH pool (stETH-only) → isEthIn=false", () => {
+    const data = encodeAddLiquidityLegacy({
+      amounts: [0n, 1_000000000000000000n],
+      minMintAmount: 950_000000000000000n,
+    });
+    const decoded = decodeCurveCall(data, STETH_ETH_POOL, CHAIN_ID);
+    expect(decoded).not.toBeNull();
+    expect(decoded!.kind).toBe("add_liquidity-legacy");
+    if (decoded!.kind === "add_liquidity-legacy") {
+      expect(decoded!.isEthIn).toBe(false); // amounts[0] === 0 → not ETH-in
+    }
+  });
+
+  it("TUPLE-DISPATCH (LOAD-BEARING): legacy add_liquidity calldata against a stable_ng pool → null", () => {
+    const data = encodeAddLiquidityLegacy({ amounts: [1n, 0n], minMintAmount: 0n });
+    const decoded = decodeCurveCall(data, PAY_POOL, CHAIN_ID);
+    expect(decoded).toBeNull();
+  });
+
+  it("REVERSE NEGATIVE (Phase 34 stays green): stable_ng add_liquidity (0xb72df5de) against legacy pool → null", () => {
+    const data = encodeAddLiquidityStableNg({ amounts: [1n, 2n], minMintAmount: 0n });
+    const decoded = decodeCurveCall(data, STETH_ETH_POOL, CHAIN_ID);
+    expect(decoded).toBeNull();
+  });
 });
 
 // ===========================================================================
 // 5. _curveProtocol indirection drift gate
 // ===========================================================================
-describe("_curveProtocol indirection drift gate (Phase 34 Plan 34-03)", () => {
-  it("_curveProtocol has all 4 expected own-property keys", () => {
+describe("_curveProtocol indirection drift gate (Phase 34 Plan 34-03 + Phase 43)", () => {
+  it("_curveProtocol has all 5 expected own-property keys (Phase 43 adds encodeAddLiquidityLegacy)", () => {
     const keys = Object.keys(_curveProtocol);
     expect(keys).toContain("encodeExchangeLegacy");
     expect(keys).toContain("encodeExchangeStableNg");
     expect(keys).toContain("encodeAddLiquidityStableNg");
+    expect(keys).toContain("encodeAddLiquidityLegacy");
     expect(keys).toContain("decodeCurveCall");
-    expect(keys.length).toBe(4);
+    expect(keys.length).toBe(5);
   });
 });
 
@@ -338,5 +413,36 @@ describe("Encoder cross-link to Plan 34-01 fixtures CRV-A/B/C (Phase 34 Plan 34-
   it("Fixtures CRV-A / CRV-B / CRV-C are 3 distinct fingerprints", () => {
     const distinct = new Set([FIXTURE_CRV_A_FP, FIXTURE_CRV_B_FP, FIXTURE_CRV_C_FP]);
     expect(distinct.size).toBe(3);
+  });
+
+  // Phase 43 — encoder-layer cross-link for the legacy fixed-array fixtures.
+  it("CRV-D: encodeAddLiquidityLegacy([1e18,0], min=950e15) ETH-in + computePayloadFingerprint === FIXTURE_CRV_D_FP", () => {
+    const data = _curveProtocol.encodeAddLiquidityLegacy({
+      amounts: [1_000000000000000000n, 0n],
+      minMintAmount: 950_000000000000000n,
+    });
+    expect(data.slice(0, 10).toLowerCase()).toBe("0x0b4c7e4d");
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: STETH_ETH_POOL,
+      valueWei: 1_000000000000000000n, // @payable ETH-in
+      data,
+    });
+    expect(fp).toBe(FIXTURE_CRV_D_FP);
+  });
+
+  it("CRV-E: encodeAddLiquidityLegacy([0,1e18], min=950e15) stETH-only + computePayloadFingerprint === FIXTURE_CRV_E_FP", () => {
+    const data = _curveProtocol.encodeAddLiquidityLegacy({
+      amounts: [0n, 1_000000000000000000n],
+      minMintAmount: 950_000000000000000n,
+    });
+    expect(data.slice(0, 10).toLowerCase()).toBe("0x0b4c7e4d");
+    const fp = computePayloadFingerprint({
+      chainId: 1,
+      to: STETH_ETH_POOL,
+      valueWei: 0n, // stETH-only
+      data,
+    });
+    expect(fp).toBe(FIXTURE_CRV_E_FP);
   });
 });

@@ -17,8 +17,11 @@ import {
   CURVE_NG_ADD_LIQUIDITY_ABI,
   CURVE_NG_CALC_TOKEN_AMOUNT_ABI,
   CURVE_LP_BALANCE_OF_ABI,
+  CURVE_LEGACY_ADD_LIQUIDITY_ABI,
+  CURVE_LEGACY_CALC_TOKEN_AMOUNT_ABI,
   getCurveGetDy,
   getCurveCalcTokenAmount,
+  getCurveLegacyCalcTokenAmount,
   getCurveLpBalance,
   _curveChain,
 } from "../src/chains/curve.js";
@@ -77,6 +80,23 @@ describe("src/chains/curve.ts — ABI selector byte-identity (Phase 34 Plan 34-0
     const fn = CURVE_LP_BALANCE_OF_ABI[0];
     expect(toFunctionSelector(fn)).toBe("0x70a08231");
   });
+
+  // Phase 43 — legacy fixed-array ABIs (RESEARCH-VERIFIED selectors).
+  it("CURVE_LEGACY_ADD_LIQUIDITY_ABI — selector is 0x0b4c7e4d (add_liquidity(uint256[2],uint256))", () => {
+    expect(
+      toFunctionSelector("function add_liquidity(uint256[2],uint256)"),
+    ).toBe("0x0b4c7e4d");
+    const fn = CURVE_LEGACY_ADD_LIQUIDITY_ABI[0];
+    expect(toFunctionSelector(fn)).toBe("0x0b4c7e4d");
+  });
+
+  it("CURVE_LEGACY_CALC_TOKEN_AMOUNT_ABI — selector is 0xed8e84f3 (calc_token_amount(uint256[2],bool))", () => {
+    expect(
+      toFunctionSelector("function calc_token_amount(uint256[2],bool)"),
+    ).toBe("0xed8e84f3");
+    const fn = CURVE_LEGACY_CALC_TOKEN_AMOUNT_ABI[0];
+    expect(toFunctionSelector(fn)).toBe("0xed8e84f3");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -124,6 +144,23 @@ describe("getCurveCalcTokenAmount — readContract mock assertions", () => {
   });
 });
 
+describe("getCurveLegacyCalcTokenAmount — readContract mock assertions (Phase 43)", () => {
+  it("passes a FIXED uint256[2] amounts array + is_deposit=true to readContract; returns bigint", async () => {
+    const client = makeMockClient(987_654_321n);
+    const amounts: [bigint, bigint] = [1_000000000000000000n, 2_000000000000000000n];
+    const result = await getCurveLegacyCalcTokenAmount(client, DUMMY_POOL, amounts);
+    expect(result).toBe(987_654_321n);
+    expect(client.readContract).toHaveBeenCalledOnce();
+    const callArgs = (client.readContract as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(callArgs.address).toBe(DUMMY_POOL);
+    // MUST use the fixed-array ABI, NOT the dynamic-array NG reader (Pitfall 1).
+    expect(callArgs.abi).toBe(CURVE_LEGACY_CALC_TOKEN_AMOUNT_ABI);
+    expect(callArgs.functionName).toBe("calc_token_amount");
+    // amounts is the 2-tuple; is_deposit MUST be true (deposit direction).
+    expect(callArgs.args).toEqual([amounts, true]);
+  });
+});
+
 describe("getCurveLpBalance — readContract mock assertions", () => {
   it("calls readContract on LP token address (not pool address) with correct wallet", async () => {
     const client = makeMockClient(100_000000000000000000n);
@@ -161,7 +198,12 @@ describe("_curveChain ESM spy-affordance indirection (CLAUDE.md convention)", ()
     expect(typeof _curveChain.getCurveLpBalance).toBe("function");
   });
 
-  it("_curveChain has exactly 3 keys (drift gate — accidental removal fires here)", () => {
-    expect(Object.keys(_curveChain)).toHaveLength(3);
+  it("_curveChain exports getCurveLegacyCalcTokenAmount as an own property (Phase 43)", () => {
+    expect(Object.prototype.hasOwnProperty.call(_curveChain, "getCurveLegacyCalcTokenAmount")).toBe(true);
+    expect(typeof _curveChain.getCurveLegacyCalcTokenAmount).toBe("function");
+  });
+
+  it("_curveChain has exactly 4 keys (drift gate — accidental removal fires here)", () => {
+    expect(Object.keys(_curveChain)).toHaveLength(4);
   });
 });

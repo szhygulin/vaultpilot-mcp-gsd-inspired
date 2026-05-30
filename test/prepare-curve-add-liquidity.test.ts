@@ -19,9 +19,10 @@ import { getAddress, type Address } from "viem";
 // ---------------------------------------------------------------------------
 // Hoisted spies
 // ---------------------------------------------------------------------------
-const { getStatusSpy, getCurveCalcTokenAmountSpy } = vi.hoisted(() => ({
+const { getStatusSpy, getCurveCalcTokenAmountSpy, getCurveLegacyCalcTokenAmountSpy } = vi.hoisted(() => ({
   getStatusSpy: vi.fn(),
   getCurveCalcTokenAmountSpy: vi.fn(),
+  getCurveLegacyCalcTokenAmountSpy: vi.fn(),
 }));
 
 vi.mock("../src/wallet/session-manager.js", async () => {
@@ -60,6 +61,7 @@ vi.mock("../src/chains/curve.js", async () => {
     _curveChain: {
       getCurveGetDy: vi.fn(),
       getCurveCalcTokenAmount: getCurveCalcTokenAmountSpy,
+      getCurveLegacyCalcTokenAmount: getCurveLegacyCalcTokenAmountSpy,
       getCurveLpBalance: vi.fn(),
     },
   };
@@ -70,7 +72,7 @@ import { _resetDemoModeForTesting } from "../src/config/env.js";
 import { _resetActivePersonaForTesting } from "../src/demo/state.js";
 import { getRegisteredTool, type ToolHandlerResult } from "../src/tools/index.js";
 import { CURVE_SELECTORS } from "../src/protocols/curve.js";
-import { FIXTURE_CRV_C_FP } from "./signing-fingerprint.test.js";
+import { FIXTURE_CRV_C_FP, FIXTURE_CRV_D_FP, FIXTURE_CRV_E_FP } from "./signing-fingerprint.test.js";
 
 await import("../src/tools/prepare_curve_add_liquidity.js");
 
@@ -124,6 +126,7 @@ beforeEach(() => {
   _resetActivePersonaForTesting();
   getStatusSpy.mockReset();
   getCurveCalcTokenAmountSpy.mockReset();
+  getCurveLegacyCalcTokenAmountSpy.mockReset();
   mockReadContract.mockReset();
 });
 
@@ -173,25 +176,85 @@ describe("prepare_curve_add_liquidity — pool registry gate", () => {
 });
 
 // ===========================================================================
-// T3: Legacy refusal (LOAD-BEARING)
+// T3: Legacy stETH/ETH pool ACCEPTED (Phase 43 — deferral lifted, LOAD-BEARING)
 // ===========================================================================
-describe("prepare_curve_add_liquidity — legacy refusal", () => {
-  it("T3: legacy stETH/ETH pool → INVALID_INPUT 'deferred to v2.4.x' (LOAD-BEARING)", async () => {
+// Phase 34 deferred the legacy fixed-array pool with INVALID_INPUT "deferred to
+// v2.4.x". Phase 43 lifts that: the legacy stETH/ETH pool now flows through the
+// add_liquidity(uint256[2],uint256) dispatch arm (selector 0x0b4c7e4d, @payable
+// ETH-in). The quote comes from the fixed-array reader getCurveLegacyCalcTokenAmount.
+// quotedLp 959595959595959596n * (10000-100)/10000 === 950000000000000000n (CRV-D/E minMint).
+const LEGACY_QUOTED_LP = 959595959595959596n;
+describe("prepare_curve_add_liquidity — legacy stETH/ETH accepted (Phase 43)", () => {
+  it("T3: legacy stETH/ETH pool no longer returns INVALID_INPUT 'deferred' (refusal lifted)", async () => {
     getStatusSpy.mockResolvedValue(PAIRED_STATUS);
+    getCurveLegacyCalcTokenAmountSpy.mockResolvedValue(LEGACY_QUOTED_LP);
+    mockReadContract.mockResolvedValue(BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")); // stETH leg pre-approved
     const result = await callTool({
       chain: "ethereum",
-      poolAddress: STETH_ETH_POOL, // legacy pool
-      amounts: ["50", "50"],
+      poolAddress: STETH_ETH_POOL, // legacy pool — now accepted
+      amounts: ["1", "0"],
       slippageBps: 100,
     });
-    expect(result.isError).toBe(true);
+    expect(result.isError).toBeFalsy();
     const sc = result.structuredContent as Record<string, unknown>;
-    expect(sc.errorCode).toBe("INVALID_INPUT");
+    expect(sc.errorCode).toBeUndefined();
     const msg = String(sc.message || "");
-    expect(msg).toContain("deferred to v2.4.x");
-    // cause should identify the refusal
-    const cause = String((sc as Record<string, unknown>).cause || "");
-    expect(cause).toContain("legacy-add-liquidity-refused");
+    expect(msg).not.toContain("deferred to v2.4.x");
+  });
+
+  it("T3b: ETH-in (amounts ['1','0']) → selector 0x0b4c7e4d, valueWei === amounts[0], fp === FIXTURE_CRV_D_FP", async () => {
+    getStatusSpy.mockResolvedValue(PAIRED_STATUS);
+    getCurveLegacyCalcTokenAmountSpy.mockResolvedValue(LEGACY_QUOTED_LP);
+    mockReadContract.mockResolvedValue(BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));
+    const result = await callTool({
+      chain: "ethereum",
+      poolAddress: STETH_ETH_POOL,
+      amounts: ["1", "0"], // 1 ETH in, 0 stETH
+      slippageBps: 100,
+    });
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as Record<string, unknown>;
+    // selector asserted BEFORE the fingerprint (CLAUDE.md selector-before-fp convention)
+    expect(String(sc.data).slice(0, 10).toLowerCase()).toBe("0x0b4c7e4d");
+    expect(sc.valueWei).toBe("1000000000000000000");
+    expect(sc.minMintAmount).toBe("950000000000000000");
+    expect(sc.payloadFingerprint).toBe(FIXTURE_CRV_D_FP);
+  });
+
+  it("T3c: stETH-only (amounts ['0','1']) → valueWei === '0', fp === FIXTURE_CRV_E_FP", async () => {
+    getStatusSpy.mockResolvedValue(PAIRED_STATUS);
+    getCurveLegacyCalcTokenAmountSpy.mockResolvedValue(LEGACY_QUOTED_LP);
+    mockReadContract.mockResolvedValue(BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")); // stETH leg pre-approved
+    const result = await callTool({
+      chain: "ethereum",
+      poolAddress: STETH_ETH_POOL,
+      amounts: ["0", "1"], // 0 ETH, 1 stETH → not ETH-in
+      slippageBps: 100,
+    });
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as Record<string, unknown>;
+    expect(String(sc.data).slice(0, 10).toLowerCase()).toBe("0x0b4c7e4d");
+    expect(sc.valueWei).toBe("0");
+    expect(sc.payloadFingerprint).toBe(FIXTURE_CRV_E_FP);
+  });
+
+  it("T3d: legacy quote uses getCurveLegacyCalcTokenAmount; NO allowance read on the ETH sentinel coin", async () => {
+    getStatusSpy.mockResolvedValue(PAIRED_STATUS);
+    getCurveLegacyCalcTokenAmountSpy.mockResolvedValue(LEGACY_QUOTED_LP);
+    mockReadContract.mockResolvedValue(BigInt("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));
+    const result = await callTool({
+      chain: "ethereum",
+      poolAddress: STETH_ETH_POOL,
+      amounts: ["1", "0"], // ETH sentinel leg non-zero; stETH leg zero
+      slippageBps: 100,
+    });
+    expect(result.isError).toBeFalsy();
+    // Legacy quote path (fixed uint256[2] reader), NOT the dynamic NG reader.
+    expect(getCurveLegacyCalcTokenAmountSpy).toHaveBeenCalledTimes(1);
+    expect(getCurveCalcTokenAmountSpy).not.toHaveBeenCalled();
+    // The ETH sentinel coin (coin 0) must never trigger an ERC20.allowance read.
+    // coin 1 (stETH) amount is 0 here → also skipped → zero allowance reads.
+    expect(mockReadContract).not.toHaveBeenCalled();
   });
 });
 
