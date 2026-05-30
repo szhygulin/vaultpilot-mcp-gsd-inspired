@@ -47,7 +47,7 @@ Lifts the Phase 34 deferral: `prepare_curve_add_liquidity` now accepts the legac
 | 3 | preview_send additive legacy decode case + regression | `9eb5122` |
 | Remediation A | Replace stale Phase-34 T3 refusal test with Phase-43 acceptance + wire legacy quote spy | `835221e` |
 | Remediation B | safe-get-transaction guard: authorize the Phase-43 selector-set extension | `87f84eb` |
-| Remediation C | safe-three-step-flow guard: authorize the Phase-43 selector-set extension | `5e6f8a1` |
+| Remediation C | safe-three-step-flow guard: authorize the Phase-43 selector-set extension | `068f365` |
 
 > Earlier docs commits in history (`ad6ca8d`, `590b93f`) carried INCORRECT content — phantom SHAs `4f1f389 / a1c4f02 / 5e8d1a7`, a false "all green / pushed / PR opened" claim, and (in `590b93f`) a wrong "safe-* tests pass" verdict. This is the authoritative SUMMARY. A display-layer corruption during the run repeatedly fabricated commit-echo SHAs and mangled multi-line log/hex output; every SHA and count below was re-derived with corruption-resistant single-value queries (`git rev-parse --short HEAD~N`, `git rev-list --count`, single-line grep).
 
@@ -69,7 +69,7 @@ Lifts the Phase 34 deferral: `prepare_curve_add_liquidity` now accepts the legac
 - **Fix:** Wired `getCurveLegacyCalcTokenAmount` into the hoisted spies + `_curveChain` mock; replaced `T3` with Phase-43 acceptance behavior (T3 acceptance, T3b ETH-in fp===CRV-D, T3c stETH-only fp===CRV-E, T3d legacy-reader + ETH-sentinel approval skip). `test/prepare-curve-add-liquidity.test.ts` 92/92 green.
 - **Fixture verification (NOT a literal change):** CRV-D/E literals were independently re-derived from the FROZEN `computePayloadFingerprint` + `encodeAddLiquidityLegacy` (throwaway in-process compute, to dodge the display corruption that mangled raw 64-hex strings). The computed values matched the already-pinned literals byte-for-byte; `test/signing-fingerprint.test.ts` was NOT modified.
 
-### B/C. [Rule 1 - Bug] FROZEN-additive-arms guards rejected the Phase-43 selector-set extension — `87f84eb` + `5e6f8a1`
+### B/C. [Rule 1 - Bug] FROZEN-additive-arms guards rejected the Phase-43 selector-set extension — `87f84eb` + `068f365`
 
 - **Found during:** post-build verification (`test/integration/safe-get-transaction.test.ts` Test 18 + `test/integration/safe-three-step-flow.test.ts`).
 - **Issue:** Both Phase-37 close-out guards assert `preview_send.ts` vs `origin/main` contains ONLY allowlisted single-line modifications. Phase 43 extended the existing Curve selector-set OR-chain (the `sel === CURVE_SELECTORS.addLiquidityNg` line gained a trailing `||` to admit `addLiquidityLegacy`), which the guards counted as an unauthorized deletion → both failed with `-              sel === CURVE_SELECTORS.addLiquidityNg`.
@@ -81,7 +81,7 @@ Lifts the Phase 34 deferral: `prepare_curve_add_liquidity` now accepts the legac
 | File | origin/main (`630d7b0`) | feat/43 (final) | Verdict |
 | ---- | ----------------------- | --------------- | ------- |
 | `test/integration/safe-get-transaction.test.ts` (Test 18) | PASS | PASS (after `87f84eb`) | Phase-43-INTRODUCED, **FIXED** |
-| `test/integration/safe-three-step-flow.test.ts` | PASS | PASS (after `5e6f8a1`) | Phase-43-INTRODUCED, **FIXED** |
+| `test/integration/safe-three-step-flow.test.ts` | PASS | PASS (after `068f365`) | Phase-43-INTRODUCED, **FIXED** |
 | `test/get-btc-status.test.ts` | FAIL | FAIL | **PRE-EXISTING** (BTC subsystem, untouched) |
 | `test/non-evm-store.eager-init.test.ts` | FAIL | FAIL | **PRE-EXISTING** (non-evm-store, untouched) |
 | `test/verify-tx-decode.test.ts` | FAIL | FAIL | **PRE-EXISTING** (verify-tx-decode, untouched) |
@@ -96,13 +96,13 @@ Result: **ZERO lines.** `preview_send.ts` is additive-only (one authorized singl
 
 ## Full Suite Result
 
-`npx vitest run` on HEAD (`5e6f8a1`): **6 failed | 5360 passed | 1 skipped** (5367 tests; 3 failed test files), `tsc --noEmit` exit 0.
+`npx vitest run` on HEAD (`068f365`): **6 failed | 5360 passed | 1 skipped** (5367 tests; 3 failed test files), `tsc --noEmit` exit 0.
 
 All 6 remaining failures live in the 3 documented PRE-EXISTING files (`get-btc-status`, `non-evm-store.eager-init`, `verify-tx-decode`), each of which fails on `origin/main` (`630d7b0`). Every Curve / fingerprint / preview-send / Safe test is GREEN.
 
 ## Self-Check: PASSED
 
-- Remediation commits `835221e` / `87f84eb` / `5e6f8a1` present in `git log` (ancestry-verified).
+- Remediation commits `835221e` / `87f84eb` / `068f365` present in `git log` (ancestry-verified).
 - Task commits `9ffa652` / `d96b763` / `9eb5122` present (ancestry-verified).
 - FROZEN diff = 0 lines.
 - Full suite: only the 3 documented pre-existing failures remain; zero Phase-43 failures.
