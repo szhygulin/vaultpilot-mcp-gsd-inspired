@@ -1210,7 +1210,7 @@ Plans:
 **Plans:** 1 plan
 
 Plans:
-- [ ] 43-01-PLAN.md — legacy ABI shelf (`CURVE_LEGACY_ADD_LIQUIDITY_ABI` + `CURVE_LEGACY_CALC_TOKEN_AMOUNT_ABI` + `getCurveLegacyCalcTokenAmount`) + protocol selector/encoder/decoder (`addLiquidityLegacy` 0x0b4c7e4d + `encodeAddLiquidityLegacy` + `"add_liquidity-legacy"` decode branch) + tool dispatch arm (delete refusal, ETH-in valueWei, ETH-sentinel approval skip) + `preview_send` additive `[CURVE ADD LIQUIDITY]` legacy case + Fixtures CRV-D/CRV-E + 4-file regression + FROZEN zero-diff
+- [x] 43-01-PLAN.md — legacy ABI shelf (`CURVE_LEGACY_ADD_LIQUIDITY_ABI` + `CURVE_LEGACY_CALC_TOKEN_AMOUNT_ABI` + `getCurveLegacyCalcTokenAmount`) + protocol selector/encoder/decoder (`addLiquidityLegacy` 0x0b4c7e4d + `encodeAddLiquidityLegacy` + `"add_liquidity-legacy"` decode branch) + tool dispatch arm (delete refusal, ETH-in valueWei, ETH-sentinel approval skip) + `preview_send` additive `[CURVE ADD LIQUIDITY]` legacy case + Fixtures CRV-D/CRV-E + 4-file regression + FROZEN zero-diff
 
 ---
 
@@ -1235,9 +1235,9 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 44-01-PLAN.md — System Program nonce encoders (createAccount + nonceInitialize + nonceWithdraw) + `getMinimumBalanceForRentExemption` RPC + `prepare_solana_nonce_init` + `prepare_solana_nonce_close` (authority-gated, `VP_S005`) + additive `HandleKind` members + Fixtures M/N + FROZEN zero-diff gate
+- [x] 44-01-PLAN.md — System Program nonce encoders (createAccount + nonceInitialize + nonceWithdraw) + `getMinimumBalanceForRentExemption` RPC + `prepare_solana_nonce_init` + `prepare_solana_nonce_close` (authority-gated, `VP_S005`) + additive `HandleKind` members + Fixtures M/N + FROZEN zero-diff gate
 
-**Status**: planning. Design fork resolved (authority = paired wallet, per-persona scoping, close-as-full-withdraw); reviewer ratification point — `noncePubkey` surfaced as a tool input (Model 1) vs server-derived (one-arg simplification, identical message bytes). See `44-CONTEXT.md` §Design Fork.
+**Status**: Complete — shipped to `main` as PR #173 (squash `8f9219f`); SUMMARY at `44-01-SUMMARY.md`. Design fork resolved (authority = paired wallet, per-persona scoping, close-as-full-withdraw); `noncePubkey` shipped as a tool input (Model 1). VP_S005 wired as a local constant in `solanaErrorCode` (no `SOLANA_ERROR_CODES` registry exists — reconciled to ground truth; see SUMMARY deviations). See `44-CONTEXT.md` §Design Fork.
 
 ---
 
@@ -1261,7 +1261,7 @@ Promotes Deferred Backlog DB-2. Migrates `src/ens/resolver.ts` off the legacy `c
 **Plans:** 1 plan
 
 Plans:
-- [ ] 45-01-PLAN.md — ENS resolver `getEthereumClient()` → `getChainClient(1)` + ENS test re-mock onto the registry + FROZEN whole-file zero-diff gate on `send_transaction.ts` + shim kept (1 remaining importer)
+- [x] 45-01-PLAN.md — ENS resolver `getEthereumClient()` → `getChainClient(1)` + ENS test re-mock onto the registry + FROZEN whole-file zero-diff gate on `send_transaction.ts` + shim kept (1 remaining importer)
 
 ---
 
@@ -1278,7 +1278,7 @@ Each is sized as one milestone (4-6 phases). All blocked on v2.x maturity. (v3.0
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21 → 22 → 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40 → 41
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13 → 14 → 15 → 16 → 17 → 18 → 19 → 20 → 21 → 22 → 23 → 24 → 25 → 26 → 27 → 28 → 29 → 30 → 31 → 32 → 33 → 34 → 35 → 36 → 37 → 38 → 39 → 40 → 41 → 42 → 43 → 44 → 45
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -1300,15 +1300,15 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 16. LiFi-routed EVM↔Solana bridging + Solana diagnostics | v2.0 | 0/2 | Planning | - |
 | 17. TRON scaffolding — USB-HID + TRX reads + persistent TRON account + portfolio fan-out | v2.1 | 5/5 | Complete (verify-phase open) | 2026-05-20 |
 | 18. TRON native + TRC-20 trust pipeline | v2.1 | 4/4 | Complete   | 2026-05-20 |
-| 19. TRC-20 approve + Stake 2.0 (freeze/unfreeze/withdraw-expire-unfreeze/vote/claim) | v2.1 | 0/4 | Not started | - |
-| 20. SunSwap + LiFi-routed TRON↔EVM bridging | v2.1 | 0/2 | Not started | - |
-| 21. TRON diagnostics + v2.1 milestone close-out (portfolio leg shipped in Phase 17) | v2.1 | 0/1 | Not started | - |
+| 19. TRC-20 approve + Stake 2.0 (freeze/unfreeze/withdraw-expire-unfreeze/vote/claim) | v2.1 | 4/4 | Complete    | 2026-05-20 |
+| 20. SunSwap + LiFi-routed TRON↔EVM bridging | v2.1 | 1/1 | Complete    | 2026-05-20 |
+| 21. TRON diagnostics + v2.1 milestone close-out (portfolio leg shipped in Phase 17) | v2.1 | 1/1 | Complete    | 2026-05-20 |
 | 22. BTC scaffolding — Esplora reads + USB-HID + persistent BTC account | v2.2 | 0/4 | Not started | - |
 | 23. BTC native + segwit + taproot trust pipeline (PSBT-based) | v2.2 | 4/4 | Complete    | 2026-05-22 |
 | 24. BIP-125 RBF + BIP-137 message signing | v2.2 | 2/2 | Complete    | 2026-05-22 |
 | 25. PSBT multisig flow (combine / sign / finalize + multisig wallet registry) | v2.2 | 3/3 | Complete    | 2026-05-22 |
 | 26. LTC scaffolding + LiFi BTC→EVM/Solana bridging | v2.2 | 3/3 | Complete    | 2026-05-22 |
-| 27. Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics | v2.2 | 2/3 | In Progress|  |
+| 27. Optional Bitcoin/Litecoin Core RPC + `build_incident_report` + diagnostics | v2.2 | 3/3 | Complete    | 2026-05-22 |
 | 28. Compound V3 — multi-Comet supply/withdraw/borrow/repay (Ethereum mainnet — 6 Comets) | v2.3 | 4/4 | Complete (verify-phase open); closes #64 | 2026-05-20 |
 | 29. Morpho Blue — supply/withdraw/borrow/repay | v2.3 | 3/3 | Complete   | 2026-05-23 |
 | 30. Lido — stake/unstake/wrap/unwrap (stETH↔wstETH) | v2.3 | 3/3 | Complete    | 2026-05-23 |
@@ -1322,4 +1322,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 38. `enableModule` + `delegateCall: true` hard-trigger second-LLM check (Inv #12.5) | v2.5 | 0/2 | Not started | - |
 | 39. Tier-1 bridge facet decoders + final-recipient assertion (Inv #6b) | v2.6 | 3/3 | Complete   | 2026-05-28 |
 | 40. Sandwich-MEV slippage hint per-L2 thresholds | v2.6 | 1/1 | Complete   | 2026-05-28 |
-| 44. Solana durable-nonce setup tools (DB-3 follow-up) | v2.x | 0/1 | Planning | - |
+| 42. v1.4.1 pkg ESM SDK subpath-exports fix (DIST-40 follow-up) | v1.4 | 1/1 | Complete    | 2026-05-29 |
+| 43. Curve add_liquidity legacy StableSwap fixed-array (Phase 34 deferral) | v2.4 | 1/1 | Complete    | 2026-05-30 |
+| 44. Solana durable-nonce setup tools (DB-3 follow-up) | v2.x | 1/1 | Complete    | 2026-06-01 |
+| 45. ENS resolver migration off compat-shim (DB-2, partial) | v2.x | 1/1 | Complete    | 2026-06-01 |
