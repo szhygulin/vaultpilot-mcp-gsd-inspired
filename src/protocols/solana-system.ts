@@ -36,6 +36,7 @@
 // uniformly without silent fingerprint drift.
 
 import {
+  NONCE_ACCOUNT_LENGTH as WEB3_NONCE_ACCOUNT_LENGTH,
   PublicKey,
   SystemProgram,
   Transaction,
@@ -43,6 +44,15 @@ import {
 } from "@solana/web3.js";
 
 import type { SolanaInstructionSummary } from "../signing/handle-store.js";
+
+/**
+ * Byte length of a durable-nonce account (Phase 44 — Plan 44-01). Re-exported
+ * from `@solana/web3.js` (verified === 80 against the pinned SDK
+ * @solana/web3.js@1.98.4). The createAccount `space` arg at nonce-init time
+ * MUST be exactly this so the account is rent-exemptly sized for a nonce.
+ * Pinned here so consumers (prepare_solana_nonce_init) never inline `80`.
+ */
+export const NONCE_ACCOUNT_LENGTH = WEB3_NONCE_ACCOUNT_LENGTH;
 
 /**
  * System Program `Transfer` instruction discriminant. 4-byte little-endian
@@ -122,6 +132,186 @@ export function buildSolanaTransferTx(input: {
     },
   ];
   return { transaction: tx, messageBytes, programIds, instructionSummary };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 44 — Plan 44-01: durable-nonce-account encoders (DB-3 promoted).
+//
+// Three thin wrappers over the System Program nonce builders, mirroring
+// `encodeSolanaTransfer` (NEVER hand-roll instruction data — see anti-pattern
+// guard in the file header). All three pin `programId === SYSTEM_PROGRAM_ID`
+// and carry no keypair material — they take pubkeys / lamports only. The
+// nonce account's own signature (createAccount requires the new account to
+// sign) is supplied by the device/user flow at send time; this codebase only
+// assembles the UNSIGNED message bytes (CONTEXT Locked Decision 6).
+//
+// Authority model (CONTEXT §Design Fork, LOCKED): the nonce authority is
+// ALWAYS the paired wallet (`authorizedPubkey === feePayer === persona.address`).
+// These encoders accept `authorizedPubkey` as a pubkey, but the ONLY caller
+// (prepare_solana_nonce_init / _close) passes the persona address — there is
+// no caller-supplied authority param at the tool boundary.
+// ---------------------------------------------------------------------------
+
+/**
+ * System Program program ID, base58. Pinned re-export of
+ * `SystemProgram.programId` for the program-id-swap assertion (a tampered
+ * web3.js whose builders emit a different program ID is caught at build time).
+ */
+export const SYSTEM_PROGRAM_ID = SystemProgram.programId.toBase58();
+
+/**
+ * Encode a `SystemProgram.createAccount` instruction that funds + allocates a
+ * fresh durable-nonce account. `space` is fixed to `NONCE_ACCOUNT_LENGTH` (80)
+ * and `programId` is assigned to the System Program so the runtime treats the
+ * account as a nonce account. Asserts the emitted instruction's `programId`
+ * matches `SYSTEM_PROGRAM_ID` (program-id-swap guard).
+ */
+export function buildCreateNonceAccountInstruction(input: {
+  from: PublicKey;
+  noncePubkey: PublicKey;
+  lamports: bigint;
+}): TransactionInstruction {
+  const ix = SystemProgram.createAccount({
+    fromPubkey: input.from,
+    newAccountPubkey: input.noncePubkey,
+    lamports: Number(input.lamports),
+    space: NONCE_ACCOUNT_LENGTH,
+    programId: SystemProgram.programId,
+  });
+  assertSystemProgram(ix, "createAccount");
+  return ix;
+}
+
+/**
+ * Encode a `SystemProgram.nonceInitialize` instruction. The authority is
+ * encoded in the instruction DATA (not as a signer) — `authorizedPubkey` is
+ * the paired wallet under the locked authority model.
+ */
+export function buildNonceInitializeInstruction(input: {
+  noncePubkey: PublicKey;
+  authorizedPubkey: PublicKey;
+}): TransactionInstruction {
+  const ix = SystemProgram.nonceInitialize({
+    noncePubkey: input.noncePubkey,
+    authorizedPubkey: input.authorizedPubkey,
+  });
+  assertSystemProgram(ix, "nonceInitialize");
+  return ix;
+}
+
+/**
+ * Encode a `SystemProgram.nonceWithdraw` instruction. `authorizedPubkey` is a
+ * REQUIRED SIGNER (the device-enforced authority guarantee — CONTEXT §Design
+ * Fork (b)); `toPubkey` receives the withdrawn lamports. Closing a nonce
+ * account = withdrawing its full lamport balance.
+ */
+export function buildNonceWithdrawInstruction(input: {
+  noncePubkey: PublicKey;
+  authorizedPubkey: PublicKey;
+  toPubkey: PublicKey;
+  lamports: bigint;
+}): TransactionInstruction {
+  const ix = SystemProgram.nonceWithdraw({
+    noncePubkey: input.noncePubkey,
+    authorizedPubkey: input.authorizedPubkey,
+    toPubkey: input.toPubkey,
+    lamports: Number(input.lamports),
+  });
+  assertSystemProgram(ix, "nonceWithdraw");
+  return ix;
+}
+
+/**
+ * Program-id-swap guard. A tampered / substituted web3.js whose System Program
+ * builders emit instructions addressed to a different program would be caught
+ * here at build time rather than producing a silently-wrong on-chain effect.
+ */
+function assertSystemProgram(ix: TransactionInstruction, name: string): void {
+  if (!ix.programId.equals(SystemProgram.programId)) {
+    throw new Error(
+      `solana-system: ${name} emitted programId ${ix.programId.toBase58()}, expected ${SYSTEM_PROGRAM_ID}`,
+    );
+  }
+}
+
+/**
+ * Build the legacy nonce-INIT transaction: `createAccount` (fund + allocate)
+ * followed by `nonceInitialize` (write the durable nonce + set authority).
+ * Returns the canonical message bytes (the EXACT preimage
+ * `computeSolanaPayloadFingerprint` hashes) + the program IDs touched.
+ *
+ * `feePayer === from === authority` under the locked authority model — the
+ * authority is the paired wallet. The nonce account must sign its own
+ * creation; that signature is supplied by the device/user flow at send time
+ * (this builds the UNSIGNED message only).
+ */
+export function buildNonceInitTx(input: {
+  from: PublicKey;
+  noncePubkey: PublicKey;
+  authorizedPubkey: PublicKey;
+  lamports: bigint;
+  recentBlockhash: string;
+}): {
+  transaction: Transaction;
+  messageBytes: Uint8Array;
+  programIds: string[];
+} {
+  const tx = new Transaction({
+    recentBlockhash: input.recentBlockhash,
+    feePayer: input.from,
+  });
+  tx.add(
+    buildCreateNonceAccountInstruction({
+      from: input.from,
+      noncePubkey: input.noncePubkey,
+      lamports: input.lamports,
+    }),
+  );
+  tx.add(
+    buildNonceInitializeInstruction({
+      noncePubkey: input.noncePubkey,
+      authorizedPubkey: input.authorizedPubkey,
+    }),
+  );
+  const messageBytes = new Uint8Array(tx.serializeMessage());
+  const programIds = [SystemProgram.programId.toBase58()];
+  return { transaction: tx, messageBytes, programIds };
+}
+
+/**
+ * Build the legacy nonce-CLOSE transaction: a single `nonceWithdraw` for the
+ * full lamport balance (drops the account below rent-exempt → runtime GC →
+ * account closed). `authorizedPubkey === toPubkey === from === persona.address`
+ * under the locked authority model (authority signs; rent returns to the
+ * wallet). Returns the canonical message bytes + program IDs.
+ */
+export function buildNonceCloseTx(input: {
+  from: PublicKey;
+  noncePubkey: PublicKey;
+  authorizedPubkey: PublicKey;
+  toPubkey: PublicKey;
+  lamports: bigint;
+  recentBlockhash: string;
+}): {
+  transaction: Transaction;
+  messageBytes: Uint8Array;
+  programIds: string[];
+} {
+  const tx = new Transaction({
+    recentBlockhash: input.recentBlockhash,
+    feePayer: input.from,
+  });
+  tx.add(
+    buildNonceWithdrawInstruction({
+      noncePubkey: input.noncePubkey,
+      authorizedPubkey: input.authorizedPubkey,
+      toPubkey: input.toPubkey,
+      lamports: input.lamports,
+    }),
+  );
+  const messageBytes = new Uint8Array(tx.serializeMessage());
+  const programIds = [SystemProgram.programId.toBase58()];
+  return { transaction: tx, messageBytes, programIds };
 }
 
 /**
@@ -214,4 +404,10 @@ export const _solanaSystem = {
   encodeSolanaTransfer,
   buildSolanaTransferTx,
   decodeSolanaSystemCall,
+  // Phase 44 — Plan 44-01 nonce encoders.
+  buildCreateNonceAccountInstruction,
+  buildNonceInitializeInstruction,
+  buildNonceWithdrawInstruction,
+  buildNonceInitTx,
+  buildNonceCloseTx,
 };
