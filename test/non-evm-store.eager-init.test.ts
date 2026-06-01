@@ -59,6 +59,7 @@ afterEach(() => {
     rmSync(tmpRoot, { recursive: true, force: true });
   }
   _resetNonEvmStoreForTesting();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -195,6 +196,14 @@ describe("eagerInitNonEvmStoreIfPersist — gates", () => {
   it("(cold-boot restore) saveAccount → reset → eager-init re-populates the store from disk", async () => {
     process.env[ENV_KEY] = "persist";
     process.env.HOME = tmpRoot!;
+    // Pin the clock so the fixture's pairedAt stays inside the 30-day
+    // staleness window deterministically. listAccounts() stamps
+    // staleAccountWarning once wall-clock passes pairedAt + 30d, which would
+    // make the raw-record toEqual below drift (this test silently went red on
+    // 2026-06-01 once the 2026-05-01 fixture aged out). Fake Date only — the
+    // async eager-init path relies on real timers.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-05-02T00:00:00.000Z"));
     // Use the real saveAccount path (no mocks) to write a file.
     const { saveAccount } = await import("../src/wallet/non-evm-account-store.js");
     const rec: NonEvmAccountRecord = {

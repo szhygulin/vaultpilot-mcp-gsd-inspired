@@ -1,13 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/chains/ethereum.js", () => {
+// The ENS resolver (src/ens/resolver.ts) now pulls its mainnet client from
+// the multi-chain registry via getChainClient(1) (Phase 45 — migrated off the
+// chains/ethereum.js compat shim). Mock the registry, overriding only
+// getChainClient to hand back a stub client; keep every other registry export
+// real so the rest of the register-all tool graph is unperturbed.
+vi.mock("../src/chains/registry.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/chains/registry.js")>();
   const client = {
     getEnsAddress: vi.fn(),
     getEnsName: vi.fn(),
   };
   return {
-    getEthereumClient: () => client,
-    isPublicNodeFallback: () => false,
+    ...actual,
+    getChainClient: () => client,
     __client: client,
   };
 });
@@ -20,13 +26,13 @@ import {
 // Importing register-all triggers the side-effect registrations under the mock.
 import "../src/tools/register-all.js";
 
-const ethereumMockModule = (await import("../src/chains/ethereum.js")) as unknown as {
+const registryMockModule = (await import("../src/chains/registry.js")) as unknown as {
   __client: {
     getEnsAddress: ReturnType<typeof vi.fn>;
     getEnsName: ReturnType<typeof vi.fn>;
   };
 };
-const stubClient = ethereumMockModule.__client;
+const stubClient = registryMockModule.__client;
 
 beforeEach(() => {
   stubClient.getEnsAddress.mockReset();
