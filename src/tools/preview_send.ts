@@ -245,7 +245,13 @@ import {
   DECODED_ARGS_BITTENSOR_TEMPLATE,
   LEDGER_BLIND_SIGN_HASH_BITTENSOR_TEMPLATE,
   VERIFY_BEFORE_SIGNING_BITTENSOR_TEMPLATE,
+  // Phase 48 (TAO-W-06/07/08 + TAO-R-05) advisory blocks.
+  NOTICE_NO_SLIPPAGE_GUARD_BITTENSOR_TEMPLATE,
+  WITHDRAWAL_CUSTODY_CHANGE_BITTENSOR_TEMPLATE,
+  UNREGISTERED_HOTKEY_WARNING_BITTENSOR_TEMPLATE,
 } from "../signing/blocks-bittensor.js";
+// Phase 48 (TAO-R-05): preview-time unregistered-hotkey warning input.
+import { isHotkeyRegisteredOnNetuid } from "../chains/bittensor/tao-rpc-client.js";
 // Phase 37 Plan 37-03 (SAFE-08) site (c) — composite-tx decode arm for the
 // Safe execTransaction selector. SHARED decoder; same module is consumed by
 // src/tools/prepare_safe_tx_execute.ts at prepare time.
@@ -4186,6 +4192,52 @@ async function previewSendBittensorBranch(
       `  limit_price: ${summary.limitPrice.toString()} (min RAO-per-alpha)`,
       `  allow_partial: ${summary.allowPartial}`,
     ].join("\n");
+    // ---- Phase 48 deferred staking arms (TAO-W-06/07/08) ----
+  } else if (summary?.kind === "add-stake") {
+    decodedBody = [
+      `  call:    subtensorModule.add_stake`,
+      `  hotkey:  ${summary.hotkey}`,
+      `  netuid:  ${summary.netuid}${summary.netuidIdentity ? ` (${summary.netuidIdentity})` : ""}`,
+      `  amount:  ${summary.amountStakedRao.toString()} (TAO/RAO)`,
+      `  guard:   NONE (plain add_stake — no limit_price)`,
+    ].join("\n");
+  } else if (summary?.kind === "remove-stake") {
+    decodedBody = [
+      `  call:    subtensorModule.remove_stake`,
+      `  hotkey:  ${summary.hotkey}`,
+      `  netuid:  ${summary.netuid}${summary.netuidIdentity ? ` (${summary.netuidIdentity})` : ""}`,
+      `  amount:  ${summary.amountUnstakedAlpha.toString()} (ALPHA)`,
+      `  guard:   NONE (plain remove_stake — no limit_price)`,
+    ].join("\n");
+  } else if (summary?.kind === "move-stake") {
+    decodedBody = [
+      `  call:               subtensorModule.move_stake`,
+      `  origin_hotkey:      ${summary.originHotkey}`,
+      `  destination_hotkey: ${summary.destinationHotkey}`,
+      `  origin_netuid:      ${summary.originNetuid}`,
+      `  destination_netuid: ${summary.destinationNetuid}`,
+      `  amount:             ${summary.alphaAmount.toString()} (ALPHA)`,
+      `  ownership:          UNCHANGED (same coldkey owner — NOT a transfer)`,
+    ].join("\n");
+  } else if (summary?.kind === "swap-stake") {
+    decodedBody = [
+      `  call:               subtensorModule.swap_stake`,
+      `  hotkey:             ${summary.hotkey}`,
+      `  origin_netuid:      ${summary.originNetuid}`,
+      `  destination_netuid: ${summary.destinationNetuid}`,
+      `  amount:             ${summary.alphaAmount.toString()} (ALPHA)`,
+      `  ownership:          UNCHANGED (same coldkey owner — NOT a transfer)`,
+    ].join("\n");
+  } else if (summary?.kind === "transfer-stake") {
+    decodedBody = [
+      `  call:                subtensorModule.transfer_stake`,
+      `  destination_coldkey: ${summary.destinationColdkey}`,
+      `  hotkey:              ${summary.hotkey}`,
+      `  origin_netuid:       ${summary.originNetuid}`,
+      `  destination_netuid:  ${summary.destinationNetuid}`,
+      `  amount:              ${summary.alphaAmount.toString()} (ALPHA)`,
+      `  ownership:           CHANGES (alpha moves to destination_coldkey)`,
+    ].join("\n");
   } else {
     decodedBody = `  call:    ${taoTx.section}.${taoTx.method}`;
   }
@@ -4194,13 +4246,71 @@ async function previewSendBittensorBranch(
     decodedBody,
   );
 
+  // ---- Phase 48 advisory blocks (per-shape; additive — never refusals) ----
+  // NOTICE (TAO-W-06): plain add/remove only. WITHDRAWAL (TAO-W-08):
+  // transfer-stake ONLY — move/swap must NOT emit it (distinctness).
+  const noticeBlock =
+    summary?.kind === "add-stake" || summary?.kind === "remove-stake"
+      ? NOTICE_NO_SLIPPAGE_GUARD_BITTENSOR_TEMPLATE
+      : null;
+
+  const withdrawalBlock =
+    summary?.kind === "transfer-stake"
+      ? WITHDRAWAL_CUSTODY_CHANGE_BITTENSOR_TEMPLATE.replace(
+          "{DESTINATION_COLDKEY}",
+          summary.destinationColdkey,
+        )
+      : null;
+
+  // WARNING (TAO-R-05, §Pattern E): for the staking arms that target a hotkey
+  // on a netuid (add/remove/move/swap), check getNeuronsLite presence and warn
+  // when the hotkey is NOT registered on the target subnet. Best-effort — a
+  // read failure swallows to a SKIP (the on-device hash is the trust anchor;
+  // NEVER throw out of the preview). For move-stake the target subnet is the
+  // DESTINATION netuid. transfer-stake is a custody op (no staking-target
+  // warning — the WITHDRAWAL block is its guard).
+  let unregisteredWarningBlock: string | null = null;
+  let warnHotkey: string | null = null;
+  let warnNetuid: number | null = null;
+  if (summary?.kind === "add-stake" || summary?.kind === "remove-stake") {
+    warnHotkey = summary.hotkey;
+    warnNetuid = summary.netuid;
+  } else if (summary?.kind === "move-stake") {
+    warnHotkey = summary.destinationHotkey;
+    warnNetuid = summary.destinationNetuid;
+  } else if (summary?.kind === "swap-stake") {
+    warnHotkey = summary.hotkey;
+    warnNetuid = summary.destinationNetuid;
+  }
+  if (warnHotkey !== null && warnNetuid !== null) {
+    try {
+      const registered = await isHotkeyRegisteredOnNetuid(warnHotkey, warnNetuid);
+      if (!registered) {
+        unregisteredWarningBlock =
+          UNREGISTERED_HOTKEY_WARNING_BITTENSOR_TEMPLATE.replace(
+            "{NETUID}",
+            String(warnNetuid),
+          );
+      }
+    } catch {
+      // Best-effort: a registration-read failure is NOT a refusal — skip the
+      // warning. The on-device blake2 hash match is the trust anchor.
+      unregisteredWarningBlock = null;
+    }
+  }
+
   const blindSignHashBlock = LEDGER_BLIND_SIGN_HASH_BITTENSOR_TEMPLATE.replace(
     "{HASH_FULL_64HEX}",
     presignHash,
   ).replace("{HASH_CHUNKED_4_CHAR_GROUPS}", chunkHex(presignHash));
 
+  // Assembly order: DECODED ARGS → [NOTICE] → [WITHDRAWAL] → [WARNING] →
+  // CHECKS PERFORMED → LEDGER BLIND-SIGN HASH → VERIFY BEFORE SIGNING.
   const responseTextParts = [
     decodedArgsBlock,
+    noticeBlock,
+    withdrawalBlock,
+    unregisteredWarningBlock,
     checksPerformedBlock,
     blindSignHashBlock,
     VERIFY_BEFORE_SIGNING_BITTENSOR_TEMPLATE,

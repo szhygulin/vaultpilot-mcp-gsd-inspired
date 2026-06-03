@@ -100,6 +100,14 @@ export interface PrepareArgs {
   hotkey?: string;
   /** Phase 47 — Bittensor subnet id (decimal string, raw agent string). Populated by the staking prepare tools (Plan 47-02). */
   netuid?: string;
+  /** Phase 48 — move_stake origin/destination hotkeys SS58 (raw agent strings). Populated by `prepare_bittensor_move_stake` (Plan 48-03). */
+  originHotkey?: string;
+  destinationHotkey?: string;
+  /** Phase 48 — move/swap/transfer_stake origin/destination subnet ids (decimal strings). Populated by the Plan 48-03 reallocation/transfer tools. */
+  originNetuid?: string;
+  destinationNetuid?: string;
+  /** Phase 48 — transfer_stake destination coldkey SS58 (the NEW owner; raw agent string, FULL/untruncated). Populated by `prepare_bittensor_transfer_stake` (Plan 48-03, TAO-W-08). */
+  destinationColdkey?: string;
   /**
    * Phase 35 Plan 35-03 — raw calldata hex (0x-prefixed) for
    * `prepare_custom_call`. Surfaced verbatim in the PREPARE RECEIPT block
