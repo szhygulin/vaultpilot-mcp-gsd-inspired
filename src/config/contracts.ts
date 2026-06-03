@@ -10,6 +10,7 @@
 // rest — throws at module load. Mirror of src/tokens/registry.ts pattern.
 
 import { getAddress, type Address } from "viem";
+import { PublicKey } from "@solana/web3.js";
 
 /**
  * Supported chain IDs. Phase 8 Plan 08-01 widened from the v1.0/v1.1
@@ -1644,3 +1645,180 @@ export function lookupTronSpender(spender: string): KnownSpenderTron | undefined
  * without monkey-patching the production import path.
  */
 export const _contractsTron = { lookupTronSpender };
+
+// ---------------------------------------------------------------------------
+// Solana lending SOT — Phase 13 Plan 13-01 (D-05, SOL-W-10).
+// ---------------------------------------------------------------------------
+//
+// Sibling sub-table (NOT a widening of the EVM `ContractsForChain` / `ChainId`
+// union) per the Compound/Morpho/Lido/EigenLayer precedent above. Keys on the
+// literal `"solana"` (`Record<"solana", SolanaContracts>`) and stores RAW
+// base58 strings — NO `getAddress` / EIP-55 normalization (that is EVM-only;
+// Solana program IDs and market/group anchors are base58, case-sensitive).
+//
+// Scope: Phase 13 ships the MarginFi + Kamino lending program IDs + the
+// MarginFi production group + the Kamino MAIN-market lending-market pubkey.
+// MarginFi (plans 13-01..03) consumes `marginfiProgram` / `marginfiGroup` /
+// `deriveMarginfiAccountPda`; the Kamino getters + PDA helpers
+// (`kaminoLendProgram` / `kaminoMainMarket` / `deriveKaminoObligationPda` /
+// `deriveKaminoUserMetadataPda`) are SEEDED here for the later Kamino batch
+// (plans 13-04..06) so that batch reads the existing SOT without re-touching
+// this file (conflict-graph hot spot — serialized 13 → 14 → 15 → 16).
+//
+// Verified addresses (plan-gate 2026-06-03, from the installed-SDK probe —
+// 13-RESEARCH § Contracts SOT + § rnd VERDICT TABLE V5/V7):
+//   marginfiProgram   MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA  [SDK configs + IDL address]
+//   marginfiGroup     4qp6Fx6tnZkY5Wropq9wUYgtFxXKwE6viZxFHg3rdAG8 [SDK configs — production group]
+//   kaminoLendProgram KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD   [SDK @codegen/programId — production, NOT the SLendK… staging variant]
+//   kaminoMainMarket  7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF  [Q1 RESOLVED — live Kamino market API isPrimary:true + klend-sdk README]
+//
+// Format-fanout-sentinel: each of these four base58 literals lives HERE
+// exactly once. test/config-contracts.test.ts asserts
+// `grep -rn "MFv2hWf31\|KLend2g3\|7u3HeHxY" src/` outside this file (comment
+// lines filtered) is empty — mirror of the Compound/Morpho address-inline
+// regression (SOL-W-10).
+
+/**
+ * Solana lending program IDs + market/group anchors. base58 strings — NO
+ * EIP-55 normalization (Solana is not EVM). The TYPE is what makes this a SOT:
+ * `getMarginfiProgramId()` is the only sanctioned read path; a tool that
+ * inlines a base58 literal trips the no-inline grep sentinel.
+ */
+export interface SolanaContracts {
+  /** MarginFi v2 program ID. */
+  marginfiProgram: string;
+  /** MarginFi production group (the marginfi_group account every lending ix references). */
+  marginfiGroup: string;
+  /** Kamino klend production program ID (NOT the SLendK… staging variant). */
+  kaminoLendProgram: string;
+  /** Kamino MAIN lending-market pubkey (Q1 resolved — isPrimary market). */
+  kaminoMainMarket: string;
+}
+
+const SOLANA_CONTRACTS_RAW: Record<"solana", SolanaContracts> = {
+  solana: {
+    marginfiProgram: "MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA",
+    marginfiGroup: "4qp6Fx6tnZkY5Wropq9wUYgtFxXKwE6viZxFHg3rdAG8",
+    kaminoLendProgram: "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
+    kaminoMainMarket: "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF",
+  },
+};
+
+/**
+ * Get the MarginFi v2 program ID (base58). Consumed by
+ * `src/protocols/marginfi.ts` (hand-encoded ix `programId`),
+ * `src/chains/solana/marginfi.ts` (account-owner check), and the
+ * `canonical-dispatch-solana` allowlist (D-06).
+ */
+export function getMarginfiProgramId(): string {
+  return SOLANA_CONTRACTS_RAW.solana.marginfiProgram;
+}
+
+/**
+ * Get the MarginFi production group (base58). Every `lending_account_*` ix
+ * carries this as account[0]; the account-init PDA seed references it too.
+ */
+export function getMarginfiGroup(): string {
+  return SOLANA_CONTRACTS_RAW.solana.marginfiGroup;
+}
+
+/**
+ * Get the Kamino klend production program ID (base58). Seeded for the Kamino
+ * batch (13-04..06) + the dispatch allowlist (D-06).
+ */
+export function getKaminoLendProgram(): string {
+  return SOLANA_CONTRACTS_RAW.solana.kaminoLendProgram;
+}
+
+/**
+ * Get the Kamino MAIN lending-market pubkey (base58). Seeded for the Kamino
+ * batch (13-04..06). Q1 RESOLVED at plan gate (isPrimary market). Re-verify
+ * against the live Kamino market API if the deployment changes.
+ */
+export function getKaminoMainMarket(): string {
+  return SOLANA_CONTRACTS_RAW.solana.kaminoMainMarket;
+}
+
+// PDA-derivation helpers (D-05). Each returns a base58 string and is
+// byte-deterministic for fixed inputs. The MarginFi helper uses the IDL-pinned
+// seeds verbatim (NOT guessed — Don't-Hand-Roll); the Kamino helpers use the
+// SDK's documented seed constants. Synchronous web3.js-v1 `PublicKey`
+// derivation (the Kamino kit seed helpers are async/Address-typed — the
+// documented seeds are reproduced here for the v1 SOT surface).
+
+/** 2-byte little-endian encode of a u16 (MarginFi account_index / third_party_id seeds). */
+function u16le(n: number): Buffer {
+  const b = Buffer.alloc(2);
+  b.writeUInt16LE(n, 0);
+  return b;
+}
+
+/**
+ * Derive the MarginfiAccount PDA for `(authority, accountIndex)` under the
+ * production group. Seeds (IDL `marginfi_account_initialize_pda`, VERIFIED from
+ * marginfi_0.1.8.json):
+ *   ["marginfi_account", marginfiGroup, authority, account_index(u16 LE),
+ *    third_party_id.unwrap_or(0)(u16 LE)]
+ * `accountIndex` allows multiple MarginFi accounts per authority (default 0).
+ * Returns the base58 PDA. Consumed by 13-02's PDA-presence read + 13-03's
+ * D-03 gate + the init ix account list.
+ */
+export function deriveMarginfiAccountPda(
+  authority: string,
+  accountIndex: number,
+): string {
+  const program = new PublicKey(getMarginfiProgramId());
+  const group = new PublicKey(getMarginfiGroup());
+  const auth = new PublicKey(authority);
+  const [pda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("marginfi_account", "utf8"),
+      group.toBuffer(),
+      auth.toBuffer(),
+      u16le(accountIndex),
+      u16le(0), // third_party_id.unwrap_or(0)
+    ],
+    program,
+  );
+  return pda.toBase58();
+}
+
+/**
+ * Derive the Kamino Obligation PDA for `(market, owner)`. Standard market
+ * obligation: seeds = [tag(0u8), id(0u8), owner, market, default, default]
+ * under the klend program. SEEDED for the Kamino batch (13-04..06); the Kamino
+ * write plan re-verifies against the klend-sdk `Obligation` PDA at consumption.
+ * Returns the base58 PDA.
+ */
+export function deriveKaminoObligationPda(market: string, owner: string): string {
+  const program = new PublicKey(getKaminoLendProgram());
+  const marketPk = new PublicKey(market);
+  const ownerPk = new PublicKey(owner);
+  const [pda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from([0]), // tag — standard obligation
+      Buffer.from([0]), // id
+      ownerPk.toBuffer(),
+      marketPk.toBuffer(),
+      PublicKey.default.toBuffer(), // seed1Account — default for the base obligation
+      PublicKey.default.toBuffer(), // seed2Account
+    ],
+    program,
+  );
+  return pda.toBase58();
+}
+
+/**
+ * Derive the Kamino UserMetadata PDA for `owner`. Seed (klend-sdk
+ * `BASE_SEED_USER_METADATA` constant, verbatim): ["user_meta", owner] under the
+ * klend program. SEEDED for the Kamino batch (13-04..06). Returns the base58 PDA.
+ */
+export function deriveKaminoUserMetadataPda(owner: string): string {
+  const program = new PublicKey(getKaminoLendProgram());
+  const ownerPk = new PublicKey(owner);
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("user_meta", "utf8"), ownerPk.toBuffer()],
+    program,
+  );
+  return pda.toBase58();
+}

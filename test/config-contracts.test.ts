@@ -56,6 +56,13 @@ import {
   getUniswapV3SwapRouter02Address,
   getWethAddress,
   lookupSpender,
+  getMarginfiProgramId,
+  getMarginfiGroup,
+  getKaminoLendProgram,
+  getKaminoMainMarket,
+  deriveMarginfiAccountPda,
+  deriveKaminoObligationPda,
+  deriveKaminoUserMetadataPda,
   type ChainId,
   type ChainName,
   type CompoundCometBase,
@@ -1555,5 +1562,155 @@ describe("SafeContracts SOT — Phase 36 Plan 36-01", () => {
       const multiSendCallOnly = getSafeMultiSendCallOnlyAddresses(chainId);
       expect(multiSendCallOnly[0]).not.toBe(multiSendCallOnly[1]);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Solana lending SOT — Phase 13 Plan 13-01 (D-05, SOL-W-10).
+// ---------------------------------------------------------------------------
+describe("src/config/contracts.ts — Solana lending SOT (Phase 13 Plan 13-01)", () => {
+  const BASE58_PUBKEY_REGEX = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+  it("getMarginfiProgramId() byte-identical to the VERIFIED program ID", () => {
+    expect(getMarginfiProgramId()).toBe(
+      "MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA",
+    );
+  });
+
+  it("getMarginfiGroup() byte-identical to the VERIFIED production group", () => {
+    expect(getMarginfiGroup()).toBe(
+      "4qp6Fx6tnZkY5Wropq9wUYgtFxXKwE6viZxFHg3rdAG8",
+    );
+  });
+
+  it("getKaminoLendProgram() byte-identical to the VERIFIED production program ID", () => {
+    expect(getKaminoLendProgram()).toBe(
+      "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
+    );
+  });
+
+  it("getKaminoMainMarket() byte-identical to the VERIFIED main-market pubkey (Q1 resolved — …PfF)", () => {
+    expect(getKaminoMainMarket()).toBe(
+      "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF",
+    );
+  });
+
+  it("the four Solana program/market IDs are all distinct base58 pubkeys", () => {
+    const ids = [
+      getMarginfiProgramId(),
+      getMarginfiGroup(),
+      getKaminoLendProgram(),
+      getKaminoMainMarket(),
+    ];
+    for (const id of ids) expect(id).toMatch(BASE58_PUBKEY_REGEX);
+    expect(new Set(ids).size).toBe(4);
+  });
+
+  // No-inline sentinel (SOL-W-10) — mirror of the Compound/Morpho address-inline
+  // regression. Each program/market literal lives ONLY in contracts.ts. We scan
+  // src/ for the literal prefixes; comment lines are filtered so doc prose in
+  // other files does not self-invalidate the gate.
+  describe("no-inline sentinel — Solana program/market IDs live only in contracts.ts", () => {
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const SRC_DIR = resolve(__dirname, "../src");
+
+    // Recursively collect .ts files under src/.
+    function collectTsFiles(dir: string): string[] {
+      const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
+      const out: string[] = [];
+      for (const entry of readdirSync(dir)) {
+        const full = resolve(dir, entry);
+        const st = statSync(full);
+        if (st.isDirectory()) out.push(...collectTsFiles(full));
+        else if (full.endsWith(".ts")) out.push(full);
+      }
+      return out;
+    }
+
+    // Strip line comments + block comments so doc prose (e.g. the canonical-
+    // dispatch EXTENDED-IN-13-05 note, or any README-style header) does not
+    // count as an inlined literal. We only care about CODE occurrences.
+    function stripComments(src: string): string {
+      // Remove block comments, then line comments.
+      const noBlock = src.replace(/\/\*[\s\S]*?\*\//g, "");
+      return noBlock
+        .split("\n")
+        .map((line) => line.replace(/\/\/.*$/, ""))
+        .join("\n");
+    }
+
+    const SENTINEL_PREFIXES = ["MFv2hWf31", "KLend2g3", "7u3HeHxY"];
+
+    it("no src/ file OTHER than contracts.ts contains the program/market literals (code, not comments)", () => {
+      const files = collectTsFiles(SRC_DIR).filter(
+        (f) => !f.endsWith("/config/contracts.ts"),
+      );
+      const offenders: Array<{ file: string; prefix: string }> = [];
+      for (const file of files) {
+        const code = stripComments(readFileSync(file, "utf8"));
+        for (const prefix of SENTINEL_PREFIXES) {
+          if (code.includes(prefix)) offenders.push({ file, prefix });
+        }
+      }
+      expect(offenders).toEqual([]);
+    });
+
+    it("contracts.ts itself DOES contain each literal exactly once (the SOT home)", () => {
+      const code = stripComments(
+        readFileSync(resolve(SRC_DIR, "config/contracts.ts"), "utf8"),
+      );
+      // Full literals appear once each in SOLANA_CONTRACTS_RAW.
+      const fullLiterals = [
+        "MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA",
+        "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
+        "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF",
+      ];
+      for (const lit of fullLiterals) {
+        const count = code.split(lit).length - 1;
+        expect(count).toBe(1);
+      }
+    });
+  });
+
+  // PDA-derivation helpers (D-05) — determinism + base58 shape.
+  describe("PDA-derivation helpers — deterministic base58", () => {
+    const AUTHORITY = "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9";
+    const OWNER = "AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9";
+
+    it("deriveMarginfiAccountPda returns a 32-44-char base58 string", () => {
+      const pda = deriveMarginfiAccountPda(AUTHORITY, 0);
+      expect(pda).toMatch(BASE58_PUBKEY_REGEX);
+    });
+
+    it("deriveMarginfiAccountPda is deterministic for fixed (authority, accountIndex)", () => {
+      expect(deriveMarginfiAccountPda(AUTHORITY, 0)).toBe(
+        deriveMarginfiAccountPda(AUTHORITY, 0),
+      );
+    });
+
+    it("deriveMarginfiAccountPda differs across accountIndex (multiple accounts per authority)", () => {
+      expect(deriveMarginfiAccountPda(AUTHORITY, 0)).not.toBe(
+        deriveMarginfiAccountPda(AUTHORITY, 1),
+      );
+    });
+
+    it("deriveMarginfiAccountPda differs across authority", () => {
+      expect(deriveMarginfiAccountPda(AUTHORITY, 0)).not.toBe(
+        deriveMarginfiAccountPda(OWNER, 0),
+      );
+    });
+
+    it("deriveKaminoObligationPda returns a deterministic 32-44-char base58 string", () => {
+      const market = getKaminoMainMarket();
+      const pda = deriveKaminoObligationPda(market, OWNER);
+      expect(pda).toMatch(BASE58_PUBKEY_REGEX);
+      expect(deriveKaminoObligationPda(market, OWNER)).toBe(pda);
+    });
+
+    it("deriveKaminoUserMetadataPda returns a deterministic 32-44-char base58 string", () => {
+      const pda = deriveKaminoUserMetadataPda(OWNER);
+      expect(pda).toMatch(BASE58_PUBKEY_REGEX);
+      expect(deriveKaminoUserMetadataPda(OWNER)).toBe(pda);
+    });
   });
 });

@@ -45,6 +45,11 @@ import {
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 
+import {
+  getKaminoLendProgram,
+  getMarginfiProgramId,
+} from "../config/contracts.js";
+
 /**
  * Solana program-ID dispatch allowlist for v1.x scope.
  *
@@ -66,6 +71,23 @@ export const SOLANA_DISPATCH_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   SystemProgram.programId.toBase58(),
   TOKEN_PROGRAM_ID.toBase58(),
   ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(),
+
+  // Phase 13 Plan 13-01 (D-06, SOL-W-09) — lending program IDs built from the
+  // contracts SOT getters (NO inlined base58 in this file; mirror of the
+  // Compound `getAllCompoundCometsForChain(1).map(...)` dispatch
+  // auto-extension pattern). MarginFi writes (13-03) + Kamino writes
+  // (13-04..06) target these program IDs; an unknown program ID still refuses
+  // at Layer 0.5.
+  getMarginfiProgramId(),
+  getKaminoLendProgram(),
+
+  // AUXILIARY-PROGRAM SLOT — EXTENDED-IN-13-05. The Kamino refresh ceremony
+  // (refreshReserve + refreshObligation) touches the Scope oracle / Pyth
+  // receiver / Switchboard programs (Pitfall 5). Their exact program-ID set is
+  // enumerated from the actual built Kamino instruction vector in 13-05 and
+  // added here then — NOT guessed now. MarginFi lending ix touch no auxiliary
+  // program, so the MarginFi batch (13-01..03) needs no addition beyond the
+  // two lending program IDs above.
 ]);
 
 /**
