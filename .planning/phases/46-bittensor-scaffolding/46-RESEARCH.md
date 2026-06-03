@@ -435,7 +435,7 @@ function formatRaoToTao(rao: bigint): string {
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
 | TAO-PAIR-01 | `pair_bittensor_ledger` returns SS58 + VERIFY-ON-DEVICE; demo-mode refuses BEFORE transport open | unit (spy `_transport`) | `npx vitest run test/pair-bittensor-ledger.test.ts` | ❌ Wave 0 |
-| TAO-PAIR-01 | SS58 first-N test vectors match `encodeAddress(pubKey,42)` literals | unit (pure) | `npx vitest run test/bittensor-ss58-vectors.test.ts` | ❌ Wave 0 |
+| TAO-PAIR-01 | SS58 first-N test vectors match `encodeAddress(pubKey,42)` literals | unit (pure) | `npx vitest run test/chains-bittensor-ss58.test.ts` | ❌ Wave 0 |
 | TAO-PAIR-02 | `get_bittensor_status` → cache shape; never errors; 30-day stale flag; rpcEndpoint without live connect | unit (mock store) | `npx vitest run test/get-bittensor-status.test.ts` | ❌ Wave 0 |
 | TAO-R-01 | free RAO → decimal TAO; staked alpha summed; RAO formatting edge cases (0, 1, trailing-zero trim) | unit (spy `_bittensorRegistry`) | `npx vitest run test/get-bittensor-balance.test.ts` | ❌ Wave 0 |
 | TAO-R-02 | per-(hotkey,netuid) rows; alpha labeled distinct from TAO; TAO-equiv via price | unit (mock runtime API) | `npx vitest run test/get-bittensor-stake.test.ts` | ❌ Wave 0 |
@@ -450,7 +450,7 @@ function formatRaoToTao(rao: bigint): string {
 
 ### Wave 0 Gaps
 - [ ] `test/pair-bittensor-ledger.test.ts` — covers TAO-PAIR-01 (spy `_transport`, demo-refusal-before-open)
-- [ ] `test/bittensor-ss58-vectors.test.ts` — covers TAO-PAIR-01 (hardcoded `{pubKeyHex→ss58}` literals via `encodeAddress`)
+- [ ] `test/chains-bittensor-ss58.test.ts` — covers TAO-PAIR-01 (hardcoded `{pubKeyHex→ss58}` literals via `encodeAddress`)
 - [ ] `test/get-bittensor-status.test.ts` — covers TAO-PAIR-02
 - [ ] `test/get-bittensor-balance.test.ts` — covers TAO-R-01 (RAO formatter edge cases)
 - [ ] `test/get-bittensor-stake.test.ts` — covers TAO-R-02 (alpha-vs-TAO labeling)
