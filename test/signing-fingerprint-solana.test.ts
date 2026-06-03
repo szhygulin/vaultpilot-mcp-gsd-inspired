@@ -50,6 +50,13 @@ import {
   buildRepayIx,
   buildAccountInitPdaIx,
 } from "../src/protocols/marginfi.js";
+// Phase 13 Plan 13-05/06 — Kamino ix builders + assembler for fixtures T–W (ops)
+// + X–Y (obligation-init). The FULL ordered refresh-ceremony vector is anchored,
+// NOT just the op ix (Pattern 2 / Pitfall 2).
+import {
+  KAMINO_DISCRIMINATOR,
+  _kamino,
+} from "../src/protocols/kamino.js";
 
 // Pinned inputs — used identically by Fixture K + L. Stable across runs.
 // `FROM` is the curated `solana-whale` persona address from Plan 11-06
@@ -488,6 +495,176 @@ describe("MarginFi fingerprint fixtures O–S (Plan 13-03, D-01 hand-encode)", (
     expect(mk(0)).toBe(
       "0x535aab49143386e1adcbffb6713b1c1c6b494df9706cb4393fc4523b4a5b2710",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 13 Plan 13-05 — Kamino fingerprint fixtures T–W (D-01 hand-encode +
+// Pattern 2 refresh ceremony). Each fixture anchors the FULL ORDERED instruction
+// vector (refreshReserve × N + refreshObligation + op) — NOT just the op ix.
+// NO beforeAll-snapshot. The discriminators are the custom klend codegen
+// DISCRIMINATOR literals (NOT sha256("global:<ix>")[..8] — the klend program
+// uses custom discriminators).
+// ---------------------------------------------------------------------------
+describe("Kamino fingerprint fixtures T–W (Plan 13-05, D-01 + refresh ceremony)", () => {
+  // Pinned canonical accounts (deterministic literals). FEE_PAYER == owner.
+  const K_OWNER = new PublicKey("5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9");
+  const K_MARKET = new PublicKey("7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF");
+  const K_OBLIGATION = new PublicKey("AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9");
+  const K_LMA = new PublicKey("9zdpqAgENj4734TQvqj4Zo6srH7Pk29VKnNh5fHMwTgo");
+  const RES_C = new PublicKey("8PbodeaosQP19SjYFx855UMqWxH2HynZLdBXmsrbac36"); // collateral reserve
+  const RES_B = new PublicKey("d4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q"); // borrow reserve
+  const PYTH = new PublicKey("H6ARHf6YXhGYeQfUzQNGk6rDNnLBQKrenN712K4AQJEG");
+  const SB_PRICE = new PublicKey("So11111111111111111111111111111111111111112");
+  const SB_TWAP = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+  const SCOPE = new PublicKey("3NJYftD5sjVfxSnUdZ1wVML8f3aC6mp1CXCL6L7TnU8C");
+  const TOKEN_PROG = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+  const MINT = new PublicKey("Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB");
+  const SUPPLY = new PublicKey("FxteHmLwG9nk1eL4pjNve3Eub2goGkkz6g6TLvdmDyq5");
+  const COLL_MINT = new PublicKey("Gf6JxqgL3MwxAm7AmqsTNFGz7c2EFXY7g7CqJZBfHWqV");
+  const DEST_COLL = new PublicKey("D9z5pxYZ7tqkQ6oFwvQyZ4QyhRjuw6JtVefdT4U6kx2y");
+  const USER_LIQ = new PublicKey("3m9y53V2QwBbrQxtv5WN4T8SA5zw7BpZ2ZBYpZZAu8MW");
+  const FEE_RECEIVER = new PublicKey("HRk9CMrpq7Jn9sh7mzxE8CChHG8dneX9p475QKz4Fsfc");
+  const REFERRER = new PublicKey("CWE8jPTUYhdCTZYWPTe1o5DFqfdjzWKc9WKz6rSjQUdG");
+  const SRC_COLL = new PublicKey("5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi8");
+
+  const ORACLE_PROGS = [PYTH.toBase58(), SB_PRICE.toBase58(), SB_TWAP.toBase58(), SCOPE.toBase58()];
+
+  function discHead(ix: { data: Uint8Array | Buffer }): number[] {
+    return [...ix.data.slice(0, 8)];
+  }
+
+  function refreshIx(reserve: PublicKey) {
+    return _kamino.buildRefreshReserveIx({
+      reserve,
+      lendingMarket: K_MARKET,
+      pythOracle: PYTH,
+      switchboardPriceOracle: SB_PRICE,
+      switchboardTwapOracle: SB_TWAP,
+      scopePrices: SCOPE,
+    });
+  }
+  function refreshObligationIx() {
+    return _kamino.buildRefreshObligationIx({ lendingMarket: K_MARKET, obligation: K_OBLIGATION });
+  }
+  function fpOfVector(ixs: import("@solana/web3.js").TransactionInstruction[]): string {
+    return computeSolanaPayloadFingerprint({
+      messageBytes: _kamino.assembleKaminoTx({
+        instructions: ixs,
+        ixNames: ixs.map(() => "x"),
+        oracleProgramIds: ORACLE_PROGS,
+        feePayer: K_OWNER,
+        recentBlockhash: FIXED_BLOCKHASH,
+      }).messageBytes,
+    });
+  }
+
+  function depositIx(amount: bigint) {
+    return _kamino.buildDepositIx({
+      amount,
+      accounts: {
+        owner: K_OWNER, obligation: K_OBLIGATION, lendingMarket: K_MARKET, lendingMarketAuthority: K_LMA,
+        reserve: RES_C, reserveLiquidityMint: MINT, reserveLiquiditySupply: SUPPLY,
+        reserveCollateralMint: COLL_MINT, reserveDestinationDepositCollateral: DEST_COLL,
+        userSourceLiquidity: USER_LIQ, collateralTokenProgram: TOKEN_PROG, liquidityTokenProgram: TOKEN_PROG,
+      },
+    });
+  }
+  function withdrawIx(amount: bigint) {
+    return _kamino.buildWithdrawIx({
+      amount,
+      accounts: {
+        owner: K_OWNER, obligation: K_OBLIGATION, lendingMarket: K_MARKET, lendingMarketAuthority: K_LMA,
+        withdrawReserve: RES_C, reserveLiquidityMint: MINT, reserveSourceCollateral: SRC_COLL,
+        reserveCollateralMint: COLL_MINT, reserveLiquiditySupply: SUPPLY, userDestinationLiquidity: USER_LIQ,
+        collateralTokenProgram: TOKEN_PROG, liquidityTokenProgram: TOKEN_PROG,
+      },
+    });
+  }
+  function borrowIx(amount: bigint) {
+    return _kamino.buildBorrowIx({
+      amount,
+      accounts: {
+        owner: K_OWNER, obligation: K_OBLIGATION, lendingMarket: K_MARKET, lendingMarketAuthority: K_LMA,
+        borrowReserve: RES_B, borrowReserveLiquidityMint: MINT, reserveSourceLiquidity: SUPPLY,
+        borrowReserveLiquidityFeeReceiver: FEE_RECEIVER, userDestinationLiquidity: USER_LIQ,
+        referrerTokenState: REFERRER, tokenProgram: TOKEN_PROG,
+      },
+    });
+  }
+  function repayIx(amount: bigint) {
+    return _kamino.buildRepayIx({
+      amount,
+      accounts: {
+        owner: K_OWNER, obligation: K_OBLIGATION, lendingMarket: K_MARKET, repayReserve: RES_B,
+        reserveLiquidityMint: MINT, reserveDestinationLiquidity: SUPPLY, userSourceLiquidity: USER_LIQ,
+        tokenProgram: TOKEN_PROG,
+      },
+    });
+  }
+
+  it("Fixture T — deposit (supply): refreshReserve + refreshObligation + deposit, discriminators + hardcoded fingerprint", () => {
+    const op = depositIx(1_000_000n);
+    expect(discHead(op)).toEqual(KAMINO_DISCRIMINATOR.depositReserveLiquidityAndObligationCollateral);
+    const vector = [refreshIx(RES_C), refreshObligationIx(), op];
+    expect(discHead(vector[0]!)).toEqual(KAMINO_DISCRIMINATOR.refreshReserve);
+    expect(discHead(vector[1]!)).toEqual(KAMINO_DISCRIMINATOR.refreshObligation);
+    expect(fpOfVector(vector)).toBe(
+      "0xf3e332a9545770fc7a97d8e8f57b4bf85125ff14a32510cb9c7e334b7edfe99f",
+    );
+  });
+
+  it("Fixture T ordering regression: refreshObligation AFTER the op changes the fingerprint", () => {
+    const correct = fpOfVector([refreshIx(RES_C), refreshObligationIx(), depositIx(1_000_000n)]);
+    const reordered = fpOfVector([refreshIx(RES_C), depositIx(1_000_000n), refreshObligationIx()]);
+    expect(correct).not.toBe(reordered);
+    const dropped = fpOfVector([refreshObligationIx(), depositIx(1_000_000n)]); // missing refreshReserve
+    expect(correct).not.toBe(dropped);
+  });
+
+  it("Fixture U — withdraw (multi-reserve): refreshReserve×2 + refreshObligation + withdraw", () => {
+    const op = withdrawIx(500_000n);
+    expect(discHead(op)).toEqual(KAMINO_DISCRIMINATOR.withdrawObligationCollateralAndRedeemReserveCollateral);
+    const vector = [refreshIx(RES_C), refreshIx(RES_B), refreshObligationIx(), op];
+    expect(fpOfVector(vector)).toBe(
+      "0xbc706a4bcfebff3b2cf45b476172a345418b27bdb6ee8fb06a0fa24905025683",
+    );
+  });
+
+  it("Fixture U embedding regression: amount swap changes the fingerprint", () => {
+    const a = fpOfVector([refreshIx(RES_C), refreshIx(RES_B), refreshObligationIx(), withdrawIx(500_000n)]);
+    const b = fpOfVector([refreshIx(RES_C), refreshIx(RES_B), refreshObligationIx(), withdrawIx(500_001n)]);
+    expect(a).not.toBe(b);
+  });
+
+  it("Fixture V — borrow (multi-reserve): refreshReserve×2 + refreshObligation + borrow", () => {
+    const op = borrowIx(250_000n);
+    expect(discHead(op)).toEqual(KAMINO_DISCRIMINATOR.borrowObligationLiquidity);
+    const vector = [refreshIx(RES_C), refreshIx(RES_B), refreshObligationIx(), op];
+    expect(fpOfVector(vector)).toBe(
+      "0x2b0962c92f42ccfdd46188c02f7f77dc13c05822bd777f363b3323ca56deea5e",
+    );
+  });
+
+  it("Fixture V embedding regression: amount swap changes the fingerprint", () => {
+    const a = fpOfVector([refreshIx(RES_C), refreshIx(RES_B), refreshObligationIx(), borrowIx(250_000n)]);
+    const b = fpOfVector([refreshIx(RES_C), refreshIx(RES_B), refreshObligationIx(), borrowIx(250_001n)]);
+    expect(a).not.toBe(b);
+  });
+
+  it("Fixture W — repay: refreshReserve + refreshObligation + repay", () => {
+    const op = repayIx(750_000n);
+    expect(discHead(op)).toEqual(KAMINO_DISCRIMINATOR.repayObligationLiquidity);
+    const vector = [refreshIx(RES_B), refreshObligationIx(), op];
+    expect(fpOfVector(vector)).toBe(
+      "0x490c3f118f341520c2be99697474511f4b0ca6ca7968b8c646f7103c68c7a9f9",
+    );
+  });
+
+  it("Fixture W embedding regression: amount swap changes the fingerprint", () => {
+    const a = fpOfVector([refreshIx(RES_B), refreshObligationIx(), repayIx(750_000n)]);
+    const b = fpOfVector([refreshIx(RES_B), refreshObligationIx(), repayIx(750_001n)]);
+    expect(a).not.toBe(b);
   });
 });
 

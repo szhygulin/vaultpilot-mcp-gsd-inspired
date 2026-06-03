@@ -67,6 +67,19 @@ export interface DecodedKaminoObligation {
   borrows: DecodedKaminoBorrow[];
 }
 
+/**
+ * Per-reserve oracle accounts the `refreshReserve` ceremony references. Resolved
+ * from the reserve's `config.tokenInfo` (scope / pyth / switchboard). A reserve
+ * that does not use a given oracle carries the default pubkey for that slot
+ * (the on-chain program treats default as "absent" — matching the SDK).
+ */
+export interface KaminoReserveOracleAccounts {
+  pythOracle: string;
+  switchboardPriceOracle: string;
+  switchboardTwapOracle: string;
+  scopePrices: string;
+}
+
 /** Decoded Reserve config the health module + write builders need. */
 export interface DecodedKaminoReserve {
   /** Reserve pubkey, base58. */
@@ -81,6 +94,16 @@ export interface DecodedKaminoReserve {
   liquidationThresholdBps: bigint;
   /** Elevation-group ids the reserve participates in (surfaced verbatim, A5). */
   elevationGroups: number[];
+  /** Liquidity supply vault (reserveLiquiditySupply / reserveSourceLiquidity). */
+  liquiditySupplyVault: string;
+  /** Liquidity fee receiver (borrowReserveLiquidityFeeReceiver). */
+  liquidityFeeVault: string;
+  /** Collateral mint (reserveCollateralMint). */
+  collateralMint: string;
+  /** Collateral supply vault (reserveDestinationDepositCollateral / source). */
+  collateralSupplyVault: string;
+  /** Oracle accounts for the refreshReserve ceremony. */
+  oracleAccounts: KaminoReserveOracleAccounts;
 }
 
 /** Convert a kit `Address` (branded base58 string) or web3 PublicKey to base58. */
@@ -146,14 +169,27 @@ export function adaptObligation(decoded: {
 export function adaptReserve(
   reservePubkey: string,
   decoded: {
-    liquidity: { mintPubkey: unknown; mintDecimals: unknown };
+    liquidity: {
+      mintPubkey: unknown;
+      mintDecimals: unknown;
+      supplyVault?: unknown;
+      feeVault?: unknown;
+    };
+    collateral?: { mintPubkey?: unknown; supplyVault?: unknown };
     config: {
       loanToValuePct: number;
       liquidationThresholdPct: number;
       elevationGroups: number[];
+      tokenInfo?: {
+        pythConfiguration?: { price?: unknown };
+        switchboardConfiguration?: { priceAggregator?: unknown; twapAggregator?: unknown };
+        scopeConfiguration?: { priceFeed?: unknown };
+      };
     };
   },
 ): DecodedKaminoReserve {
+  const DEFAULT = "11111111111111111111111111111111";
+  const ti = decoded.config.tokenInfo;
   return {
     reserve: reservePubkey,
     mint: toBase58(decoded.liquidity.mintPubkey),
@@ -161,6 +197,28 @@ export function adaptReserve(
     loanToValueBps: BigInt(decoded.config.loanToValuePct) * 100n,
     liquidationThresholdBps: BigInt(decoded.config.liquidationThresholdPct) * 100n,
     elevationGroups: [...decoded.config.elevationGroups],
+    liquiditySupplyVault: decoded.liquidity.supplyVault
+      ? toBase58(decoded.liquidity.supplyVault)
+      : DEFAULT,
+    liquidityFeeVault: decoded.liquidity.feeVault
+      ? toBase58(decoded.liquidity.feeVault)
+      : DEFAULT,
+    collateralMint: decoded.collateral?.mintPubkey
+      ? toBase58(decoded.collateral.mintPubkey)
+      : DEFAULT,
+    collateralSupplyVault: decoded.collateral?.supplyVault
+      ? toBase58(decoded.collateral.supplyVault)
+      : DEFAULT,
+    oracleAccounts: {
+      pythOracle: ti?.pythConfiguration?.price ? toBase58(ti.pythConfiguration.price) : DEFAULT,
+      switchboardPriceOracle: ti?.switchboardConfiguration?.priceAggregator
+        ? toBase58(ti.switchboardConfiguration.priceAggregator)
+        : DEFAULT,
+      switchboardTwapOracle: ti?.switchboardConfiguration?.twapAggregator
+        ? toBase58(ti.switchboardConfiguration.twapAggregator)
+        : DEFAULT,
+      scopePrices: ti?.scopeConfiguration?.priceFeed ? toBase58(ti.scopeConfiguration.priceFeed) : DEFAULT,
+    },
   };
 }
 
