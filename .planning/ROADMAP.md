@@ -18,7 +18,7 @@ The journey: a working trust pipeline first (one chain, one signing flow, end-to
 - 📋 **v2.4 EVM DEX + LP + escape hatch** — Phases 32-35 planned (Uniswap V3 swap / Uniswap V3 LP / Curve / `prepare_custom_call`)
 - 📋 **v2.5 Safe (Gnosis) multisig** — Phases 36-38 planned (Safe positions + Tx Service / three-step signing flow / `enableModule` + `delegateCall` hard-trigger second-LLM)
 - 📋 **v2.6 Bridge facet decoders + cross-chain hardening** — Phases 39-40 planned (Tier-1 facet decoders + Inv #6b final-recipient assertion / sandwich-MEV per-L2 thresholds; Tier-2 facets explicitly deferred)
-- 📋 **v2.7 Bittensor (TAO subnet staking)** — Phases 46-49 planned (feasibility GO-WITH-CONSTRAINTS, scope-probed 2026-06-03). First Substrate chain: signs via the Ledger **Polkadot Generic app** over USB-HID (no dedicated TAO app), using a NEW **ed25519** Ledger coldkey — subtensor accepts `MultiSignature::Ed25519` and the Ledger SE cannot do sr25519, so the Ledger account IS the coldkey (no sr25519-migration tooling). New `payloadFingerprint` domain tag `VaultPilot-taotx-v1:` binds ONLY the unsigned `SignerPayload` SCALE bytes (FROZEN siblings untouched — the chain ADDS sibling files); presign-display hash is **blake2-256** (the one divergence from the SHA-256 Solana/TRON siblings). dTAO staking leads with the slippage-guarded `add_stake_limit` / `remove_stake_limit` as the DEFAULT (TAO↔alpha is a Uniswap-V3-style AMM; plain unguarded variants + move/swap/transfer-stake deferred to the depth phase). Ships even if staking calls blind-sign on-device, with documented residual risk + a `(pallet, call)`-only canonical-dispatch allowlist (consistent with how Solana/TRON ship blind-sign). Trust integrity is chain-enforced via subtensor's `CheckMetadataHash` (the metadata-shortener service is untrusted-by-construction). Phase 46 scaffolding (reads + pairing) → Phase 47 native + stake trust pipeline (the signing-binding lands) → Phase 48 subnet/dTAO depth → Phase 49 diagnostics + close-out. Critical unit asymmetry encoded per-extrinsic: `add_stake` amount is TAO/RAO, `remove_stake`/move/swap amounts are ALPHA (per-subnet token, also 9 decimals but a DIFFERENT unit). **v2.7 verify-phase = real-Ledger Polkadot-Generic-app small-amount mainnet stake.**
+- 🟡 **v2.7 Bittensor (TAO subnet staking)** — Phases 46-49 **code-complete** (#179/#181/#183/#185; feasibility GO-WITH-CONSTRAINTS, scope-probed 2026-06-03); v2.7 verify-phase pending (real-Ledger Polkadot-Generic-app small-amount mainnet stake smoke). First Substrate chain: signs via the Ledger **Polkadot Generic app** over USB-HID (no dedicated TAO app), using a NEW **ed25519** Ledger coldkey — subtensor accepts `MultiSignature::Ed25519` and the Ledger SE cannot do sr25519, so the Ledger account IS the coldkey (no sr25519-migration tooling). New `payloadFingerprint` domain tag `VaultPilot-taotx-v1:` binds ONLY the unsigned `SignerPayload` SCALE bytes (FROZEN siblings untouched — the chain ADDS sibling files); presign-display hash is **blake2-256** (the one divergence from the SHA-256 Solana/TRON siblings). dTAO staking leads with the slippage-guarded `add_stake_limit` / `remove_stake_limit` as the DEFAULT (TAO↔alpha is a Uniswap-V3-style AMM; plain unguarded variants + move/swap/transfer-stake deferred to the depth phase). Ships even if staking calls blind-sign on-device, with documented residual risk + a `(pallet, call)`-only canonical-dispatch allowlist (consistent with how Solana/TRON ship blind-sign). Trust integrity is chain-enforced via subtensor's `CheckMetadataHash` (the metadata-shortener service is untrusted-by-construction). Phase 46 scaffolding (reads + pairing) → Phase 47 native + stake trust pipeline (the signing-binding lands) → Phase 48 subnet/dTAO depth → Phase 49 diagnostics + close-out. Critical unit asymmetry encoded per-extrinsic: `add_stake` amount is TAO/RAO, `remove_stake`/move/swap amounts are ALPHA (per-subnet token, also 9 decimals but a DIFFERENT unit). **v2.7 verify-phase = real-Ledger Polkadot-Generic-app small-amount mainnet stake.**
 - 🟡 **v2.3.x multi-chain Compound (deferred follow-up)** — Phase 41 **code-complete** (Compound V3 lifecycle on Polygon / Arbitrum / Base / Optimism Comets; additive port, Ethereum byte-identical; verify-phase pending real-Ledger L2 smoke)
 - 📋 **Deferred backlog (planned follow-ups)** — small follow-ups to already-shipped milestones (full detail in the "Deferred Backlog" section below): v1.4.1 pkg ESM binary fix (gates v1.4.0 GA) · v1.x ENS-resolver migration + `chains/ethereum.ts` compat-shim deletion · v2.0.x Solana durable-nonce setup tools · v2.4.x Curve legacy-pool `add_liquidity` · v2.2.x LiFi BTC/TRON bridging (blocked on LiFi deployment)
 - 📋 **v3.1** — NFT reads (portfolio / collection / history / listings)
@@ -1266,7 +1266,7 @@ Plans:
 
 ---
 
-### 📋 v2.7 Bittensor (TAO subnet staking) (Phases 46-49)
+### 🟡 v2.7 Bittensor (TAO subnet staking) (Phases 46-49) — code-complete (#179/#181/#183/#185); verify-phase pending (real-Ledger Polkadot-Generic-app small-amount mainnet stake smoke)
 
 **Milestone Goal:** A user can pair a Ledger over USB-HID for Bittensor (no WalletConnect — Bittensor is a Substrate chain signed via the Ledger **Polkadot Generic app**, not the Ethereum app), read TAO + per-subnet alpha staking positions, send native TAO, and enter/exit dTAO subnet stakes with slippage protection on the AMM-priced TAO↔alpha conversion. Bittensor is the project's first Substrate chain: every action is a SCALE-encoded **signed extrinsic** over an unsigned `SignerPayload`, signed by a NEW **ed25519** Ledger coldkey (subtensor accepts `MultiSignature::Ed25519`; the Ledger SE cannot sign sr25519, so the Ledger account IS the coldkey from the start — no sr25519-migration tooling). The prepare → preview → send trust pipeline is reused with Substrate-specific primitives layered in: `payloadFingerprint` over the unsigned `SignerPayload` SCALE bytes (domain-tagged `"VaultPilot-taotx-v1:"`), a **blake2-256** presign-display hash (the one divergence from the SHA-256 Solana/TRON siblings), a `(pallet, call)`-only canonical-dispatch allowlist, and a `state_call` dry-run simulation gate. Trust integrity is chain-enforced: subtensor ships `frame_metadata_hash_extension::CheckMetadataHash` (verified in `runtime/src/lib.rs`), so a tampered metadata-shortener service produces a hash the runtime won't match → chain rejects (the service is untrusted-by-construction). Feasibility verdict **GO-WITH-CONSTRAINTS** (scope-probed 2026-06-03): SDKs `@polkadot/api` (keyless unsigned-`SignerPayload` builder) + `@zondax/ledger-substrate` (`signWithMetadataEd25519` → detached 64-byte sig attached via `tx.addSignature(addr, '0x00'+sig, payload)`) verified at SDK source. Reuses v2.0 Phase 11's `non-evm-account-store.ts` cache under `chain: "bittensor"` (one-line `NonEvmChain` widening). The dTAO unit asymmetry — `add_stake` amount is TAO/RAO, `remove_stake`/`move`/`swap` amounts are ALPHA (per-subnet token, also 9 decimals but a DIFFERENT unit) — is enforced via per-extrinsic unit typing; every preview amount is labeled with its token.
 
@@ -1288,9 +1288,9 @@ Plans:
 
 Plans:
 
-- [ ] 46-01-PLAN.md — Bittensor chain shelf + persistence widening + config-status + demo persona (PAIR-NEV reuse, TAO-R-04)
-- [ ] 46-02-PLAN.md — USB-HID Polkadot-Generic-app pairing: pair_bittensor_ledger + get_bittensor_status + SS58 vectors (TAO-PAIR-01, TAO-PAIR-02)
-- [ ] 46-03-PLAN.md — TAO/stake reads: get_bittensor_balance/stake/subnets/validators (TAO-R-01, TAO-R-02, TAO-R-03, TAO-R-04)
+- [x] 46-01-PLAN.md — Bittensor chain shelf + persistence widening + config-status + demo persona (PAIR-NEV reuse, TAO-R-04)
+- [x] 46-02-PLAN.md — USB-HID Polkadot-Generic-app pairing: pair_bittensor_ledger + get_bittensor_status + SS58 vectors (TAO-PAIR-01, TAO-PAIR-02)
+- [x] 46-03-PLAN.md — TAO/stake reads: get_bittensor_balance/stake/subnets/validators (TAO-R-01, TAO-R-02, TAO-R-03, TAO-R-04)
 
 #### Phase 47: Bittensor native + stake trust pipeline (the signing-binding lands here)
 
@@ -1309,10 +1309,10 @@ Plans:
 **Plans**: 4 plans
 
 Plans:
-- [ ] 47-01-PLAN.md — binding core: payload-fingerprint-bittensor + presign-hash-bittensor (blake2-256) + amount-bittensor + Fixtures TAO-A/B/C (hardcoded 0x literals) + PreparedTxBittensor union member; opens with a blocking supply-chain checkpoint for @polkadot-api/merkleize-metadata@1.2.3 (Wave 1)
-- [ ] 47-02-PLAN.md — prepare tools: extrinsic-builder + blocks-bittensor + prepare_bittensor_native_send / _add_stake_limit (DEFAULT) / _remove_stake_limit (DEFAULT) + register-all; limit_price from chain simSwap*, per-extrinsic unit typing (Wave 2)
-- [ ] 47-03-PLAN.md — preview/dispatch: canonical-dispatch-bittensor (section,method) allowlist + simulation-bittensor advisory dry-run + the preview_send ADDITIVE bittensor arm (Wave 2)
-- [ ] 47-04-PLAN.md — send + integration: send_transaction ADDITIVE arm + ed25519 detached-sig assembly (transport signWithMetadataEd25519) + the full trust-pipeline integration test with persona-cycle re-anchor (Wave 3)
+- [x] 47-01-PLAN.md — binding core: payload-fingerprint-bittensor + presign-hash-bittensor (blake2-256) + amount-bittensor + Fixtures TAO-A/B/C (hardcoded 0x literals) + PreparedTxBittensor union member; opens with a blocking supply-chain checkpoint for @polkadot-api/merkleize-metadata@1.2.3 (Wave 1)
+- [x] 47-02-PLAN.md — prepare tools: extrinsic-builder + blocks-bittensor + prepare_bittensor_native_send / _add_stake_limit (DEFAULT) / _remove_stake_limit (DEFAULT) + register-all; limit_price from chain simSwap*, per-extrinsic unit typing (Wave 2)
+- [x] 47-03-PLAN.md — preview/dispatch: canonical-dispatch-bittensor (section,method) allowlist + simulation-bittensor advisory dry-run + the preview_send ADDITIVE bittensor arm (Wave 2)
+- [x] 47-04-PLAN.md — send + integration: send_transaction ADDITIVE arm + ed25519 detached-sig assembly (transport signWithMetadataEd25519) + the full trust-pipeline integration test with persona-cycle re-anchor (Wave 3)
 
 #### Phase 48: Bittensor subnet/dTAO depth — deferred staking variants
 
@@ -1330,9 +1330,9 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
-- [ ] 48-01-PLAN.md — additive foundation: 5 extrinsic-builder kinds (hotkey-first pallet order) + 5 BittensorInstructionSummary variants + 5 BITTENSOR_DISPATCH_ALLOWLIST camelCase keys + Fixtures TAO-D..H (hardcoded 0x literals, NO beforeAll-snapshot) + the hotkey↔netuid-swap RED-FLAG regression + FROZEN_FILES extended to cover the 2 reused Bittensor binding modules (TAO-W-09; Wave 1)
-- [ ] 48-02-PLAN.md — TAO-R-05 read enrichment: getValidators + delegate identity (identitiesV2) + take% (normalizeTakePercent reuse) + per-netuid registrations (getDelegate) + isHotkeyRegisteredOnNetuid helper (getNeuronsLite presence) + get_bittensor_validators surfacing (TAO-R-05; Wave 2)
-- [ ] 48-03-PLAN.md — 5 prepare tools (plain add/remove with [NOTICE — no slippage guard], same-owner move/swap, withdrawal-grade transfer_stake with [WITHDRAWAL — CUSTODY CHANGE] + full destination_coldkey) + preview_send DECODED-ARGS arms + the unregistered-hotkey preview WARNING (TAO-W-06/07/08 + TAO-R-05 wiring; Wave 3)
+- [x] 48-01-PLAN.md — additive foundation: 5 extrinsic-builder kinds (hotkey-first pallet order) + 5 BittensorInstructionSummary variants + 5 BITTENSOR_DISPATCH_ALLOWLIST camelCase keys + Fixtures TAO-D..H (hardcoded 0x literals, NO beforeAll-snapshot) + the hotkey↔netuid-swap RED-FLAG regression + FROZEN_FILES extended to cover the 2 reused Bittensor binding modules (TAO-W-09; Wave 1)
+- [x] 48-02-PLAN.md — TAO-R-05 read enrichment: getValidators + delegate identity (identitiesV2) + take% (normalizeTakePercent reuse) + per-netuid registrations (getDelegate) + isHotkeyRegisteredOnNetuid helper (getNeuronsLite presence) + get_bittensor_validators surfacing (TAO-R-05; Wave 2)
+- [x] 48-03-PLAN.md — 5 prepare tools (plain add/remove with [NOTICE — no slippage guard], same-owner move/swap, withdrawal-grade transfer_stake with [WITHDRAWAL — CUSTODY CHANGE] + full destination_coldkey) + preview_send DECODED-ARGS arms + the unregistered-hotkey preview WARNING (TAO-W-06/07/08 + TAO-R-05 wiring; Wave 3)
 
 #### Phase 49: Bittensor diagnostics + v2.7 milestone close-out
 
@@ -1410,7 +1410,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 43. Curve add_liquidity legacy StableSwap fixed-array (Phase 34 deferral) | v2.4 | 1/1 | Complete    | 2026-05-30 |
 | 44. Solana durable-nonce setup tools (DB-3 follow-up) | v2.x | 1/1 | Complete    | 2026-06-01 |
 | 45. ENS resolver migration off compat-shim (DB-2, partial) | v2.x | 1/1 | Complete    | 2026-06-01 |
-| 46. Bittensor scaffolding — USB-HID Polkadot-Generic-app pairing + TAO/stake reads + persistent account | v2.7 | 0/3 | Not started | - |
-| 47. Bittensor native + stake trust pipeline (VaultPilot-taotx-v1: binding lands) | v2.7 | 0/4 | Not started | - |
-| 48. Bittensor subnet/dTAO depth — deferred staking variants (plain add/remove + move/swap/transfer) | v2.7 | 0/3 | Not started | - |
-| 49. Bittensor diagnostics + v2.7 milestone close-out | v2.7 | 0/1 | Not started | - |
+| 46. Bittensor scaffolding — USB-HID Polkadot-Generic-app pairing + TAO/stake reads + persistent account | v2.7 | 3/3 | Complete (#179) | 2026-06-03 |
+| 47. Bittensor native + stake trust pipeline (VaultPilot-taotx-v1: binding lands) | v2.7 | 4/4 | Complete (#181) | 2026-06-03 |
+| 48. Bittensor subnet/dTAO depth — deferred staking variants (plain add/remove + move/swap/transfer) | v2.7 | 3/3 | Complete (#183) | 2026-06-03 |
+| 49. Bittensor diagnostics + v2.7 milestone close-out | v2.7 | 1/1 | Complete (#185) | 2026-06-03 |
