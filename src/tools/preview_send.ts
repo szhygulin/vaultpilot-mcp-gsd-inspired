@@ -223,6 +223,7 @@ import {
   lookup,
   transitionToPreviewed,
   type HandleRecord,
+  type PreparedTxBittensor,
   type PreparedTxBtc,
   type PreparedTxBtcLifi,
   type PreparedTxEvm,
@@ -234,6 +235,17 @@ import {
 import { _tronPresign } from "../signing/presign-hash-tron.js";
 import { _solanaPresign } from "../signing/presign-hash-solana.js";
 import { computePresignHash } from "../signing/presign-hash.js";
+// Phase 47 Plan 47-03 — Bittensor preview arm (Layer 0.5 allowlist + Layer 0.7
+// advisory dry-run + blake2-256 presign recompute). Additive; the FROZEN region
+// + the existing arms stay byte-identical.
+import { _canonicalDispatchBittensor } from "../security/canonical-dispatch-bittensor.js";
+import { _simulationBittensor } from "../signing/simulation-bittensor.js";
+import { _bittensorPresign } from "../signing/presign-hash-bittensor.js";
+import {
+  DECODED_ARGS_BITTENSOR_TEMPLATE,
+  LEDGER_BLIND_SIGN_HASH_BITTENSOR_TEMPLATE,
+  VERIFY_BEFORE_SIGNING_BITTENSOR_TEMPLATE,
+} from "../signing/blocks-bittensor.js";
 // Phase 37 Plan 37-03 (SAFE-08) site (c) — composite-tx decode arm for the
 // Safe execTransaction selector. SHARED decoder; same module is consumed by
 // src/tools/prepare_safe_tx_execute.ts at prepare time.
@@ -815,6 +827,9 @@ registerTool("preview_send", DESCRIPTION, INPUT_SCHEMA, async (args) => {
     }
     if (txType === "btc-lifi") {
       return await previewSendBtcLifiBranch(record as HandleRecord & { tx: PreparedTxBtcLifi });
+    }
+    if (txType === "bittensor") {
+      return await previewSendBittensorBranch(record as HandleRecord & { tx: PreparedTxBittensor });
     }
 
     // Phase 9 — Plan 09-04. Layer 0.5 outer dispatch-target allowlist
@@ -4050,6 +4065,159 @@ async function previewSendBtcLifiBranch(
       hasOpReturn: btcLifiTx.hasOpReturn,
       // Phase 26 — BTC LiFi uses USB-HID Ledger BTC app + Esplora broadcast (no WC relay).
       sessionTopicLast8: null,
+    },
+  };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Phase 47 Plan 47-03 — preview_send Bittensor (subtensor) branch (TAO-PREP-02).
+//
+// ADDITIVE — the EVM FROZEN region + the Solana/TRON/BTC/LTC/Safe arms are
+// byte-identical. This branch mirrors previewSendTronBranch:
+//   Layer 0.5  (section,method) allowlist refusal (DISPATCH_TARGET_REFUSED)
+//   Layer 0.7  ADVISORY dry-run (CHECKS PERFORMED warning on non-ok; NEVER refuses)
+//   Layer 1    mint previewToken + transitionToPreviewed + recompute blake2-256
+//              presign over the SAME signableBlob the fingerprint binds
+//   emit       DECODED ARGS (pallet/call + netuid + full hotkey + amount LABELED
+//              with its unit) + LEDGER BLIND-SIGN HASH (Bittensor, blake2-256) +
+//              VERIFY BEFORE SIGNING.
+// ───────────────────────────────────────────────────────────────────────────
+async function previewSendBittensorBranch(
+  record: HandleRecord & { tx: PreparedTxBittensor },
+): Promise<{
+  isError?: boolean;
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent?: Record<string, unknown>;
+}> {
+  const taoTx = record.tx;
+
+  // ---- Layer 0.5: (section,method) allowlist ------------------------------
+  const dispatch = _canonicalDispatchBittensor.checkBittensorDispatch(
+    taoTx.section,
+    taoTx.method,
+  );
+  if (dispatch.kind === "refused") {
+    const message =
+      `Bittensor dispatch refused: "${dispatch.offender}" is not in the ` +
+      `(section,method) allowlist [${dispatch.allowlist.join(", ")}]. ` +
+      "Only native transfers + the two slippage-guarded stake_limit calls are permitted.";
+    return {
+      isError: true,
+      content: [{ type: "text", text: `error: ${message}` }],
+      structuredContent: {
+        ...(errEnvelope("DISPATCH_TARGET_REFUSED", message) as Record<string, unknown>),
+        offender: dispatch.offender,
+        allowlist: dispatch.allowlist,
+      },
+    };
+  }
+
+  // ---- Layer 0.7: ADVISORY dry-run (never refuses) ------------------------
+  const simulation = await _simulationBittensor.runBittensorPreviewSimulation({
+    signableBlob: taoTx.signableBlob,
+  });
+  const checksPerformedBlock = [
+    "CHECKS PERFORMED (Bittensor dry-run — Layer 0.7, ADVISORY)",
+    `  status:  ${simulation.status}`,
+    `  detail:  ${simulation.detail ?? "ok"}`,
+    ...(simulation.rpcError ? [`  note:    ${simulation.rpcError}`] : []),
+    "",
+    "  This dry-run is ADVISORY — a non-ok status is a usability signal, NOT a",
+    "  refusal. The trust anchors are the chain-enforced CheckMetadataHash + the",
+    "  on-device blake2-256 hash match below.",
+  ].join("\n");
+
+  // ---- Layer 1: recompute blake2-256 presign + mint previewToken ----------
+  const { presignHash } = _bittensorPresign.computeBittensorPresignHash({
+    signableBytes: taoTx.signableBlob,
+  });
+
+  const previewToken = crypto.randomUUID();
+  const trans = transitionToPreviewed(record.handle, {
+    nonce: 0,
+    gas: 0n,
+    maxFeePerGas: 0n,
+    maxPriorityFeePerGas: 0n,
+    previewToken,
+    presignHash,
+    selector: null,
+  });
+  if (!trans.ok) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `error: handle state changed during preview (${trans.errorCode})`,
+        },
+      ],
+      structuredContent: errEnvelope(
+        trans.errorCode,
+        `handle transition failed: ${trans.errorCode}`,
+      ) as Record<string, unknown>,
+    };
+  }
+
+  // ---- Render DECODED ARGS (per-extrinsic unit labels) --------------------
+  const summary = taoTx.instructionSummary;
+  let decodedBody: string;
+  if (summary?.kind === "native-transfer") {
+    decodedBody = [
+      `  call:    balances.transferKeepAlive`,
+      `  from:    ${summary.from}`,
+      `  to:      ${summary.to}`,
+      `  amount:  ${summary.rao.toString()} RAO (TAO)`,
+    ].join("\n");
+  } else if (summary?.kind === "add-stake-limit") {
+    decodedBody = [
+      `  call:        subtensorModule.add_stake_limit`,
+      `  hotkey:      ${summary.hotkey}`,
+      `  netuid:      ${summary.netuid}${summary.netuidIdentity ? ` (${summary.netuidIdentity})` : ""}`,
+      `  amount:      ${summary.amountStakedRao.toString()} (TAO/RAO)`,
+      `  limit_price: ${summary.limitPrice.toString()} (max RAO-per-alpha)`,
+      `  allow_partial: ${summary.allowPartial}`,
+    ].join("\n");
+  } else if (summary?.kind === "remove-stake-limit") {
+    decodedBody = [
+      `  call:        subtensorModule.remove_stake_limit`,
+      `  hotkey:      ${summary.hotkey}`,
+      `  netuid:      ${summary.netuid}${summary.netuidIdentity ? ` (${summary.netuidIdentity})` : ""}`,
+      `  amount:      ${summary.amountUnstakedAlpha.toString()} (ALPHA)`,
+      `  limit_price: ${summary.limitPrice.toString()} (min RAO-per-alpha)`,
+      `  allow_partial: ${summary.allowPartial}`,
+    ].join("\n");
+  } else {
+    decodedBody = `  call:    ${taoTx.section}.${taoTx.method}`;
+  }
+  const decodedArgsBlock = DECODED_ARGS_BITTENSOR_TEMPLATE.replace(
+    "{DECODED_BODY}",
+    decodedBody,
+  );
+
+  const blindSignHashBlock = LEDGER_BLIND_SIGN_HASH_BITTENSOR_TEMPLATE.replace(
+    "{HASH_FULL_64HEX}",
+    presignHash,
+  ).replace("{HASH_CHUNKED_4_CHAR_GROUPS}", chunkHex(presignHash));
+
+  const responseTextParts = [
+    decodedArgsBlock,
+    checksPerformedBlock,
+    blindSignHashBlock,
+    VERIFY_BEFORE_SIGNING_BITTENSOR_TEMPLATE,
+    `\nPreview token: ${previewToken}`,
+    `\nNext step: send_transaction({ handle: "${record.handle}", previewToken: "${previewToken}", userDecision: "send" })`,
+  ];
+
+  return {
+    content: [{ type: "text", text: responseTextParts.filter(Boolean).join("\n\n") }],
+    structuredContent: {
+      handle: record.handle,
+      chain: "bittensor",
+      section: taoTx.section,
+      method: taoTx.method,
+      previewToken,
+      presignHash,
+      simulationStatus: simulation.status,
     },
   };
 }
