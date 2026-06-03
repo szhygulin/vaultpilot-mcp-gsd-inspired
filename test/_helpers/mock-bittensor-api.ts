@@ -72,6 +72,25 @@ export interface SwapSimConfig {
   simTaoOut?: bigint;
 }
 
+/**
+ * Send-path hooks (Phase 47 — Plan 47-04 integration test). The send branch
+ * calls `api.tx(methodHex)` to rebuild the SubmittableExtrinsic, then
+ * `.addSignature(signer, sigHex, payload)` → `.toHex()`, then
+ * `api.rpc.author.submitExtrinsic(signedHex)` → `{ toHex() }`. These hooks let
+ * the integration test observe the assembled args + the broadcast input WITHOUT
+ * a live socket or a real device.
+ */
+export interface MockSendConfig {
+  /** Records the (signer, sigHex, payload) addSignature was called with. */
+  onAddSignature?: (signer: string, sigHex: string, payload: unknown) => void;
+  /** Records the signed-extrinsic hex passed to submitExtrinsic. */
+  onSubmitExtrinsic?: (signedHex: string) => void;
+  /** The extrinsic hash submitExtrinsic resolves to. Default a fixed literal. */
+  extrinsicHash?: string;
+  /** When set, submitExtrinsic rejects with this error (BadProof simulation). */
+  submitRejectsWith?: Error;
+}
+
 export interface MockApiOptions {
   /** Nonce returned by accountNextIndex. Default 0 (matches the fixtures). */
   nonce?: number;
@@ -79,6 +98,8 @@ export interface MockApiOptions {
   /** Spy hooks the test passes to assert call counts. */
   onSimSwapTaoForAlpha?: (netuid: number, taoRao: bigint) => void;
   onSimSwapAlphaForTao?: (netuid: number, alpha: bigint) => void;
+  /** Send-path hooks (Plan 47-04 integration). Omit for prepare-only tests. */
+  send?: MockSendConfig;
 }
 
 /**
@@ -93,6 +114,65 @@ export function makeMockBittensorApi(opts: MockApiOptions = {}): unknown {
 
   const nonce = opts.nonce ?? 0;
   const swap = opts.swap ?? { currentAlphaPriceRaw: 500_000_000n };
+  const send = opts.send;
+
+  // `tx` is BOTH:
+  //   - an object with the section/method factories (builder path:
+  //     `api.tx.balances.transferKeepAlive(...)`), AND
+  //   - a callable that rebuilds a SubmittableExtrinsic from a method hex
+  //     (send path: `api.tx(methodHex)`).
+  // A JS function carries properties, so we attach the section factories onto
+  // the callable. The rebuilt extrinsic's `toHex()` returns a synthetic
+  // signed-extrinsic hex derived from the passed sigHex so the test can assert
+  // a well-formed envelope reached submitExtrinsic.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const txFn: any = (methodHex: string) => {
+    let attachedSig = "";
+    return {
+      addSignature: (signer: string, sigHex: string, payload: unknown) => {
+        send?.onAddSignature?.(signer, sigHex, payload);
+        attachedSig = sigHex;
+        return {
+          // Synthetic well-formed signed-extrinsic hex: version byte (0x84 =
+          // signed v4) ‖ the MultiSignature (sigHex) ‖ the call hex tail. The
+          // exact layout is not consensus-checked here (no live runtime); the
+          // assertion is that addSignature ran with the device sig + the
+          // envelope carries it. submitExtrinsic receives THIS hex.
+          toHex: () =>
+            "0x84" + attachedSig.replace(/^0x/, "") + methodHex.replace(/^0x/, ""),
+        };
+      },
+    };
+  };
+  txFn.balances = {
+    transferKeepAlive: (_dest: string, value: bigint) => ({
+      method: { toHex: () => fixtureTransferKeepAliveMethodHex(value) },
+    }),
+  };
+  txFn.subtensorModule = {
+    addStakeLimit: (
+      _hotkey: string,
+      _netuid: number,
+      amountStaked: bigint,
+      limitPrice: bigint,
+      _allowPartial: boolean,
+    ) => ({
+      method: {
+        toHex: () => fixtureAddStakeLimitMethodHex(amountStaked, limitPrice),
+      },
+    }),
+    removeStakeLimit: (
+      _hotkey: string,
+      _netuid: number,
+      amountUnstaked: bigint,
+      limitPrice: bigint,
+      _allowPartial: boolean,
+    ) => ({
+      method: {
+        toHex: () => fixtureAddStakeLimitMethodHex(amountUnstaked, limitPrice),
+      },
+    }),
+  };
 
   return {
     registry,
@@ -101,42 +181,21 @@ export function makeMockBittensorApi(opts: MockApiOptions = {}): unknown {
       specVersion: { toNumber: () => 171 },
       transactionVersion: { toNumber: () => 1 },
     },
-    tx: {
-      balances: {
-        transferKeepAlive: (_dest: string, value: bigint) => ({
-          method: { toHex: () => fixtureTransferKeepAliveMethodHex(value) },
-        }),
-      },
-      subtensorModule: {
-        addStakeLimit: (
-          _hotkey: string,
-          _netuid: number,
-          amountStaked: bigint,
-          limitPrice: bigint,
-          _allowPartial: boolean,
-        ) => ({
-          method: {
-            toHex: () =>
-              fixtureAddStakeLimitMethodHex(amountStaked, limitPrice),
-          },
-        }),
-        removeStakeLimit: (
-          _hotkey: string,
-          _netuid: number,
-          amountUnstaked: bigint,
-          limitPrice: bigint,
-          _allowPartial: boolean,
-        ) => ({
-          method: {
-            toHex: () =>
-              fixtureAddStakeLimitMethodHex(amountUnstaked, limitPrice),
-          },
-        }),
-      },
-    },
+    tx: txFn,
     rpc: {
       system: {
         accountNextIndex: async (_addr: string) => ({ toNumber: () => nonce }),
+        dryRun: async () => ({ isOk: true }),
+      },
+      author: {
+        submitExtrinsic: async (signedHex: string) => {
+          send?.onSubmitExtrinsic?.(signedHex);
+          if (send?.submitRejectsWith) throw send.submitRejectsWith;
+          return {
+            toHex: () =>
+              send?.extrinsicHash ?? "0x" + "ed".repeat(32),
+          };
+        },
       },
     },
     call: {

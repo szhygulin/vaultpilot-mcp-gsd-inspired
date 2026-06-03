@@ -65,7 +65,11 @@ import { broadcastTx as ltcEsploraBroadcastTx } from "../chains/litecoin/esplora
 import { _solanaRegistry } from "../chains/solana/registry.js";
 import { _tronRegistry } from "../chains/tron/registry.js";
 import { isDemoMode } from "../config/env.js";
-import { getActivePersona, getActiveBtcPersona, getActiveLtcPersona, getActiveSolanaPersona, getActiveTronPersona, getActiveBittensorPersona } from "../demo/state.js";
+import { getActivePersona, getActiveBtcPersona, getActiveLtcPersona, getActiveSolanaPersona, getActiveTronPersona } from "../demo/state.js";
+// Phase 47 — Plan 47-04 additive import (kept on its own line so the existing
+// demo-state import above stays byte-identical — the send_transaction FROZEN
+// zero-deletion invariant, test/signing-fingerprint-bittensor.test.ts).
+import { getActiveBittensorPersona } from "../demo/state.js";
 import { computeBtcPayloadFingerprint } from "../signing/btc-fingerprint.js";
 import { _btcLifiFingerprint } from "../signing/btc-lifi-fingerprint.js";
 import { computeLtcPayloadFingerprint } from "../signing/ltc-fingerprint.js";
