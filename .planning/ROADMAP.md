@@ -1284,7 +1284,13 @@ Plans:
   5. Paired Bittensor account persists to `~/.vaultpilot-mcp/non-evm-accounts.json` under `chain: "bittensor"` (one-line `NonEvmChain` + `VALID_CHAINS` widening — zero cache-schema change); on cold boot, eager-load restores `paired: true` without re-pair
   6. `get_vaultpilot_config_status` extends `pairedNonEvmChains` to include `"bittensor"` when present; `bittensorRpcConfigured` boolean surfaces; `src/chains/bittensor/` shelf live (registry singleton + tao-rpc-client + branded `Ss58Address` types); one OFAC-clean TAO-holder demo persona DOA-validated at module load
 
-**Plans**: 3 plans (estimate)
+**Plans**: 3 plans
+
+Plans:
+
+- [ ] 46-01-PLAN.md — Bittensor chain shelf + persistence widening + config-status + demo persona (PAIR-NEV reuse, TAO-R-04)
+- [ ] 46-02-PLAN.md — USB-HID Polkadot-Generic-app pairing: pair_bittensor_ledger + get_bittensor_status + SS58 vectors (TAO-PAIR-01, TAO-PAIR-02)
+- [ ] 46-03-PLAN.md — TAO/stake reads: get_bittensor_balance/stake/subnets/validators (TAO-R-01, TAO-R-02, TAO-R-03, TAO-R-04)
 
 #### Phase 47: Bittensor native + stake trust pipeline (the signing-binding lands here)
 
