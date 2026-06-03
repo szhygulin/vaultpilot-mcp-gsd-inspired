@@ -21,6 +21,9 @@ import "./pair_ledger_live_wait.js";
 import "./get_ledger_status.js";
 import "./pair_solana_ledger.js";
 import "./get_solana_status.js";
+// Phase 46 Plan 46-02 (TAO-PAIR-01 / TAO-PAIR-02) — Bittensor pairing + status.
+import "./pair_bittensor_ledger.js"; // Phase 46 Plan 46-02 (TAO-PAIR-01)
+import "./get_bittensor_status.js"; // Phase 46 Plan 46-02 (TAO-PAIR-02)
 import "./pair_tron_ledger.js"; // Phase 17 Plan 17-03 (TRON-PAIR-01)
 import "./pair_btc_ledger.js"; // Phase 22 Plan 22-02 (BTC-PAIR-01) — dual-address (segwit + taproot) pair
 import "./pair_litecoin_ledger.js"; // Phase 26 Plan 26-01 (LTC-PAIR-01) — dual-address (legacy + segwit) LTC pair
