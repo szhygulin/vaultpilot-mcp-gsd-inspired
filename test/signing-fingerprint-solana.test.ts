@@ -669,6 +669,65 @@ describe("Kamino fingerprint fixtures T–W (Plan 13-05, D-01 + refresh ceremony
 });
 
 // ---------------------------------------------------------------------------
+// Phase 13 Plan 13-06 — Kamino obligation-init fixture X–Y (D-01 + V9). The init
+// tool emits BOTH ix in ONE tx (one device approval = "set me up on Kamino" —
+// one-intent-per-device-screen), so we anchor ONE fixture over the ordered 2-ix
+// vector (initUserMetadata FIRST — V9: obligation requires userMetadata to
+// exist). NO beforeAll-snapshot. The ordering regression proves the order is
+// byte-bound.
+// ---------------------------------------------------------------------------
+describe("Kamino obligation-init fixture X–Y (Plan 13-06, D-01 + V9 2-step)", () => {
+  const K_OWNER = new PublicKey("5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9");
+  const K_MARKET = new PublicKey("7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF");
+  const K_OBLIGATION = new PublicKey("AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9");
+  const K_USER_META = new PublicKey("BPFLoaderUpgradeab1e11111111111111111111111");
+
+  function discHead(ix: { data: Uint8Array | Buffer }): number[] {
+    return [...ix.data.slice(0, 8)];
+  }
+
+  function initUserMetaIx() {
+    return _kamino.buildInitUserMetadataIx({ owner: K_OWNER, feePayer: K_OWNER, userMetadata: K_USER_META });
+  }
+  function initObligationIx() {
+    return _kamino.buildInitObligationIx({
+      obligationOwner: K_OWNER, feePayer: K_OWNER, obligation: K_OBLIGATION,
+      lendingMarket: K_MARKET, ownerUserMetadata: K_USER_META,
+    });
+  }
+  function fpOf(ixs: import("@solana/web3.js").TransactionInstruction[]): string {
+    return computeSolanaPayloadFingerprint({
+      messageBytes: _kamino.assembleKaminoTx({
+        instructions: ixs,
+        ixNames: ixs.map(() => "x"),
+        oracleProgramIds: [],
+        feePayer: K_OWNER,
+        recentBlockhash: FIXED_BLOCKHASH,
+      }).messageBytes,
+    });
+  }
+
+  it("Fixture X–Y — ordered 2-ix init pair (initUserMetadata THEN initObligation): discriminators + hardcoded fingerprint", () => {
+    const um = initUserMetaIx();
+    const ob = initObligationIx();
+    expect(discHead(um)).toEqual(KAMINO_DISCRIMINATOR.initUserMetadata);
+    expect(discHead(ob)).toEqual(KAMINO_DISCRIMINATOR.initObligation);
+    expect(fpOf([um, ob])).toBe(
+      "0x2a60ccbbe54b4575f1f9cfd7f7e04c79013295d00e9b6b27bfa98e0d624428a7",
+    );
+  });
+
+  it("ordering regression: initObligation BEFORE initUserMetadata changes the fingerprint (V9 order is bound)", () => {
+    const correct = fpOf([initUserMetaIx(), initObligationIx()]);
+    const swapped = fpOf([initObligationIx(), initUserMetaIx()]);
+    expect(correct).not.toBe(swapped);
+    expect(correct).toBe(
+      "0x2a60ccbbe54b4575f1f9cfd7f7e04c79013295d00e9b6b27bfa98e0d624428a7",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Phase 44 Plan 44-01 — FROZEN cryptographic-binding-chain zero-diff gate.
 //
 // The Solana fingerprint + presign-hash modules are FROZEN: Phase 44 nonce
