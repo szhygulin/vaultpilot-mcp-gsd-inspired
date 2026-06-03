@@ -52,6 +52,7 @@
 
 import { type Hex, toHex } from "viem";
 import { call } from "viem/actions";
+import { u8aToHex } from "@polkadot/util";
 import { Message, PublicKey, Transaction } from "@solana/web3.js";
 import { Transaction as BtcTransaction, address as btcAddressLib, networks as btcNetworks } from "bitcoinjs-lib";
 
@@ -64,7 +65,7 @@ import { broadcastTx as ltcEsploraBroadcastTx } from "../chains/litecoin/esplora
 import { _solanaRegistry } from "../chains/solana/registry.js";
 import { _tronRegistry } from "../chains/tron/registry.js";
 import { isDemoMode } from "../config/env.js";
-import { getActivePersona, getActiveBtcPersona, getActiveLtcPersona, getActiveSolanaPersona, getActiveTronPersona } from "../demo/state.js";
+import { getActivePersona, getActiveBtcPersona, getActiveLtcPersona, getActiveSolanaPersona, getActiveTronPersona, getActiveBittensorPersona } from "../demo/state.js";
 import { computeBtcPayloadFingerprint } from "../signing/btc-fingerprint.js";
 import { _btcLifiFingerprint } from "../signing/btc-lifi-fingerprint.js";
 import { computeLtcPayloadFingerprint } from "../signing/ltc-fingerprint.js";
@@ -84,10 +85,12 @@ import {
   type PreparedTxLtc,
   type PreparedTxSolana,
   type PreparedTxTron,
+  type PreparedTxBittensor,
 } from "../signing/handle-store.js";
 import { computePayloadFingerprint } from "../signing/payload-fingerprint.js";
 import { computeSolanaPayloadFingerprint } from "../signing/payload-fingerprint-solana.js";
 import { computeTronPayloadFingerprint } from "../signing/payload-fingerprint-tron.js";
+import { computeBittensorPayloadFingerprint } from "../signing/payload-fingerprint-bittensor.js";
 import { _simulationSolana } from "../signing/simulation-solana.js";
 import { _simulationTron } from "../signing/simulation-tron.js";
 import {
@@ -111,6 +114,12 @@ import {
   type BtcPsbtSignInput,
   type KnownAddressDerivation,
 } from "../wallet/ledger-btc-transport.js";
+import {
+  LedgerBittensorAppNotOpenError,
+  LedgerBittensorUserRejectedError,
+  signBittensorTransaction,
+} from "../wallet/ledger-bittensor-transport.js";
+import { _bittensorRegistry } from "../chains/bittensor/registry.js";
 import {
   loadMultisigWallet,
   parseWshSortedMulti,
@@ -412,6 +421,10 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
                 ? _btcLifiFingerprint.computeBtcLifiPayloadFingerprint(
                     Buffer.from((record.tx as PreparedTxBtcLifi).psbtHex, "hex"),
                   )
+              : txType === "bittensor"
+                ? computeBittensorPayloadFingerprint({
+                    signableBytes: (record.tx as PreparedTxBittensor).signableBlob,
+                  })
               : computePayloadFingerprint({
                 chainId: record.tx.chainId,
                 to: record.tx.to,
@@ -464,6 +477,12 @@ export const sendTransactionHandler: ToolHandler = async (args): Promise<ToolHan
     if (txType === "btc-lifi") {
       return await sendTransactionBtcLifiBranch(
         record as HandleRecord & { tx: PreparedTxBtcLifi },
+        handleArg,
+      );
+    }
+    if (txType === "bittensor") {
+      return await sendTransactionBittensorBranch(
+        record as HandleRecord & { tx: PreparedTxBittensor },
         handleArg,
       );
     }
@@ -2254,6 +2273,347 @@ async function sendTransactionBtcLifiBranch(
       toAddress: btcLifiTx.toAddress,
       vaultAddress: btcLifiTx.vaultAddress,
       // Phase 26 — BTC LiFi uses Esplora direct broadcast (no WC relay).
+      sessionTopicLast8: null,
+    },
+  };
+}
+
+// ===========================================================================
+// Phase 47 — Plan 47-04 — Bittensor (subtensor) branch (additive; lives
+// OUTSIDE the FROZEN three-gate region above). Dispatched by the main handler
+// when `record.tx.txType === "bittensor"`. All three FROZEN gates
+// (PREVIEW_REQUIRED, WRONG_STATUS, PREVIEW_TOKEN_MISMATCH,
+// PAYLOAD_FINGERPRINT_DRIFT — the latter recomputed over the STORED
+// signableBlob) and the cancel branch fired identically before reaching here.
+//
+// Bittensor broadcast path (TAO-PREP-03 — RESEARCH §Pattern 2):
+//   1. Demo-mode short-circuit (DEMO-05 mirror) — advisory dry-run envelope;
+//      NOTHING signed; NOTHING broadcast.
+//   2. Pairing check — persistent non-EVM account store (chainFilter: "bittensor").
+//   3. Rebuild the SubmittableExtrinsic from the pinned `signerPayloadJSON.method`
+//      (the SCALE call hex) via `api.tx(methodHex)` — byte-identical call.
+//   4. Sign the STORED `signableBlob` via the Ledger Polkadot Generic app
+//      (`signBittensorTransaction`) → detached 64-byte ed25519 signature. The
+//      device signs the SAME bytes the fingerprint + presign bound (T-47-11).
+//   5. Assemble: `sigHex = "0x00" + u8aToHex(signature).slice(2)`  ('0x00' =
+//      MultiSignature::Ed25519 variant byte); `tx.addSignature(ss58Address,
+//      sigHex, payload)` where `payload` is the pinned SignerPayloadJSON
+//      (ExtrinsicPayloadValue form — A5 resolution below).
+//   6. Broadcast via `api.rpc.author.submitExtrinsic(signedTx.toHex())`.
+//   7. State transition via `transitionToSent(handle, extrinsicHash)`.
+//
+// A5 RESOLVED (addSignature payload-arg form): `addSignature`'s `payload` arg
+// accepts `ExtrinsicPayloadValue | Uint8Array | HexString`. We pass the pinned
+// `signerPayloadJSON` object (the `ExtrinsicPayloadValue` form) — it carries
+// the exact era/nonce/tip/mode/metadataHash the `signableBlob` was built from,
+// so `addSignature` re-derives the byte-identical signed envelope. The arg
+// form is wrapped in a try/catch: if the object form throws (a future SDK
+// shape change), fall back to the raw `signableBlob` hex (the `HexString` /
+// `Uint8Array` form). FALSIFIER: a wrong form yields a `BadProof` rejection at
+// broadcast — surfaced as BROADCAST_FAILED, never silently swallowed.
+//
+// NO private key material crosses this codebase — the device returns ONLY the
+// detached signature; `addSignature` assembles; `submitExtrinsic` broadcasts.
+// ===========================================================================
+
+/** Defensive api surface — `tx(...)` rebuild, `addSignature`, `submitExtrinsic`. */
+interface SubtensorSendApi {
+  tx(extrinsic: string): {
+    addSignature(
+      signer: string,
+      signature: string,
+      payload: unknown,
+    ): { toHex(): string };
+  };
+  rpc: {
+    author: {
+      submitExtrinsic(extrinsicHex: string): Promise<{ toHex(): string }>;
+    };
+  };
+}
+
+/**
+ * Bittensor branch of `send_transaction`. Dispatched by the main handler when
+ * `record.tx.txType === "bittensor"`. The three FROZEN gates and the cancel
+ * branch fired identically before reaching this function.
+ */
+async function sendTransactionBittensorBranch(
+  record: HandleRecord & { tx: PreparedTxBittensor },
+  handleArg: string,
+): Promise<ToolHandlerResult> {
+  const taoTx = record.tx;
+
+  // ---- Demo-mode short-circuit (DEMO-05 Bittensor mirror) ---------------
+  if (isDemoMode()) {
+    const persona = getActiveBittensorPersona();
+    if (persona === null) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: "error: demo mode is active but no Bittensor persona set. Call `set_demo_wallet` with a Bittensor persona slug first.",
+          },
+        ],
+        structuredContent: errEnvelope(
+          "WRONG_MODE",
+          "demo mode active but no Bittensor persona set; call set_demo_wallet first",
+        ),
+      };
+    }
+    const simulatedAt = new Date().toISOString();
+    const text = [
+      "SIMULATION (Bittensor — demo mode)",
+      `  call:   ${taoTx.section}.${taoTx.method}`,
+      `  signer: ${persona.ss58Address}`,
+      "  (no signature requested; no broadcast performed)",
+    ].join("\n");
+    return {
+      content: [{ type: "text", text }],
+      structuredContent: {
+        simulated: true,
+        demoMode: true,
+        simulatedAt,
+        handle: handleArg,
+        txType: "bittensor" as const,
+        section: taoTx.section,
+        method: taoTx.method,
+      },
+    };
+  }
+
+  // ---- Pairing check (Bittensor — persistent non-EVM account store) -----
+  const accounts = listAccounts({ chainFilter: "bittensor" });
+  if (accounts.length === 0 || !accounts[0]) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "error: no paired Bittensor account. Call `pair_bittensor_ledger` first to pair your Bittensor Ledger coldkey, then retry.",
+        },
+      ],
+      structuredContent: errEnvelope(
+        "WALLET_NOT_PAIRED",
+        "no paired Bittensor account; call pair_bittensor_ledger first",
+      ),
+    };
+  }
+  const account = accounts[0];
+
+  // ---- Resolve api + rebuild the SubmittableExtrinsic from the pinned call -
+  // The pinned `signerPayloadJSON.method` is the SCALE call hex; `api.tx(hex)`
+  // rebuilds the byte-identical SubmittableExtrinsic (no re-fetch of nonce/era
+  // — those live in the pinned payload, supplied to addSignature below).
+  const payloadJSON = taoTx.signerPayloadJSON as { method?: unknown } | null;
+  const methodHex =
+    payloadJSON && typeof payloadJSON.method === "string"
+      ? payloadJSON.method
+      : null;
+  if (methodHex === null) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: "error: prepared Bittensor handle is missing the pinned call hex; re-run the prepare tool.",
+        },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        "prepared Bittensor handle missing pinned call hex",
+      ),
+    };
+  }
+
+  let api: SubtensorSendApi;
+  try {
+    api = (await _bittensorRegistry.getApi()) as unknown as SubtensorSendApi;
+  } catch (err) {
+    const cause = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [
+        { type: "text", text: `error: subtensor RPC unavailable: ${cause}` },
+      ],
+      structuredContent: errEnvelope(
+        "BROADCAST_FAILED",
+        "subtensor RPC unavailable",
+        cause,
+      ),
+    };
+  }
+
+  // ---- Sign the STORED signableBlob on the Ledger (USB-HID, per-call) ---
+  // CRITICAL (T-47-11): the device signs `taoTx.signableBlob` VERBATIM — the
+  // SAME bytes the fingerprint (re-checked above) + the blake2-256 presign
+  // bound. mode:0 (CheckMetadataHash disabled) → no metadata digest is needed;
+  // pass an empty txMetadata (the device clear-signs the raw blob).
+  const txMetadata =
+    taoTx.mode === 1 && taoTx.metadataHash !== null
+      ? new Uint8Array(Buffer.from(taoTx.metadataHash.replace(/^0x/, ""), "hex"))
+      : new Uint8Array(0);
+  let signature: Buffer;
+  try {
+    const result = await signBittensorTransaction({
+      signableBlob: taoTx.signableBlob,
+      txMetadata,
+      derivationPath: account.derivationPath,
+    });
+    signature = result.signature;
+  } catch (err) {
+    if (err instanceof LedgerDeviceNotConnectedError) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${err.message}` }],
+        structuredContent: errEnvelope("LEDGER_NOT_CONNECTED", err.message),
+      };
+    }
+    if (err instanceof LedgerBittensorAppNotOpenError) {
+      return {
+        isError: true,
+        content: [{ type: "text", text: `error: ${err.message}` }],
+        structuredContent: errEnvelope(
+          "LEDGER_REJECTED",
+          "Polkadot Generic app not open. Open it on the device and retry.",
+          err.message,
+        ),
+      };
+    }
+    if (err instanceof LedgerBittensorUserRejectedError) {
+      return {
+        isError: true,
+        content: [
+          { type: "text", text: `error: ${err.message}` },
+        ],
+        structuredContent: errEnvelope(
+          "LEDGER_REJECTED",
+          "user rejected on Ledger device",
+          err.message,
+        ),
+      };
+    }
+    const cause = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [
+        { type: "text", text: `error: Bittensor Ledger signing failed: ${cause}` },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        "Bittensor Ledger signing failed",
+        cause,
+      ),
+    };
+  }
+
+  // Defensive: the device must return a 64-byte ed25519 signature.
+  if (signature.length !== 64) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `error: expected a 64-byte ed25519 signature from the device, got ${signature.length} bytes`,
+        },
+      ],
+      structuredContent: errEnvelope(
+        "LEDGER_REJECTED",
+        `expected a 64-byte ed25519 signature, got ${signature.length} bytes`,
+      ),
+    };
+  }
+
+  // ---- Assemble the signed extrinsic ------------------------------------
+  // '0x00' = MultiSignature::Ed25519 variant byte; the 64-byte sig follows
+  // → 65-byte MultiSignature. The pinned SignerPayloadJSON is the
+  // ExtrinsicPayloadValue `payload` arg (A5 — carries the exact
+  // era/nonce/tip/mode the blob was built from).
+  const sigHex = "0x00" + u8aToHex(signature).slice(2);
+  let signedHex: string;
+  try {
+    const tx = api.tx(methodHex);
+    let signedTx: { toHex(): string };
+    try {
+      signedTx = tx.addSignature(taoTx.ss58Address, sigHex, taoTx.signerPayloadJSON);
+    } catch {
+      // A5 fallback — if the ExtrinsicPayloadValue object form throws, use the
+      // raw signable-blob bytes (the Uint8Array / HexString accepted form).
+      signedTx = tx.addSignature(taoTx.ss58Address, sigHex, taoTx.signableBlob);
+    }
+    signedHex = signedTx.toHex();
+  } catch (err) {
+    const cause = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [
+        { type: "text", text: `error: failed to assemble the signed extrinsic: ${cause}` },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        "failed to assemble the signed Bittensor extrinsic",
+        cause,
+      ),
+    };
+  }
+
+  // ---- Broadcast via author.submitExtrinsic -----------------------------
+  let extrinsicHash: string;
+  try {
+    const hashCodec = await api.rpc.author.submitExtrinsic(signedHex);
+    extrinsicHash = hashCodec.toHex();
+  } catch (err) {
+    const cause = err instanceof Error ? err.message : String(err);
+    return {
+      isError: true,
+      content: [
+        { type: "text", text: `error: subtensor broadcast failed: ${cause}` },
+      ],
+      structuredContent: errEnvelope(
+        "BROADCAST_FAILED",
+        "subtensor broadcast failed",
+        cause,
+      ),
+    };
+  }
+
+  // ---- State transition + return ----------------------------------------
+  const trans = transitionToSent(handleArg, extrinsicHash);
+  if (!trans.ok) {
+    return {
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `error: state transition failed after broadcast: ${trans.errorCode}`,
+        },
+      ],
+      structuredContent: errEnvelope(
+        "INTERNAL_ERROR",
+        `state transition failed after broadcast: ${trans.errorCode}`,
+      ),
+    };
+  }
+  const broadcastedAt = new Date().toISOString();
+  return {
+    content: [
+      {
+        type: "text",
+        text: `broadcast OK (Bittensor)\n  extrinsicHash: ${extrinsicHash}\n  call: ${taoTx.section}.${taoTx.method}\n  broadcastedAt: ${broadcastedAt}\n\nView on Taostats: https://taostats.io/extrinsic/${extrinsicHash}`,
+      },
+    ],
+    structuredContent: {
+      // API symmetry — existing agent prompts + tests read `txHash`. Carries
+      // the extrinsic hash (the Substrate identifier; the field is string-
+      // widened for non-EVM identifiers).
+      txHash: extrinsicHash,
+      extrinsicHash,
+      broadcastedAt,
+      handle: handleArg,
+      txType: "bittensor" as const,
+      section: taoTx.section,
+      method: taoTx.method,
+      // Phase 47 — no WC session topic for Bittensor (USB-HID bypasses WC).
       sessionTopicLast8: null,
     },
   };
