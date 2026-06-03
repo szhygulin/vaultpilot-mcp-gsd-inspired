@@ -125,6 +125,23 @@ export function getLitecoinEsploraUrl(): string | null {
   return read("LITECOIN_ESPLORA_URL") ?? null;
 }
 
+// Phase 46 Plan 46-01 — Bittensor (subtensor) RPC URL reader. Mirrors
+// `getSolanaRpcUrl()` shape via the in-tree `read(name)` helper (trims
+// whitespace, returns `undefined` for empty/missing). The resolution
+// priority lives in `src/chains/bittensor/registry.ts::getApi()`:
+//   (1) `BITTENSOR_RPC_URL` env override wins
+//   (2) Public RPC fallback (`wss://entrypoint-finney.opentensor.ai:443`)
+//       with once-per-process stderr warn
+// No `RPC_PROVIDER` shorthand fan-out — Bittensor is URL-config-only
+// (the public Finney entrypoint requires no API key; operators with
+// rate-limit pressure set `BITTENSOR_RPC_URL` to a dedicated subtensor
+// endpoint). The shared `read()` helper returns `undefined`; we normalize
+// to `null` at this boundary so the public surface matches the Solana/
+// TRON/BTC sibling readers' `null`-on-unset contract.
+export function getBittensorRpcUrl(): string | null {
+  return read("BITTENSOR_RPC_URL") ?? null;
+}
+
 // Plan 08-05 — multi-chain WalletConnect pairing.
 //
 // Returns the list of EVM chains this v1.2 build supports. Drives

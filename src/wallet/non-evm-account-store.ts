@@ -40,13 +40,24 @@ import {
   getNonEvmStoragePath,
 } from "../config/non-evm-storage.js";
 
-export type NonEvmChain = "solana" | "tron" | "bitcoin" | "litecoin";
+// Phase 46 Plan 46-01 — `"bittensor"` widens the union by one entry. The
+// record schema, atomic write, stale detection, and listAccounts filter
+// are all chain-agnostic — this two-line widening (union member +
+// VALID_CHAINS set entry) is the entire persistence change, zero schema
+// migration (the documented Solana/TRON/BTC/LTC precedent).
+export type NonEvmChain =
+  | "solana"
+  | "tron"
+  | "bitcoin"
+  | "litecoin"
+  | "bittensor";
 
 const VALID_CHAINS: ReadonlySet<NonEvmChain> = new Set<NonEvmChain>([
   "solana",
   "tron",
   "bitcoin",
   "litecoin",
+  "bittensor",
 ]);
 
 export interface NonEvmAccountRecord {
