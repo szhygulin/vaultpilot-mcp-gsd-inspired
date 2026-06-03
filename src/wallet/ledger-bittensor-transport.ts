@@ -232,6 +232,72 @@ export async function fetchBittensorAddress(
 }
 
 /**
+ * Fetch the on-device coldkey SS58 address + the Polkadot Generic app version
+ * in a SINGLE transport open (Phase 49 Plan 49-01 / TAO-DIAG-01 — Option 1,
+ * the RESEARCH-recommended single-open shape; mirror of TRON's bundled-version
+ * `fetchTronAddress` precedent). `get_bittensor_setup_status` bundles ARM B
+ * (on-device address) + ARM C (app version) behind ONE device approval rather
+ * than two transport opens.
+ *
+ * Returns `{ address, pubKey, appVersion }`:
+ *   - `address`: the SS58-encoded coldkey, PRE-ENCODED by the device under
+ *     prefix 42 (returned verbatim, like `fetchBittensorAddress`).
+ *   - `pubKey`: the ed25519 public key hex (retained for parity; the diagnostic
+ *     does NOT surface it — on-device address is the trust anchor).
+ *   - `appVersion`: `${major}.${minor}.${patch}` CAPTURED from the GET_VERSION
+ *     probe (which `fetchBittensorAddress` discards). The device returns the
+ *     version struct; we cast to `{ major, minor, patch }` per the
+ *     `_transport.getVersionViaApp` shape (a shape mismatch yields a malformed
+ *     string, but the diagnostic arm demotes both device fields to null on any
+ *     throw — fail-safe).
+ *
+ * Diagnosis order MATCHES `fetchBittensorAddress`: GET_VERSION first — a throw
+ * maps to `LedgerBittensorAppNotOpenError` (active app is not the generic app),
+ * which the diagnostic classifies as `polkadot-app-closed`. A device-absent
+ * condition surfaces as `LedgerDeviceNotConnectedError` from `openTransport`.
+ *
+ * `transport.close()` runs unconditionally in `finally` — both the happy path
+ * and every error path release the USB-HID handle.
+ */
+export async function fetchBittensorSetup(
+  derivationPath: string = DEFAULT_BITTENSOR_DERIVATION_PATH,
+): Promise<{ address: string; pubKey: string; appVersion: string }> {
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildGenericApp(transport);
+    // GET_VERSION APDU — confirms the active app is the Polkadot Generic app
+    // AND captures the version (the divergence from fetchBittensorAddress,
+    // which discards the version result).
+    let appVersion: string;
+    try {
+      const v = (await _transport.getVersionViaApp(app)) as {
+        major: number;
+        minor: number;
+        patch: number;
+      };
+      appVersion = `${v.major}.${v.minor}.${v.patch}`;
+    } catch {
+      throw new LedgerBittensorAppNotOpenError();
+    }
+    // The device returns the SS58 address pre-encoded under prefix 42 —
+    // returned verbatim, no client-side re-encode.
+    const { address, pubKey } = await _transport.getAddressEd25519ViaApp(
+      app,
+      derivationPath,
+      BITTENSOR_SS58_PREFIX,
+    );
+    return { address, pubKey, appVersion };
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log("warn", `transport.close() failed during cleanup: ${message}`);
+    }
+  }
+}
+
+/**
  * Sign a Bittensor (Substrate) unsigned-extrinsic signable blob on the Ledger
  * Polkadot Generic app, returning the detached 64-byte ed25519 signature.
  * Phase 47 — Plan 47-04 (TAO-PREP-03).

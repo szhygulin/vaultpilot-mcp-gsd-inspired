@@ -744,3 +744,48 @@ The v2.6 milestone (Phase 39 + Phase 40) is code-complete:
 **FROZEN trust-pipeline files stayed byte-identical to `origin/main` across the full v2.6 milestone** (Phase 39 + Phase 40). `src/signing/payload-fingerprint.ts`, `src/signing/presign-hash.ts`, `src/signing/payload-fingerprint-tron.ts`, `src/tools/send_transaction.ts`, `src/signing/handle-store.ts` — asserted by `git diff origin/main` zero-diff checks in both phases.
 
 **v2.6 verify-phase residual (deferred to real-device smoke):** Real-Ledger smoke testing against each Tier-1 facet decoder (Wormhole + Mayan + NEAR OmniBridge + Across V3 — small-amount bridge attempt with final-recipient assertion trigger on a redirected address) + a per-L2 swap against each configured chain (Ethereum, Polygon, Arbitrum, Optimism, Base) to exercise the live per-chain sandwich-MEV threshold in `prepare_uniswap_swap` with real `priceImpactBps` from the Quoter V2. Manual verification steps are documented in `.planning/phases/40-mev-sandwich-slippage-hint-per-l2/40-VALIDATION.md` (Manual-Only Verifications section).
+
+---
+
+## v2.7 Bittensor milestone close-out summary
+
+Closes out the v2.7 Bittensor milestone. Phases 46 + 47 + 48 + 49 shipped under per-plan admin-merge cadence; the real-Ledger Polkadot-Generic-app verify-phase smoke is the one remaining open milestone-completion gate.
+
+### Milestone PRs
+
+- Phase 46 (Bittensor scaffolding) — PRs left as placeholders — lazy-singleton `ApiPromise` registry (`_bittensorRegistry.getApi`, WS-on-construct deferred to first read), `@zondax/ledger-substrate@2.3.4` `PolkadotGenericApp` USB-HID transport (5-level BIP-44 path `44'/354'/0'/0'/0'`, `getAddressEd25519(path, 42)` device-pre-encoded SS58), branded `Ss58Address` blake2-256-checksum gate, `pair_bittensor_ledger` + `get_bittensor_status`, and the decoded-runtime-API read tools (balance / stake / subnets / validators).
+- Phase 47 (Bittensor trust pipeline) — PRs left as placeholders — `payload-fingerprint-bittensor.ts` domain-tagged binding + `presign-hash-bittensor.ts` blake2-256 presign + `signWithMetadataEd25519ViaApp` detached-signature seam + `(pallet, call)`-only canonical-dispatch allowlist + native `transferKeepAlive` and slippage-guarded `add_stake_limit` / `remove_stake_limit` prepare tools through the `preview_send` / `send_transaction` three-gate region + Fixtures (hardcoded literals) + trust-pipeline integration test.
+- Phase 48 (dTAO depth) — PRs left as placeholders — plain `add_stake` / `remove_stake` (no slippage guard), same-owner `move_stake` / `swap_stake` reallocation, `transfer_stake` CUSTODY CHANGE, validator-enrichment reads (`getDelegate` take/registrations + `identitiesV2` identity), all flowing through the 2 REUSED binding modules UNCHANGED.
+- Phase 49 (diagnostics) — PR left as placeholder — `get_bittensor_setup_status` lazy 3-arm `Promise.allSettled` demote-to-null diagnostic + this close-out section.
+
+### Trust-shape recap
+
+The v2.7 Bittensor trust pipeline mirrors the Solana / TRON shape with Substrate-specific cryptographic primitives:
+
+- **ed25519 Ledger coldkey.** Subtensor accepts `MultiSignature::Ed25519`, and the Ledger secure element cannot produce sr25519 signatures — so the Ledger account IS the coldkey directly. There is NO sr25519-migration tooling and none is needed: ed25519 is a first-class subtensor signature scheme. The on-device SS58 (prefix 42) is the trusted display.
+- **Domain-tagged `payloadFingerprint`**: `blake2/keccak over "VaultPilot-taotx-v1:" ‖ signable_bytes` — the domain tag binds ONLY the unsigned `SignerPayload` SCALE bytes (sender-independent: the `from` account is NOT in the preimage, so the fingerprint is identical across personas signing the same call). Different tag from EVM / Solana / TRON / BTC by construction.
+- **`presignHash = blake2-256(signable_blob)`** — the ONE divergence from the SHA-256 Solana / TRON siblings. blake2-256 is what the Polkadot Generic app blind-signs on-device (Substrate's extrinsic-signing pre-hash for payloads over 256 bytes); matching it byte-for-byte lets the `LEDGER BLIND-SIGN HASH (Bittensor)` block surface the exact hash the device shows.
+- **`(pallet, call)`-only canonical-dispatch allowlist** — every Bittensor write is gated to an explicit `(pallet, call)` tuple (e.g. `Balances.transferKeepAlive`, `SubtensorModule.add_stake_limit`); an unrecognized dispatch is refused before handle minting.
+
+### CheckMetadataHash chain-enforced integrity
+
+Subtensor enforces the `CheckMetadataHash` signed extension: the extrinsic commits to a metadata hash, and a tampered or truncated metadata blob produces a hash mismatch that **the chain rejects** — the extrinsic never executes. This makes the metadata-shortener service **untrusted-by-construction**: it is an availability-only dependency (a wrong shortened-metadata input fails the on-chain `CheckMetadataHash` check and the transaction reverts), NOT a trust dependency. A compromised shortener cannot move funds — it can at worst deny service by producing metadata the chain refuses.
+
+### Accepted residual risks
+
+- **Ship-with-blind-sign residual (accepted).** Staking extrinsics MAY blind-sign on the Polkadot Generic app — the device shows the blake2-256 hash rather than fully-clear-signed fields for calls without ERC-7730-equivalent metadata. This is documented and consistent with how the Solana and TRON pipelines ship blind-sign; the `LEDGER BLIND-SIGN HASH (Bittensor)` block in `preview_send` surfaces the exact on-device hash for character-for-character comparison. Residual: the user verifies the hash, not human-readable call args, for blind-signed shapes.
+- **Metadata-shortener availability-only dependency (accepted).** Per the `CheckMetadataHash` analysis above — the shortener is untrusted-by-construction; a failure is a denial-of-service, not a fund-movement risk. No trust is placed in the shortener output.
+- **v2.7 verify-phase pending real-Ledger smoke (accepted, open milestone gate).** The Bittensor signing path has not been exercised against a physical Ledger running the Polkadot Generic app. The verify-phase smoke is a real-Ledger Polkadot-Generic-app small-amount mainnet stake (native `transferKeepAlive` + `add_stake_limit` / `remove_stake_limit` + plain `add_stake` / `remove_stake` + `move_stake` / `swap_stake` + `transfer_stake`), each verifying the on-device blake2-256 hash matches the `LEDGER BLIND-SIGN HASH (Bittensor)` block from `preview_send`. NOT auto-resolved by Phase 49.
+
+### Phase 49 (diagnostics) threat register summary
+
+| Threat ID | STRIDE | Severity | Mitigation |
+|-----------|--------|----------|------------|
+| T-PAIRING-DRIFT (T-49-01) | Tampering | MEDIUM | `walletAddressOnDevice` surfaced verbatim for the agent to compare against the stored address; `addressVerified` is OMITTED per spec — this is a diagnostic, not a guard. No automatic refusal. The device demote-to-null on an unreachable device is the safe default. |
+| T-RPC-FAILURE-MASKED-AS-EMPTY (T-49-02) | Information Disclosure | LOW | `rpcDegraded.reason` set explicitly on ARM-A (`getStakeInfo`) reject/timeout; `stakePositionsPresent:false` only on a verifiably-empty result (`rows.length === 0`) OR an explicitly-degraded RPC — never a silent zero. Test 2 (rpc arm) covers it. |
+| T-LEDGER-APP-VERSION-LIES (T-49-03) | Spoofing | LOW | `ledgerPolkadotAppVersion` is INFORMATIONAL only — no version-gating in v2.7. A spoofed version cannot weaponize a read-only diagnostic by construction; a version-probe throw demotes the field to null rather than asserting a value (Test 4, app-version arm). |
+| T-49-FROZEN (T-49-04) | Tampering | CRITICAL | `git diff origin/main` zero-diff on the FROZEN cryptographic-binding chain (payloadFingerprint + blake2-256 presign + `send_transaction` three-gate region + handle-store) + the `FROZEN_FILES` describe-block in `test/signing-fingerprint-bittensor.test.ts`. Phase 49 is READ-ONLY + additive by construction. |
+
+### FROZEN assertion
+
+The cryptographic-binding chain — `payload-fingerprint*.ts`, the blake2-256 `presign-hash*.ts`, the `send_transaction.ts` three-gate region (previewToken + userDecision + payloadFingerprint-drift), and `handle-store.ts` — stayed **byte-identical to `origin/main` across the full v2.7 Bittensor milestone (Phases 46–49)**. The phase adds one read-only diagnostic tool plus one additive `fetchBittensorSetup` transport helper plus docs; it touches NONE of the binding chain. Asserted by the `git diff --stat origin/main` zero-diff gate at Phase 49 close + the in-suite `FROZEN cryptographic-binding chain` describe-block.
