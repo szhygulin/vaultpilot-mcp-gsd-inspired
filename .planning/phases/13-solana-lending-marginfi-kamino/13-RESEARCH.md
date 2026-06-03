@@ -469,19 +469,19 @@ withdrawObligationCollateralAndRedeemReserveCollateral  args {collateralAmount: 
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Kamino main-market lending-market address for the SOT.**
    - What we know: program ID is `KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD` [VERIFIED]. The klend-sdk does NOT export a `MAIN_MARKET` constant — the lending-market is a runtime arg / per-deployment account.
    - What's unclear: the canonical mainnet main-market `lendingMarket` pubkey (commonly cited as `7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5BWE` in Kamino docs/UI) — NOT confirmable in this sandbox without a doc fetch / live read (live RPC is forbidden).
-   - Recommendation: planner fetches `docs.kamino.finance` (or the Kamino app config) at the planning gate to lock the main-market address into the SOT BEFORE the Kamino reads plan; tag `[ASSUMED]` until doc-verified. This is the only SOT value not VERIFIED from the installed SDK.
+   - **RESOLVED (13-01-PLAN, Task 2):** main-market `lendingMarket` = `7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF` (ends `…PfF`), verified at the plan gate from TWO authoritative sources — the live Kamino market API (`isPrimary:true`) and the klend-sdk README example. The `…BWE` cited above was a transcription typo. Pinned in the `SOLANA_CONTRACTS_RAW` SOT (never inlined); re-verify if stale at verify-phase.
 
 2. **MarginFi IDL version to vendor (0.1.4 / 0.1.5 / 0.1.7 / 0.1.8).**
    - What we know: the SDK 6.4.2 ships four IDL JSONs side-by-side; 0.1.8 has the `marginfi_account_initialize_pda` ix + the deposit/withdraw/borrow/repay discriminators used above.
-   - Recommendation: vendor `marginfi_0.1.8.json` (latest, matches the deployed `MFv2hW…` program). Re-verify the deployed program's IDL version at verify-phase (a program upgrade could bump it).
+   - **RESOLVED (13-01-PLAN, Task 2):** vendor `marginfi_0.1.8.json` (latest; carries `marginfi_account_initialize_pda` + the deposit/withdraw/borrow/repay discriminators; matches the deployed `MFv2hW…` program). Re-verify the deployed IDL version at verify-phase (a program upgrade could bump it).
 
 3. **`dependencies` vs `devDependencies` for the two SDKs.**
-   - If `get_*_positions` import the decoders at runtime → `dependencies`. If decoding is reimplemented and the SDK is only a verify-phase reference → `devDependencies`. Recommendation: `dependencies` (D-02 explicitly allows runtime decoder use); planner confirms at the reads plan.
+   - **RESOLVED (13-01-PLAN, Task 2):** `dependencies` — `get_*_positions` import the SDK decoders at runtime (D-02). The three packages (`@coral-xyz/anchor@0.30.1`, `@mrgnlabs/marginfi-client-v2@6.4.2`, `@kamino-finance/klend-sdk@8.0.2`) install behind the T-13-SC `checkpoint:human-verify` gate.
 
 ---
 
