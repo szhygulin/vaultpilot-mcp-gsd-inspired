@@ -5,7 +5,8 @@
 // `{ kind: "allowed" } | { kind: "refused" }` discriminated result, NOT the EVM
 // `checkDispatchTarget`. Fires inside the Bittensor branch of `preview_send.ts`
 // (Plan 47-03) after handle lookup. The check is over the extrinsic's
-// `(section, method)` — only the three milestone-locked calls reach preview;
+// `(section, method)` — only the eight milestone-locked calls reach preview
+// (the 3 shipped Phase-47 + the 5 Phase-48 deferred staking shapes);
 // `sudo`, `swapColdkey`, or anything else refuses with DISPATCH_TARGET_REFUSED.
 //
 // KEYING (47-RESEARCH correction #2): keyed in CAMELCASE
@@ -27,22 +28,33 @@
 // indirection the preview arm routes through so tests can `vi.spyOn` it.
 
 /**
- * Bittensor dispatch allowlist — the three milestone-locked `(section, method)`
+ * Bittensor dispatch allowlist — the eight milestone-locked `(section, method)`
  * pairs, keyed CAMELCASE (`"section.method"`).
  *
  *   1. subtensorModule.addStakeLimit    — slippage-guarded stake (DEFAULT entry)
  *   2. subtensorModule.removeStakeLimit — slippage-guarded unstake (DEFAULT exit)
  *   3. balances.transferKeepAlive       — native TAO send
+ *   4. subtensorModule.addStake         — PLAIN add_stake (Phase 48, TAO-W-06)
+ *   5. subtensorModule.removeStake      — PLAIN remove_stake (Phase 48, TAO-W-06)
+ *   6. subtensorModule.moveStake        — same-owner reallocation (Phase 48, TAO-W-07)
+ *   7. subtensorModule.swapStake        — same-owner subnet swap (Phase 48, TAO-W-07)
+ *   8. subtensorModule.transferStake    — CUSTODY CHANGE (Phase 48, TAO-W-08)
  *
  * Evaluated ONCE at module load; subsequent `checkBittensorDispatch` calls are
  * constant-time Set lookups. Format-fanout-sentinel: no tool/test inlines these
  * keys — consume via `BITTENSOR_DISPATCH_ALLOWLIST.has(...)` or
- * `checkBittensorDispatch`.
+ * `checkBittensorDispatch`. The on-chain snake_case form (`add_stake`) is
+ * receipt-only and would NOT match (camelCase keying — pinned in the test).
  */
 export const BITTENSOR_DISPATCH_ALLOWLIST: ReadonlySet<string> = new Set([
   "subtensorModule.addStakeLimit",
   "subtensorModule.removeStakeLimit",
   "balances.transferKeepAlive",
+  "subtensorModule.addStake", // NEW — TAO-W-06 (PLAIN add_stake)
+  "subtensorModule.removeStake", // NEW — TAO-W-06 (PLAIN remove_stake)
+  "subtensorModule.moveStake", // NEW — TAO-W-07 (same-owner reallocation)
+  "subtensorModule.swapStake", // NEW — TAO-W-07 (same-owner subnet swap)
+  "subtensorModule.transferStake", // NEW — TAO-W-08 (CUSTODY CHANGE)
 ]);
 
 /**
