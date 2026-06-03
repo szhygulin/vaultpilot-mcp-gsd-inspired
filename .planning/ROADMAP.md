@@ -388,14 +388,16 @@ Plans:
   6. MarginFi + Kamino program addresses sourced from `src/config/contracts.ts` Solana table (new sub-table — `Record<"solana", SolanaContracts>` mirroring the v1.2 EVM `Record<ChainId, ContractsForChain>` shape)
   7. Ledger clear-signs MarginFi/Kamino instructions when CAL coverage available; conditional LEDGER NOTICE block (mirrors Phase 6 WETH9.withdraw pattern) when the instruction is blind-sign-only
 
-**Plans**: 4 plans (estimate)
+**Plans**: 6 plans (MarginFi-first per 13-RESEARCH § Proposed Plan Structure — rejects the 4-plan "10-tools-in-one" 13-04 on weight + false-coupling grounds; MarginFi (web3.js-v1-native) ships + verifies first, Kamino kit-impedance + refresh-ceremony isolated)
 
 Plans:
 
-- [ ] 13-01: `src/config/contracts.ts` Solana sub-table extension — MarginFi + Kamino program IDs + per-protocol PDA derivation helpers; canonical-dispatch allowlist Solana arm wiring
-- [ ] 13-02: MarginFi reads — `get_marginfi_positions` + `src/chains/solana/marginfi.ts` (account decoder via `@mrgnlabs/marginfi-client-v2` SDK, scope-probe at research time)
-- [ ] 13-03: Kamino reads — `get_kamino_positions` + `src/chains/solana/kamino.ts` (Kamino lend SDK adoption decision DF at research time)
-- [ ] 13-04: Prepare tools — `prepare_marginfi_supply/_withdraw/_borrow/_repay` + `prepare_kamino_supply/_withdraw/_borrow/_repay` + `prepare_marginfi_account_init` + `prepare_kamino_obligation_init`; mechanical-clone-of-12 pattern per `prepare_solana_spl_send`; conditional LEDGER NOTICE for blind-sign instructions
+- [ ] 13-01-PLAN.md — Foundation: `src/config/contracts.ts` Solana sub-table (MarginFi program/group + Kamino lend-program + MAIN-market `…PfF`) + PDA-derivation helpers; extend `canonical-dispatch-solana.ts` allowlist; install `@coral-xyz/anchor` + decoder SDKs behind a supply-chain human-verify checkpoint (D-05/D-06, SOL-W-09/10)
+- [ ] 13-02-PLAN.md — MarginFi reads: `get_marginfi_positions` + `src/chains/solana/marginfi.ts` SDK decoder (D-02) + `src/signing/marginfi-health.ts` on-chain-accurate risk-weighted health (D-07, SOL-W-03)
+- [ ] 13-03-PLAN.md — MarginFi writes + init: `prepare_marginfi_account_init` (Ledger-safe `_pda` variant) + supply/withdraw/borrow/repay hand-encoded from IDL (D-01) + D-03 hard-refuse-no-handle (VP_S006) + blind-sign LEDGER NOTICE + Fixtures O–S (SOL-W-04/05/09)
+- [ ] 13-04-PLAN.md — Kamino reads: `get_kamino_positions` + `src/chains/solana/kamino.ts` (kit→shape adapter, D-02) + `src/signing/kamino-health.ts` per-reserve-LTV health (D-07, SOL-W-06)
+- [ ] 13-05-PLAN.md — Kamino writes: supply/withdraw/borrow/repay hand-encoded from IDL (bypass @solana/kit) + in-tx refresh ceremony (refreshReserve×N + refreshObligation) + D-03 hard-refuse-no-handle (VP_S007) + auxiliary-program allowlist extension (Scope/Pyth/Switchboard) + Fixtures T–W (SOL-W-07/09)
+- [ ] 13-06-PLAN.md — Kamino obligation-init: `prepare_kamino_obligation_init` (2-step initUserMetadata + initObligation, seed-tagged PDA, D-01) + Fixtures X–Y + phase-final register-all + full-suite/FROZEN gate (SOL-W-08)
 
 #### Phase 14: Jupiter v6 swaps
 
