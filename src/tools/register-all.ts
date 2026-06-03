@@ -12,6 +12,13 @@ import "./get_portfolio_summary.js";
 import "./get_solana_balance.js";
 import "./get_solana_token_balance.js";
 import "./get_solana_token_metadata.js";
+// Phase 46 Plan 46-03 — Bittensor read tools (TAO-R-01/02/03). Placed in the
+// read-tool region (separate from 46-02's pair/status block) to keep the
+// 46-02 ∥ 46-03 register-all carve conflict-free.
+import "./get_bittensor_balance.js"; // Phase 46 Plan 46-03 (TAO-R-01)
+import "./get_bittensor_stake.js"; // Phase 46 Plan 46-03 (TAO-R-02)
+import "./get_bittensor_subnets.js"; // Phase 46 Plan 46-03 (TAO-R-03)
+import "./get_bittensor_validators.js"; // Phase 46 Plan 46-03 (TAO-R-03)
 import "./get_lending_positions.js";
 import "./get_morpho_positions.js"; // Phase 29 Plan 29-02 (MOR-01) — Morpho Blue isolated-market positions on Ethereum mainnet
 import "./get_compound_market_info.js";  // Phase 28 Plan 28-04 (CMP-02) — Compound V3 per-Comet market info

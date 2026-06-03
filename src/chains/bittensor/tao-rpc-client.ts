@@ -239,29 +239,111 @@ export function alphaToTaoEquivRao(alphaRao: bigint, priceRaw: bigint): bigint {
 }
 
 /**
+ * Decode an on-chain byte-array field (`subnetName` / `tokenSymbol`) to a
+ * UTF-8 string. `.toJSON()` serializes a `Vec<u8>` / `[u8; N]` either as a
+ * `0x…` hex string OR as a number array, depending on the codec the runtime
+ * declares for the field — both shapes are handled (defensive: the exact
+ * codec serialization is a @polkadot/api version + chain-metadata detail).
+ * Non-printable / NUL padding bytes are trimmed; an undecodable value
+ * yields the empty string rather than throwing (a subnet with a malformed
+ * name should still enumerate).
+ */
+function decodeByteString(raw: unknown): string {
+  let bytes: number[];
+  if (typeof raw === "string") {
+    // Hex string shape (`0x…`). Strip the prefix, pair the nibbles.
+    const hex = raw.startsWith("0x") ? raw.slice(2) : raw;
+    if (hex.length === 0) return "";
+    bytes = [];
+    for (let i = 0; i + 1 < hex.length; i += 2) {
+      bytes.push(parseInt(hex.slice(i, i + 2), 16));
+    }
+  } else if (Array.isArray(raw)) {
+    bytes = raw.map((b) => Number(b) & 0xff);
+  } else {
+    return "";
+  }
+  // Trim trailing NULs (fixed-width name fields are NUL-padded on-chain).
+  while (bytes.length > 0 && bytes[bytes.length - 1] === 0) bytes.pop();
+  try {
+    return Buffer.from(bytes).toString("utf-8");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Coerce a `.toJSON()` numeric/hex/string scalar to bigint without Number
+ * precision loss. `.toJSON()` renders a small u128 as a JS number but a
+ * large one as a `0x…` hex string — both must widen to bigint safely.
+ */
+function toBigIntSafe(v: unknown): bigint {
+  if (typeof v === "bigint") return v;
+  if (typeof v === "number") return BigInt(v);
+  if (typeof v === "string") {
+    if (v.length === 0) return 0n;
+    return BigInt(v); // BigInt() parses both decimal and 0x-hex strings.
+  }
+  return 0n;
+}
+
+/**
  * Decoded subnet row. `subnetName` + `tokenSymbol` are byte arrays
- * on-chain — decoded to strings in 46-03.
+ * on-chain — decoded to UTF-8 strings here.
  */
 export interface BittensorSubnetRow {
   netuid: number;
   name: string;
   symbol: string;
   taoInRao: bigint;
+  /** TAO-denominated reserve, decimal string. */
+  taoIn: string;
   alphaInRao: bigint;
+  /** ALPHA-denominated reserve, decimal string. */
+  alphaIn: string;
+  /** RAO-per-alpha price, 1e9-scaled fixed-point (ALPHA_PRICE_SCALE). */
   alphaPriceRaw: bigint;
 }
 
 /**
  * Subnet enumeration via the decoded `subnetInfoRuntimeApi.getAllDynamicInfo`
- * runtime API. Full decode (byte-array name/symbol → UTF-8) lands in 46-03;
- * this shelf wires the path.
+ * runtime API (RESEARCH §Reads — probed live 2026-06-03, node-subtensor spec
+ * 413). One call returns `Vec<DynamicInfo>`; each row carries `netuid`,
+ * `subnetName` + `tokenSymbol` (byte arrays → UTF-8 here), and the AMM
+ * reserves `taoIn` / `alphaIn` (RAO). The alpha price is derived from the
+ * reserves (`taoIn × ALPHA_PRICE_SCALE / alphaIn`) — same 1e9-scaled
+ * fixed-point as `currentAlphaPrice` (Open Question 1, resolved in 46-01).
  */
 export async function getSubnets(): Promise<BittensorSubnetRow[]> {
   try {
     const api = asSubtensor(await _bittensorRegistry.getApi());
     const raw = await api.call.subnetInfoRuntimeApi.getAllDynamicInfo();
-    void raw; // full decode in 46-03
-    return [];
+    const rows = raw.toJSON() as Array<{
+      netuid: number;
+      subnetName: unknown;
+      tokenSymbol: unknown;
+      taoIn: string | number;
+      alphaIn: string | number;
+    }>;
+    return (rows ?? []).map((r) => {
+      const taoInRao = toBigIntSafe(r.taoIn);
+      const alphaInRao = toBigIntSafe(r.alphaIn);
+      // Derive the alpha price from the reserves: price = taoIn / alphaIn,
+      // expressed as a 1e9-scaled fixed-point (ALPHA_PRICE_SCALE) so it is
+      // unit-consistent with currentAlphaPrice. Guard the zero-reserve case.
+      const alphaPriceRaw =
+        alphaInRao === 0n ? 0n : (taoInRao * ALPHA_PRICE_SCALE) / alphaInRao;
+      return {
+        netuid: r.netuid,
+        name: decodeByteString(r.subnetName),
+        symbol: decodeByteString(r.tokenSymbol),
+        taoInRao,
+        taoIn: formatRaoToTao(taoInRao),
+        alphaInRao,
+        alphaIn: formatRaoToTao(alphaInRao),
+        alphaPriceRaw,
+      };
+    });
   } catch (e) {
     throw new BittensorRpcError(e);
   }
@@ -274,27 +356,68 @@ export async function getSubnets(): Promise<BittensorSubnetRow[]> {
 export interface BittensorValidatorRow {
   netuid: number;
   uid: number;
+  /** SS58 hotkey. */
   hotkey: string;
   validatorPermit: boolean;
+  /**
+   * Validator commission as a percentage string (e.g. `"18"` for 18%). The
+   * delegate take on-chain is a u16 fraction of `2^16 - 1` (65535); we
+   * normalize to a 0-100 percentage rounded to 2 decimals. `null` when the
+   * lite shape does not carry a take for this neuron (the minimal
+   * enumeration tolerates absence — Phase-48 enrichment fills the gaps).
+   */
+  takePercent: string | null;
+}
+
+/** u16 take denominator — the delegate take is a fraction of 2^16 - 1. */
+const TAKE_U16_MAX = 65_535;
+
+/**
+ * Normalize an on-chain u16 take to a 0-100 percentage string (2 decimals).
+ * `null` in → `null` out (the lite shape may omit it for non-validators).
+ */
+function normalizeTakePercent(rawTake: unknown): string | null {
+  if (rawTake === undefined || rawTake === null) return null;
+  const take = Number(toBigIntSafe(rawTake));
+  if (!Number.isFinite(take)) return null;
+  const pct = (take / TAKE_U16_MAX) * 100;
+  // 2-decimal string; trim a trailing ".00" / trailing zero for readability.
+  return pct.toFixed(2).replace(/\.?0+$/, "") || "0";
 }
 
 /**
  * Validator enumeration via the decoded `neuronInfoRuntimeApi.getNeuronsLite`
- * runtime API (Open Question 2, RESOLVED at execute time 2026-06-03):
- * ONE call returns all 256 neurons for a netuid with `hotkey` (SS58),
- * `uid`, and `validatorPermit` (bool) — the lowest-round-trip path. The
- * lite shape does NOT carry on-chain identity (Phase-48 enrichment), so
- * the minimal enumeration filters `validatorPermit === true`. Full decode
- * lands in 46-03; this shelf wires the path.
+ * runtime API (Open Question 2, RESOLVED in 46-01 at execute time
+ * 2026-06-03): ONE call returns all neurons for a netuid with `hotkey`
+ * (SS58), `uid`, `validatorPermit` (bool), and the delegate `take` (u16) —
+ * the lowest-round-trip path. The lite shape does NOT carry on-chain
+ * identity (Phase-48 TAO-R-05 enrichment), so the minimal enumeration here
+ * filters `validatorPermit === true` and surfaces hotkey + uid + take%.
+ *
+ * `netuid` is REQUIRED — `getNeuronsLite` is per-subnet. The tool layer
+ * gates a missing netuid before the round-trip.
  */
 export async function getValidators(
-  netuid?: number,
+  netuid: number,
 ): Promise<BittensorValidatorRow[]> {
   try {
     const api = asSubtensor(await _bittensorRegistry.getApi());
-    void netuid;
-    void api; // full decode in 46-03
-    return [];
+    const raw = await api.call.neuronInfoRuntimeApi.getNeuronsLite(netuid);
+    const neurons = raw.toJSON() as Array<{
+      uid: number;
+      hotkey: string;
+      validatorPermit: boolean;
+      take?: unknown;
+    }>;
+    return (neurons ?? [])
+      .filter((n) => n.validatorPermit === true)
+      .map((n) => ({
+        netuid,
+        uid: n.uid,
+        hotkey: n.hotkey,
+        validatorPermit: n.validatorPermit,
+        takePercent: normalizeTakePercent(n.take),
+      }));
   } catch (e) {
     throw new BittensorRpcError(e);
   }
