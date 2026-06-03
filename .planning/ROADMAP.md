@@ -1306,7 +1306,13 @@ Plans:
   5. Fixtures TAO-A (native TAO transfer fingerprint), TAO-B (`add_stake_limit` fingerprint), TAO-C (blake2-256 presign hash) hardcoded as `0x…` literals in a NEW `test/signing-fingerprint-bittensor.test.ts` (NO `beforeAll`-snapshot); persona-cycle integration test re-anchors byte-identity across persona swaps (sender-independent unsigned-payload binding)
   6. Ships even if the Polkadot Generic app blind-signs the staking calls (vs clear-sign): blind-sign residual risk documented; the device-display hash is derivable from the same unsigned bytes (the trust anchor holds); ed25519 coldkey assumption surfaced in the pairing + prepare responses
 
-**Plans**: 4 plans (estimate)
+**Plans**: 4 plans
+
+Plans:
+- [ ] 47-01-PLAN.md — binding core: payload-fingerprint-bittensor + presign-hash-bittensor (blake2-256) + amount-bittensor + Fixtures TAO-A/B/C (hardcoded 0x literals) + PreparedTxBittensor union member; opens with a blocking supply-chain checkpoint for @polkadot-api/merkleize-metadata@1.2.3 (Wave 1)
+- [ ] 47-02-PLAN.md — prepare tools: extrinsic-builder + blocks-bittensor + prepare_bittensor_native_send / _add_stake_limit (DEFAULT) / _remove_stake_limit (DEFAULT) + register-all; limit_price from chain simSwap*, per-extrinsic unit typing (Wave 2)
+- [ ] 47-03-PLAN.md — preview/dispatch: canonical-dispatch-bittensor (section,method) allowlist + simulation-bittensor advisory dry-run + the preview_send ADDITIVE bittensor arm (Wave 2)
+- [ ] 47-04-PLAN.md — send + integration: send_transaction ADDITIVE arm + ed25519 detached-sig assembly (transport signWithMetadataEd25519) + the full trust-pipeline integration test with persona-cycle re-anchor (Wave 3)
 
 #### Phase 48: Bittensor subnet/dTAO depth — deferred staking variants
 
