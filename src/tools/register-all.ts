@@ -65,6 +65,11 @@ import "./prepare_solana_spl_send.js"; // Phase 12 Plan 12-03 (SOL-W-02) — Sol
 import "./prepare_solana_nonce_init.js"; // Phase 44 Plan 44-01 (R-SOL-09) — durable-nonce account create + initialize (authority = paired wallet)
 import "./prepare_solana_nonce_close.js"; // Phase 44 Plan 44-01 (R-SOL-10) — durable-nonce account full-withdraw close (authority-gated, VP_S005)
 import "./get_marginfi_positions.js"; // Phase 13 Plan 13-02 (SOL-W-03) — MarginFi bank-keyed supplied/borrowed + share-based health-equivalent (read-only, D-02/D-07)
+import "./prepare_marginfi_account_init.js"; // Phase 13 Plan 13-03 (SOL-W-05) — MarginfiAccount PDA init (Ledger-safe marginfi_account_initialize_pda, D-01)
+import "./prepare_marginfi_supply.js"; // Phase 13 Plan 13-03 (SOL-W-04) — lending_account_deposit (D-01 hand-encode, D-03 PDA gate VP_S006)
+import "./prepare_marginfi_withdraw.js"; // Phase 13 Plan 13-03 (SOL-W-04) — lending_account_withdraw (vault-authority PDA, D-03 gate)
+import "./prepare_marginfi_borrow.js"; // Phase 13 Plan 13-03 (SOL-W-04) — lending_account_borrow (vault-authority PDA, D-03 gate)
+import "./prepare_marginfi_repay.js"; // Phase 13 Plan 13-03 (SOL-W-04) — lending_account_repay (D-01 hand-encode, D-03 gate)
 import "./prepare_btc_send.js"; // Phase 23 Plan 23-03 (BTC-PSBT-01) — BTC native segwit+taproot PSBT send
 import "./prepare_btc_rbf_bump.js"; // Phase 24 Plan 24-01 (BTC-W-02) — BIP-125 RBF fee bump
 import "./prepare_litecoin_native_send.js"; // Phase 26 Plan 26-02 (LTC-W-01) — LTC native segwit P2WPKH PSBT send

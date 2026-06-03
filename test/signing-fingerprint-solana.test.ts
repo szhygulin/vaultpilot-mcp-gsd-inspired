@@ -42,6 +42,14 @@ import {
   _solanaFingerprint,
   computeSolanaPayloadFingerprint,
 } from "../src/signing/payload-fingerprint-solana.js";
+// Phase 13 Plan 13-03 — MarginFi ix builders for fixtures O–S.
+import {
+  buildDepositIx,
+  buildWithdrawIx,
+  buildBorrowIx,
+  buildRepayIx,
+  buildAccountInitPdaIx,
+} from "../src/protocols/marginfi.js";
 
 // Pinned inputs — used identically by Fixture K + L. Stable across runs.
 // `FROM` is the curated `solana-whale` persona address from Plan 11-06
@@ -316,6 +324,170 @@ describe("computeSolanaPayloadFingerprint — SOL-PREP-01 (DF-1 LOCKED)", () => 
     expect(result).toBe("0xdeadbeef");
 
     spy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 13 Plan 13-03 — MarginFi fingerprint fixtures O–S.
+//
+// Each fixture builds the canonical MarginFi tx for that ix shape (pinned
+// feePayer + recentBlockhash + ordered account metas + args), serializes the
+// message via `Transaction.serializeMessage()`, runs the FROZEN
+// `computeSolanaPayloadFingerprint`, and asserts a HARDCODED 0x… literal — NO
+// beforeAll-snapshot (drift in the IDL-hand-encode preimage MUST fail at a
+// specific line). Each fixture also asserts the 8-byte IDL discriminator is
+// byte-identical at the head of the encoded instruction data. An amount/account
+// swap regression per fixture proves the embedding (mirror Fixture L/M style).
+//
+// New tx shapes flow THROUGH the FROZEN binding unchanged — these fixtures ADD
+// sibling literals; they never edit payload-fingerprint-solana.ts.
+// ---------------------------------------------------------------------------
+describe("MarginFi fingerprint fixtures O–S (Plan 13-03, D-01 hand-encode)", () => {
+  // Pinned canonical accounts (deterministic literals). FEE_PAYER == authority.
+  const MF_GROUP = new PublicKey("4qp6Fx6tnZkY5Wropq9wUYgtFxXKwE6viZxFHg3rdAG8");
+  const MF_AUTH = new PublicKey("5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9");
+  // The MarginfiAccount PDA for MF_AUTH at accountIndex 0 (deterministic).
+  const MF_ACCOUNT = new PublicKey("3m9y53V2QwBbrQxtv5WN4T8SA5zw7BpZ2ZBYpZZAu8MW");
+  const MF_BANK = new PublicKey("CCKtUs6Cgwo4aaQUmBPmyoApH2gUDErxNZCAntD6LYGh");
+  const MF_TOKEN_ACCT = new PublicKey("AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9");
+  const MF_LIQ_VAULT = new PublicKey("7uYDwDDvFvKsHnvjt9D8gj2Gfd9Xzn4QYsf8KXrXrJsy");
+  const MF_VAULT_AUTH = new PublicKey("D9z5pxYZ7tqkQ6oFwvQyZ4QyhRjuw6JtVefdT4U6kx2y");
+
+  // Discriminators from src/config/idl/marginfi_0.1.8.json (VERIFIED).
+  const DISC = {
+    deposit: [171, 94, 235, 103, 82, 64, 212, 140],
+    withdraw: [36, 72, 74, 19, 210, 210, 192, 192],
+    borrow: [4, 126, 116, 53, 48, 5, 212, 31],
+    repay: [79, 209, 172, 177, 222, 51, 173, 151],
+    initPda: [87, 177, 91, 80, 218, 119, 245, 31],
+  };
+
+  function discHead(ix: { data: Uint8Array | Buffer }): number[] {
+    return [...ix.data.slice(0, 8)];
+  }
+
+  function fpOf(ix: import("@solana/web3.js").TransactionInstruction): string {
+    const tx = new Transaction({ recentBlockhash: FIXED_BLOCKHASH, feePayer: MF_AUTH });
+    tx.add(ix);
+    return computeSolanaPayloadFingerprint({
+      messageBytes: new Uint8Array(tx.serializeMessage()),
+    });
+  }
+
+  const singleAccts = {
+    group: MF_GROUP,
+    marginfiAccount: MF_ACCOUNT,
+    authority: MF_AUTH,
+    bank: MF_BANK,
+    signerTokenAccount: MF_TOKEN_ACCT,
+    liquidityVault: MF_LIQ_VAULT,
+  };
+  const vaultAuthAccts = {
+    group: MF_GROUP,
+    marginfiAccount: MF_ACCOUNT,
+    authority: MF_AUTH,
+    bank: MF_BANK,
+    destinationTokenAccount: MF_TOKEN_ACCT,
+    bankLiquidityVaultAuthority: MF_VAULT_AUTH,
+    liquidityVault: MF_LIQ_VAULT,
+  };
+
+  it("Fixture O — lending_account_deposit (supply): discriminator + hardcoded fingerprint", () => {
+    const ix = buildDepositIx({ accounts: singleAccts, amount: 100_000_000n });
+    expect(discHead(ix)).toEqual(DISC.deposit);
+    expect(fpOf(ix)).toBe(
+      "0x102842fc9ec5b497d767ef86dc28fe5d174753b6de0ab733e28ab54aa131dbb4",
+    );
+  });
+
+  it("Fixture O embedding regression: amount swap changes the fingerprint", () => {
+    const fpA = fpOf(buildDepositIx({ accounts: singleAccts, amount: 100_000_000n }));
+    const fpB = fpOf(buildDepositIx({ accounts: singleAccts, amount: 100_000_001n }));
+    expect(fpA).not.toBe(fpB);
+    expect(fpA).toBe(
+      "0x102842fc9ec5b497d767ef86dc28fe5d174753b6de0ab733e28ab54aa131dbb4",
+    );
+  });
+
+  it("Fixture P — lending_account_withdraw: discriminator + vault-authority + hardcoded fingerprint", () => {
+    const ix = buildWithdrawIx({ accounts: vaultAuthAccts, amount: 50_000_000n });
+    expect(discHead(ix)).toEqual(DISC.withdraw);
+    // The bank_liquidity_vault_authority PDA is present (account index 5).
+    expect(ix.keys[5]!.pubkey.toBase58()).toBe(MF_VAULT_AUTH.toBase58());
+    expect(fpOf(ix)).toBe(
+      "0x3b52a0d3c3c2ea5e741c8524a9af195e94e451f65291b6446ac517179bb10387",
+    );
+  });
+
+  it("Fixture P embedding regression: amount swap changes the fingerprint", () => {
+    const fpA = fpOf(buildWithdrawIx({ accounts: vaultAuthAccts, amount: 50_000_000n }));
+    const fpB = fpOf(buildWithdrawIx({ accounts: vaultAuthAccts, amount: 50_000_001n }));
+    expect(fpA).not.toBe(fpB);
+  });
+
+  it("Fixture Q — lending_account_borrow: discriminator + vault-authority + hardcoded fingerprint", () => {
+    const ix = buildBorrowIx({ accounts: vaultAuthAccts, amount: 25_000_000n });
+    expect(discHead(ix)).toEqual(DISC.borrow);
+    expect(ix.keys[5]!.pubkey.toBase58()).toBe(MF_VAULT_AUTH.toBase58());
+    expect(fpOf(ix)).toBe(
+      "0xc98fd6c6903d05a7858d5472b7aa2e10669e5ff98561723d7fe27df30d5a7626",
+    );
+  });
+
+  it("Fixture Q embedding regression: amount swap changes the fingerprint", () => {
+    const fpA = fpOf(buildBorrowIx({ accounts: vaultAuthAccts, amount: 25_000_000n }));
+    const fpB = fpOf(buildBorrowIx({ accounts: vaultAuthAccts, amount: 25_000_001n }));
+    expect(fpA).not.toBe(fpB);
+  });
+
+  it("Fixture R — lending_account_repay: discriminator + hardcoded fingerprint", () => {
+    const ix = buildRepayIx({ accounts: singleAccts, amount: 75_000_000n });
+    expect(discHead(ix)).toEqual(DISC.repay);
+    expect(fpOf(ix)).toBe(
+      "0xb27eb2312cf1050525a470d89d2a2da3e83864207d9e94b8948e2ff4c1b59504",
+    );
+  });
+
+  it("Fixture R embedding regression: amount swap changes the fingerprint", () => {
+    const fpA = fpOf(buildRepayIx({ accounts: singleAccts, amount: 75_000_000n }));
+    const fpB = fpOf(buildRepayIx({ accounts: singleAccts, amount: 75_000_001n }));
+    expect(fpA).not.toBe(fpB);
+  });
+
+  it("Fixture S — marginfi_account_initialize_pda: discriminator + hardcoded fingerprint (Ledger-safe variant)", () => {
+    const ix = buildAccountInitPdaIx({
+      accounts: {
+        marginfiGroup: MF_GROUP,
+        marginfiAccount: MF_ACCOUNT,
+        authority: MF_AUTH,
+        feePayer: MF_AUTH,
+      },
+      accountIndex: 0,
+    });
+    // Assert the _pda discriminator (T-13-07 — NOT the Keypair-signer variant).
+    expect(discHead(ix)).toEqual(DISC.initPda);
+    expect(fpOf(ix)).toBe(
+      "0x535aab49143386e1adcbffb6713b1c1c6b494df9706cb4393fc4523b4a5b2710",
+    );
+  });
+
+  it("Fixture S embedding regression: account_index swap changes the fingerprint", () => {
+    const mk = (idx: number) =>
+      fpOf(
+        buildAccountInitPdaIx({
+          accounts: {
+            marginfiGroup: MF_GROUP,
+            marginfiAccount: MF_ACCOUNT,
+            authority: MF_AUTH,
+            feePayer: MF_AUTH,
+          },
+          accountIndex: idx,
+        }),
+      );
+    expect(mk(0)).not.toBe(mk(1));
+    expect(mk(0)).toBe(
+      "0x535aab49143386e1adcbffb6713b1c1c6b494df9706cb4393fc4523b4a5b2710",
+    );
   });
 });
 

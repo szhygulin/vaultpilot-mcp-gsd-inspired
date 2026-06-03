@@ -35,11 +35,16 @@
 
 import { PublicKey } from "@solana/web3.js";
 import { BorshCoder } from "@coral-xyz/anchor";
-import { MARGINFI_IDL } from "@mrgnlabs/marginfi-client-v2";
+import {
+  MARGINFI_IDL,
+  PDA_BANK_LIQUIDITY_VAULT_AUTH_SEED,
+} from "@mrgnlabs/marginfi-client-v2";
+import { getAssociatedTokenAddress } from "@solana/spl-token";
 
 import {
   deriveMarginfiAccountPda,
   getMarginfiGroup,
+  getMarginfiProgramId,
 } from "../../config/contracts.js";
 import { _solanaRegistry } from "./registry.js";
 import { SolanaRpcError } from "./sol-rpc-client.js";
@@ -187,17 +192,99 @@ export async function getMarginfiAccountInfo(
   };
 }
 
+/** A decoded MarginFi Bank — the fields a prepare tool needs to build a lending ix. */
+export interface DecodedMarginfiBank {
+  /** The bank's underlying SPL mint, base58. */
+  mint: string;
+  /** The mint's decimals (for decimal-string amount parsing). */
+  mintDecimals: number;
+  /** The bank's group, base58 (must match the production group). */
+  group: string;
+  /** The bank's liquidity vault token account, base58. */
+  liquidityVault: string;
+  /** The bank_liquidity_vault_authority PDA (derived from ["liquidity_vault_auth", bank]). */
+  liquidityVaultAuthority: string;
+}
+
+/**
+ * Decode a raw MarginFi Bank buffer (D-02 — Anchor-direct, same name-casing
+ * note as the account decoder). Derives the bank_liquidity_vault_authority PDA
+ * from the SDK seed constant (NOT hand-rolled). `bankPubkey` is the bank's own
+ * address (needed for the vault-authority PDA seed).
+ */
+export function decodeMarginfiBank(
+  bankPubkey: string,
+  buffer: Buffer,
+): DecodedMarginfiBank {
+  const decoded = coder.accounts.decode("Bank", buffer) as {
+    mint: PublicKey;
+    mint_decimals: number;
+    group: PublicKey;
+    liquidity_vault: PublicKey;
+  };
+  const bank = new PublicKey(bankPubkey);
+  const program = new PublicKey(
+    // The program ID is resolved from the SOT via the indirection getter.
+    _marginfiChain.getMarginfiProgramId(),
+  );
+  const [vaultAuthority] = PublicKey.findProgramAddressSync(
+    [Buffer.from(PDA_BANK_LIQUIDITY_VAULT_AUTH_SEED), bank.toBuffer()],
+    program,
+  );
+  return {
+    mint: decoded.mint.toBase58(),
+    mintDecimals: decoded.mint_decimals,
+    group: decoded.group.toBase58(),
+    liquidityVault: decoded.liquidity_vault.toBase58(),
+    liquidityVaultAuthority: vaultAuthority.toBase58(),
+  };
+}
+
+/**
+ * Read + decode a MarginFi Bank. Returns null when the bank account is absent.
+ * RPC read routes through `_marginfiChain.getRawAccountInfo` (spied in tests —
+ * NO live Connection).
+ */
+export async function getBankInfo(
+  bankPubkey: string,
+): Promise<DecodedMarginfiBank | null> {
+  const raw = await _marginfiChain.getRawAccountInfo(bankPubkey);
+  if (raw === null) return null;
+  return _marginfiChain.decodeMarginfiBank(bankPubkey, raw.data);
+}
+
+/**
+ * Derive the authority's Associated Token Account for a given mint. Wraps
+ * `getAssociatedTokenAddress` (NEVER hand-rolled — same Don't-Hand-Roll rule as
+ * `solana-spl.ts`). Returns the base58 ATA.
+ */
+export async function deriveTokenAccount(
+  owner: string,
+  mint: string,
+): Promise<string> {
+  const ata = await getAssociatedTokenAddress(
+    new PublicKey(mint),
+    new PublicKey(owner),
+  );
+  return ata.toBase58();
+}
+
 /**
  * ESM spy-affordance per CLAUDE.md § Conventions. Internal cross-export calls
- * (`getMarginfiAccountInfo` → `getRawAccountInfo` / `decodeMarginfiAccount`)
- * route through this object so tests can `vi.spyOn(_marginfiChain, …)` to mock
- * the RPC boundary (NO live Connection) without monkey-patching named exports
- * (ESM bindings are immutable). The group getter is re-exported for
- * convenience; production callers resolve it via the SOT.
+ * (`getMarginfiAccountInfo` → `getRawAccountInfo` / `decodeMarginfiAccount`;
+ * `getBankInfo` → `getRawAccountInfo` / `decodeMarginfiBank`) route through this
+ * object so tests can `vi.spyOn(_marginfiChain, …)` to mock the RPC boundary
+ * (NO live Connection) without monkey-patching named exports (ESM bindings are
+ * immutable). The program/group getters are re-exported for convenience;
+ * production callers resolve them via the SOT.
  */
 export const _marginfiChain = {
   getRawAccountInfo,
   decodeMarginfiAccount,
   getMarginfiAccountInfo,
+  decodeMarginfiBank,
+  getBankInfo,
+  deriveTokenAccount,
   getMarginfiGroup,
+  getMarginfiProgramId,
 };
