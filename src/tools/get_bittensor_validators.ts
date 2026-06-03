@@ -6,10 +6,11 @@
 // for a netuid; this tool filters validatorPermit === true and surfaces
 // hotkey (SS58) + uid + take%.
 //
-// MINIMAL by design. TAO-R-05 — delegate-identity (on-chain identity name)
-// + richer commission enrichment — is explicitly Phase 48. The lite shape
-// does NOT carry on-chain identity, so this enumeration surfaces only what
-// one decoded call provides.
+// TAO-R-05 ENRICHED (Phase 48): each permit-holding validator row now carries
+// the on-chain delegate identity name, the take% commission (from the decoded
+// DelegateInfo), and the per-netuid registration set — sourced from
+// delegateInfoRuntimeApi.getDelegate + identitiesV2 (coldkey-keyed). A
+// null/absent identity is tolerated (OQ-1).
 //
 // `netuid` is required-in-practice: getNeuronsLite is per-subnet. The
 // requirement text writes `{netuid?}`; we accept the arg as optional in the
@@ -30,9 +31,9 @@ import {
 import { registerTool } from "./index.js";
 
 const DESCRIPTION = [
-  "Enumerates the validators of a Bittensor subnet via the decoded neuronInfoRuntimeApi.getNeuronsLite runtime API. Returns the hotkeys (SS58) that hold a validator permit on the given netuid, each with its uid, validatorPermit flag, and take percentage (commission).",
-  "Uses the configured subtensor RPC (BITTENSOR_RPC_URL override, else the public Finney fallback). Single decoded round-trip per subnet.",
-  "MINIMAL enumeration — on-chain delegate-identity names + richer commission enrichment land in a later phase (TAO-R-05). Use get_bittensor_subnets to discover netuids first.",
+  "Enumerates the validators of a Bittensor subnet via the decoded neuronInfoRuntimeApi.getNeuronsLite runtime API. Returns the hotkeys (SS58) that hold a validator permit on the given netuid, each with its uid, validatorPermit flag, take percentage (commission), on-chain delegate identity name, and the subnets it is registered on.",
+  "Uses the configured subtensor RPC (BITTENSOR_RPC_URL override, else the public Finney fallback).",
+  "ENRICHED (TAO-R-05): each row carries the on-chain delegate identity (from identitiesV2, coldkey-keyed), the take% commission (from the decoded DelegateInfo), and the per-netuid registration set. Validators with no on-chain identity show \"(no on-chain identity)\". Use get_bittensor_subnets to discover netuids first.",
   "`netuid` is REQUIRED in practice (validator sets are per-subnet); the handler refuses with INVALID_INPUT when it is absent.",
   "Take is normalized to a 0-100 percentage string from the on-chain u16 delegate-take fraction.",
 ].join(" ");
@@ -90,11 +91,14 @@ registerTool(
         lines.push(`netuid ${netuid}: no permitted validators returned.`);
       } else {
         lines.push(
-          `netuid ${netuid} — ${validators.length} validator${validators.length === 1 ? "" : "s"} (permit-holding hotkeys; identity enrichment is a later phase):`,
+          `netuid ${netuid} — ${validators.length} validator${validators.length === 1 ? "" : "s"} (permit-holding hotkeys, identity + commission enriched):`,
         );
         for (const v of validators) {
           const take = v.takePercent === null ? "?" : `${v.takePercent}%`;
-          lines.push(`  uid ${v.uid} · hotkey ${v.hotkey} · take ${take}`);
+          const name = v.identity ?? "(no on-chain identity)";
+          lines.push(
+            `  uid ${v.uid} · ${name} · hotkey ${v.hotkey} · take ${take}`,
+          );
         }
       }
 
@@ -108,9 +112,11 @@ registerTool(
             hotkey: v.hotkey,
             validatorPermit: v.validatorPermit,
             takePercent: v.takePercent,
+            identity: v.identity,
+            registeredNetuids: v.registeredNetuids,
           })),
           note:
-            "Minimal enumeration — delegate-identity names + richer commission detail land in a later phase (TAO-R-05).",
+            "Enriched (TAO-R-05): delegate identity (identitiesV2, coldkey-keyed) + take% commission + per-netuid registration set. Null identity tolerated.",
         },
       };
     } catch (err) {
