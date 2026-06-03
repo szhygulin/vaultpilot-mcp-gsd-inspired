@@ -92,6 +92,14 @@ export interface PrepareArgs {
   sats?: string;
   /** Phase 26 — LTC native amount as raw litoshis decimal string (e.g. "100000"). Populated by `prepare_litecoin_native_send` (Plan 26-02). */
   litoshi?: string;
+  /** Phase 47 — Bittensor TAO amount as a decimal string (raw agent string). Populated by `prepare_bittensor_native_send` / `_add_stake_limit` (Plan 47-02). */
+  rao?: string;
+  /** Phase 47 — Bittensor ALPHA amount as a decimal string (raw agent string). Populated by `prepare_bittensor_remove_stake_limit` (Plan 47-02). DISTINCT unit from `rao` (Pitfall 3). */
+  alpha?: string;
+  /** Phase 47 — Bittensor validator hotkey SS58 (raw agent string). Populated by the staking prepare tools (Plan 47-02). */
+  hotkey?: string;
+  /** Phase 47 — Bittensor subnet id (decimal string, raw agent string). Populated by the staking prepare tools (Plan 47-02). */
+  netuid?: string;
   /**
    * Phase 35 Plan 35-03 — raw calldata hex (0x-prefixed) for
    * `prepare_custom_call`. Surfaced verbatim in the PREPARE RECEIPT block

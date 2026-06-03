@@ -69,6 +69,9 @@ import "./prepare_litecoin_native_send.js"; // Phase 26 Plan 26-02 (LTC-W-01) �
 import "./prepare_btc_lifi_swap.js"; // Phase 26 Plan 26-03 (BTC-LIFI-01) — BTC→EVM/SOL LiFi cross-chain swap
 import "./sign_message_btc.js"; // Phase 24 Plan 24-02 (BTC-W-03) — BIP-137 compact message signing
 import "./sign_message_ltc.js"; // Phase 26 Plan 26-02 (LTC-W-02) — BIP-137 compact message signing (LTC magic bytes)
+import "./prepare_bittensor_native_send.js"; // Phase 47 Plan 47-02 (TAO-W-01) — Bittensor native TAO transferKeepAlive
+import "./prepare_bittensor_add_stake_limit.js"; // Phase 47 Plan 47-02 (TAO-W-02) — Bittensor slippage-guarded add_stake_limit (DEFAULT entry)
+import "./prepare_bittensor_remove_stake_limit.js"; // Phase 47 Plan 47-02 (TAO-W-03) — Bittensor slippage-guarded remove_stake_limit (DEFAULT exit)
 // Phase 25 Plan 25-01 — BTC multisig registry + read tools (BTC-PSBT-03/04)
 import "./register_btc_multisig_wallet.js"; // Phase 25 Plan 25-01 (BTC-PSBT-03) — multisig wallet registration
 import "./get_btc_multisig_balance.js"; // Phase 25 Plan 25-01 (BTC-PSBT-04) — aggregate balance via Esplora gap-limit scan
