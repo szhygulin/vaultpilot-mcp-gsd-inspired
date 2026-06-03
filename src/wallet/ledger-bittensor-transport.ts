@@ -92,6 +92,24 @@ export class LedgerBittensorAppNotOpenError extends Error {
   }
 }
 
+/**
+ * Thrown when the user rejects the signing prompt on the Ledger device (the
+ * Polkadot Generic app returns the user-reject APDU — `0x6986` /
+ * "Transaction rejected"). Mirror of `LedgerSolanaUserRejectedError`. Mapped
+ * by the Plan 47-04 `send_transaction` Bittensor arm to a `LEDGER_REJECTED`
+ * envelope.
+ */
+export class LedgerBittensorUserRejectedError extends Error {
+  constructor(cause?: string) {
+    super(
+      cause
+        ? `User rejected the transaction on the Ledger device: ${cause}`
+        : "User rejected the transaction on the Ledger device.",
+    );
+    this.name = "LedgerBittensorUserRejectedError";
+  }
+}
+
 interface TransportLike {
   close: () => Promise<void>;
   disconnected?: boolean;
@@ -125,6 +143,22 @@ export const _transport = {
     ss58prefix: number,
   ): Promise<{ address: string; pubKey: string }> =>
     app.getAddressEd25519(derivationPath, ss58prefix),
+  // The detached-signature sign (Phase 47 — Plan 47-04 / TAO-PREP-03). The
+  // NON-deprecated `*Ed25519` variant — `signWithMetadata` (non-suffixed) is
+  // `@deprecated` in 2.3.4 (RESEARCH §State of the Art). `txBlob` MUST be the
+  // SAME `signableBlob` that fed the payloadFingerprint + the blake2-256
+  // presign (T-47-11 — the device signs the fingerprint preimage). The device
+  // returns ONLY the detached 64-byte ed25519 signature — NO private key
+  // material crosses this seam. Routed through the indirection so tests spy
+  // the per-call seam with a synthetic 64-byte vector.
+  signWithMetadataEd25519ViaApp: (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    app: any,
+    path: string,
+    txBlob: Uint8Array,
+    txMetadata: Uint8Array,
+  ): Promise<{ signature: Buffer }> =>
+    app.signWithMetadataEd25519(path, txBlob, txMetadata),
 };
 
 /**
@@ -187,6 +221,70 @@ export async function fetchBittensorAddress(
       BITTENSOR_SS58_PREFIX,
     );
     return { address, pubKey };
+  } finally {
+    try {
+      await transport.close();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log("warn", `transport.close() failed during cleanup: ${message}`);
+    }
+  }
+}
+
+/**
+ * Sign a Bittensor (Substrate) unsigned-extrinsic signable blob on the Ledger
+ * Polkadot Generic app, returning the detached 64-byte ed25519 signature.
+ * Phase 47 — Plan 47-04 (TAO-PREP-03).
+ *
+ * Opens a fresh transport (reuse `openTransport`), builds the generic app,
+ * probes `getVersion()` (a throw → `LedgerBittensorAppNotOpenError`), then
+ * calls `_transport.signWithMetadataEd25519ViaApp(app, path, signableBlob,
+ * txMetadata)`. `transport.close()` is invoked unconditionally in `finally`.
+ *
+ * CRITICAL (T-47-11 / RESEARCH §Pattern 2 note): `signableBlob` is passed to
+ * the device VERBATIM — it MUST equal the bytes that fed
+ * `computeBittensorPayloadFingerprint` + the blake2-256 presign. The device
+ * firmware re-derives the signing payload from this blob (blake2-256-
+ * pre-hashing internally for >256-byte blobs); the SDK passes it raw.
+ *
+ * NO private key material — the device returns ONLY the detached signature.
+ *
+ * A device user-reject (APDU `0x6986` / a `/reject/i` message) maps to
+ * `LedgerBittensorUserRejectedError`. The device-absent condition surfaces as
+ * `LedgerDeviceNotConnectedError` (from `openTransport`).
+ */
+export async function signBittensorTransaction(input: {
+  signableBlob: Uint8Array;
+  txMetadata: Uint8Array;
+  derivationPath?: string;
+}): Promise<{ signature: Buffer }> {
+  const transport = await openTransport();
+  try {
+    const app = _transport.buildGenericApp(transport);
+    // GET_VERSION APDU — confirms the active app is the Polkadot Generic app.
+    try {
+      await _transport.getVersionViaApp(app);
+    } catch {
+      throw new LedgerBittensorAppNotOpenError();
+    }
+    try {
+      const { signature } = await _transport.signWithMetadataEd25519ViaApp(
+        app,
+        input.derivationPath ?? DEFAULT_BITTENSOR_DERIVATION_PATH,
+        input.signableBlob,
+        input.txMetadata,
+      );
+      return { signature };
+    } catch (err) {
+      // Re-throw the app-not-open class untouched (could surface from the
+      // sign APDU on some firmware). User-reject → the dedicated class.
+      if (err instanceof LedgerBittensorAppNotOpenError) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      if (/reject/i.test(message) || /0x6986/.test(message)) {
+        throw new LedgerBittensorUserRejectedError(message);
+      }
+      throw err;
+    }
   } finally {
     try {
       await transport.close();

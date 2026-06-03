@@ -92,6 +92,14 @@ export interface PrepareArgs {
   sats?: string;
   /** Phase 26 — LTC native amount as raw litoshis decimal string (e.g. "100000"). Populated by `prepare_litecoin_native_send` (Plan 26-02). */
   litoshi?: string;
+  /** Phase 47 — Bittensor TAO amount as a decimal string (raw agent string). Populated by `prepare_bittensor_native_send` / `_add_stake_limit` (Plan 47-02). */
+  rao?: string;
+  /** Phase 47 — Bittensor ALPHA amount as a decimal string (raw agent string). Populated by `prepare_bittensor_remove_stake_limit` (Plan 47-02). DISTINCT unit from `rao` (Pitfall 3). */
+  alpha?: string;
+  /** Phase 47 — Bittensor validator hotkey SS58 (raw agent string). Populated by the staking prepare tools (Plan 47-02). */
+  hotkey?: string;
+  /** Phase 47 — Bittensor subnet id (decimal string, raw agent string). Populated by the staking prepare tools (Plan 47-02). */
+  netuid?: string;
   /**
    * Phase 35 Plan 35-03 — raw calldata hex (0x-prefixed) for
    * `prepare_custom_call`. Surfaced verbatim in the PREPARE RECEIPT block
@@ -1078,7 +1086,153 @@ export interface PreparedTxSafeTypedData {
 // Unused at runtime — the type system enforces both maps stay in sync.
 type _SafeOperationCheck = SafeOperation;
 
-export type PreparedTx = PreparedTxEvm | PreparedTxSolana | PreparedTxTron | PreparedTxBtc | PreparedTxLtc | PreparedTxBtcLifi | PreparedTxSafeTypedData;
+// ---------------------------------------------------------------------------
+// Phase 47 Plan 47-01 widening: PreparedTxBittensor + BittensorInstructionSummary.
+// The PreparedTx union is widened ADDITIVELY — state machine + TTL + createHandle
+// + transitionTo* logic BYTE-IDENTICAL (same pattern as Phase 12 Solana /
+// Phase 18 TRON / Phase 23 BTC). FROZEN guard: this is ADDITIVE TYPE SURFACE only.
+// ---------------------------------------------------------------------------
+
+/**
+ * Phase 47 — decoded Bittensor instruction summary for the DECODED ARGS block
+ * in preview_send Bittensor branch (Plan 47-03). Mirrors `TronInstructionSummary`
+ * — discriminated union narrowed by `kind`. Per-extrinsic UNIT typing is the
+ * load-bearing distinction (47-RESEARCH §Pitfall 3): `add-stake-limit` amount is
+ * TAO/RAO; `remove-stake-limit` amount is ALPHA. One field never carries both.
+ */
+export type BittensorInstructionSummary =
+  | {
+      kind: "native-transfer";
+      /** Sender SS58 address (prefix-42 "5…"). */
+      from: string;
+      /** Recipient SS58 address (prefix-42 "5…"). */
+      to: string;
+      /** Amount in RAO (TAO base unit, 9 decimals). u64. */
+      rao: bigint;
+    }
+  | {
+      kind: "add-stake-limit";
+      /** Validator hotkey SS58 (full, unredacted — TAO-W-04). */
+      hotkey: string;
+      /** Subnet id (u16). */
+      netuid: number;
+      /** Amount STAKED in RAO (TAO base unit — NOT alpha; 47-RESEARCH §Pitfall 3). u64. */
+      amountStakedRao: bigint;
+      /** Slippage-guard limit price (RAO-per-alpha fixed-point, from chain expected-out − tolerance). u64. */
+      limitPrice: bigint;
+      /** Whether a partial fill is acceptable. */
+      allowPartial: boolean;
+      /** Human-readable subnet identity echoed for the receipt (e.g. subnet name). */
+      netuidIdentity?: string;
+    }
+  | {
+      kind: "remove-stake-limit";
+      /** Validator hotkey SS58 (full, unredacted — TAO-W-04). */
+      hotkey: string;
+      /** Subnet id (u16). */
+      netuid: number;
+      /** Amount UNSTAKED in ALPHA (subnet token — NOT TAO/RAO; 47-RESEARCH §Pitfall 3). u64. */
+      amountUnstakedAlpha: bigint;
+      /** Slippage-guard limit price (RAO-per-alpha fixed-point, from chain expected-out − tolerance). u64. */
+      limitPrice: bigint;
+      /** Whether a partial fill is acceptable. */
+      allowPartial: boolean;
+      /** Human-readable subnet identity echoed for the receipt. */
+      netuidIdentity?: string;
+    };
+
+/**
+ * Bittensor (subtensor) prepared-tx shape. Phase 47 — Plan 47-01. Mirrors
+ * `PreparedTxTron` (Phase 18) sentinel-fields pattern — EVM-shape sentinel
+ * fields let existing EVM-side consumers stay BYTE-IDENTICAL without narrowing
+ * at every call site.
+ *
+ * The discriminator (`txType: "bittensor"`) + Bittensor-specific fields carry
+ * the cryptographic-binding inputs for the Substrate signing trust pipeline
+ * (TAO-PREP-01/02/03). The fingerprint preimage + the device-display hash are
+ * BOTH computed over `signableBlob` (the `ExtrinsicPayload.toU8a({method:true})`
+ * bytes). `signerPayloadJSON` is the pinned SignerPayloadJSON the Plan 47-04
+ * send branch rebuilds the byte-identical blob from (typed `unknown` to keep
+ * handle-store free of @polkadot SDK types — mirrors TRON's
+ * `rawDataObject: unknown`).
+ *
+ * FROZEN guard: this interface is ADDITIVE TYPE SURFACE only. The handle-store
+ * state machine + TTL + createHandle + transitionTo* logic is BYTE-IDENTICAL.
+ */
+export interface PreparedTxBittensor {
+  /** Required discriminator — Bittensor (Substrate) shape. */
+  txType: "bittensor";
+
+  // -----------------------------------------------------------------------
+  // EVM-shape sentinel fields (set to zero / empty values for Bittensor
+  // handles). Present to keep the discriminated union accessible by existing
+  // EVM-side consumers without forcing narrowing at every site. EVM call paths
+  // that reach a Bittensor handle hit the Layer 0.5 dispatch refusal before
+  // reading these — the sentinels are defensive, not load-bearing.
+  // -----------------------------------------------------------------------
+  /** Sentinel — Bittensor has no EVM chainId. Always 0. */
+  chainId: number;
+  /** Sentinel — Bittensor uses SS58 addresses, not 0x-prefixed. Always the zero address. */
+  to: Address;
+  /** Sentinel — Bittensor uses RAO, not valueWei. Always 0n. */
+  valueWei: bigint;
+  /** Sentinel — Bittensor has no EVM calldata. Always "0x". */
+  data: Hex;
+  /** Sentinel — Bittensor's signing nonce lives inside `signerPayloadJSON`. Always undefined. */
+  nonce?: number;
+  gas?: bigint;
+  maxFeePerGas?: bigint;
+  maxPriorityFeePerGas?: bigint;
+
+  // -----------------------------------------------------------------------
+  // Bittensor-specific cryptographic-binding fields. Populated by the Plan
+  // 47-02 prepare tools; consumed by the Plan 47-03 preview_send + Plan 47-04
+  // send branches.
+  // -----------------------------------------------------------------------
+  /**
+   * The unsigned `SignerPayload` SCALE bytes —
+   * `registry.createType("ExtrinsicPayload", signerPayloadJSON, { version })
+   * .toU8a({ method: true })`. This is the SINGLE preimage that feeds BOTH the
+   * keccak256 payloadFingerprint (DF-1) and the blake2-256 device presign hash
+   * (the on-device display). NEVER the signed envelope.
+   */
+  signableBlob: Uint8Array;
+  /**
+   * The pinned SignerPayloadJSON captured at prepare time (nonce, era,
+   * blockHash, genesisHash, tip, mode, metadataHash, signedExtensions). Plan
+   * 47-04 rebuilds the byte-identical `signableBlob` from this at send time.
+   * Typed `unknown` to keep handle-store free of @polkadot SDK types (mirrors
+   * TRON's `rawDataObject: unknown`).
+   */
+  signerPayloadJSON: unknown;
+  /** SS58 coldkey address (prefix-42) that signs — supplied to `addSignature` at send. */
+  ss58Address: string;
+  /**
+   * Pallet section in camelCase (e.g. `subtensorModule`, `balances`) — the
+   * `api.tx.<section>.<method>` form. Consumed by the Plan 47-03
+   * `(section,method)` allowlist (BITTENSOR_DISPATCH_ALLOWLIST is camelCase-keyed).
+   */
+  section: string;
+  /** Call method in camelCase (e.g. `addStakeLimit`, `transferKeepAlive`). */
+  method: string;
+  /**
+   * CheckMetadataHash mode pinned at prepare (Pitfall 2 — mode is part of the
+   * signable blob's extra/additionalSigned tail). 0 = disabled, 1 = enabled.
+   */
+  mode: 0 | 1;
+  /**
+   * The offline-computed CheckMetadataHash digest (0x-prefixed) when mode=1,
+   * else null. Pinned at prepare so the send-time blob rebuild is byte-stable.
+   */
+  metadataHash: string | null;
+  /**
+   * Decoded instruction summary — populated by the Plan 47-02 prepare tools;
+   * consumed by the Plan 47-03 DECODED ARGS surface (per-extrinsic unit labels).
+   */
+  instructionSummary?: BittensorInstructionSummary;
+}
+
+export type PreparedTx = PreparedTxEvm | PreparedTxSolana | PreparedTxTron | PreparedTxBtc | PreparedTxLtc | PreparedTxBtcLifi | PreparedTxSafeTypedData | PreparedTxBittensor;
 
 /**
  * Preview-pinned fields, persisted onto the record at `transitionToPreviewed`
