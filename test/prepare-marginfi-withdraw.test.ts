@@ -8,7 +8,7 @@
 // D-03 gate: PDA absent → refuse with VP_S006, NO handle minted. PDA present →
 // handle + receipt + fingerprint (Fixture P) + blind-sign LEDGER NOTICE. Vault-authority shape carries the bank_liquidity_vault_authority[PDA].
 
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 // vi.hoisted — `vi.mock` factories are hoisted above all module code; the
 // referenced spies must be hoisted too (else "Cannot access before init").
@@ -102,6 +102,8 @@ function mockPresentAccount(): void {
   vi.spyOn(_marginfiChain, "deriveTokenAccount").mockResolvedValue(TOKEN_ACCT);
 }
 
+let savedDemo: string | undefined;
+
 async function callTool(args: Record<string, unknown>): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("prepare_marginfi_withdraw");
   if (!tool) throw new Error("prepare_marginfi_withdraw not registered");
@@ -112,6 +114,8 @@ describe("prepare_marginfi_withdraw (SOL-W-04, D-01 + D-03, vault-authority)", (
   beforeEach(() => {
     vi.restoreAllMocks();
     _resetHandleStoreForTesting();
+    savedDemo = process.env.VAULTPILOT_DEMO;
+    process.env.VAULTPILOT_DEMO = "false";
     _resetDemoModeForTesting();
     listAccountsSpy.mockReset();
     createHandleSpy.mockClear();
@@ -119,6 +123,12 @@ describe("prepare_marginfi_withdraw (SOL-W-04, D-01 + D-03, vault-authority)", (
     createHandleSpy.mockImplementation(realHandleStore.createHandle);
     listAccountsSpy.mockReturnValue([PAIRED]);
     vi.spyOn(_solanaRegistry, "getConnection").mockReturnValue(stubConnection());
+  });
+
+  afterEach(() => {
+    if (savedDemo === undefined) delete process.env.VAULTPILOT_DEMO;
+    else process.env.VAULTPILOT_DEMO = savedDemo;
+    _resetDemoModeForTesting();
   });
 
   it("PDA present → handle + Fixture-P fingerprint + blind-sign NOTICE; vault-authority PDA in tx", async () => {

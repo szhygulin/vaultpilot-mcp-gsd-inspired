@@ -5,7 +5,7 @@
 // PDA). Asserts: handle + PREPARE RECEIPT + payloadFingerprint (Fixture S
 // cross-link) + blind-sign LEDGER NOTICE that does NOT claim clear-sign (V11).
 
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 const listAccountsSpy = vi.fn();
 vi.mock("../src/wallet/non-evm-account-store.js", async () => {
@@ -50,6 +50,8 @@ function stubConnection(): Connection {
   } as unknown as Connection;
 }
 
+let savedDemo: string | undefined;
+
 async function callTool(args: Record<string, unknown> = {}): Promise<ToolHandlerResult> {
   const tool = getRegisteredTool("prepare_marginfi_account_init");
   if (!tool) throw new Error("prepare_marginfi_account_init not registered");
@@ -60,8 +62,16 @@ describe("prepare_marginfi_account_init (SOL-W-05)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     _resetHandleStoreForTesting();
+    savedDemo = process.env.VAULTPILOT_DEMO;
+    process.env.VAULTPILOT_DEMO = "false";
     _resetDemoModeForTesting();
     listAccountsSpy.mockReset();
+  });
+
+  afterEach(() => {
+    if (savedDemo === undefined) delete process.env.VAULTPILOT_DEMO;
+    else process.env.VAULTPILOT_DEMO = savedDemo;
+    _resetDemoModeForTesting();
   });
 
   it("mints a handle + PREPARE RECEIPT + Fixture-S fingerprint + blind-sign NOTICE (no PDA gate)", async () => {
