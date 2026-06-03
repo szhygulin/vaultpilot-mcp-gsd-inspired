@@ -1327,7 +1327,12 @@ Plans:
   4. All new `(pallet, call)` pairs added to `BITTENSOR_DISPATCH_ALLOWLIST`; FROZEN-area zero-diff held; each new tx shape gets a hardcoded `0x…` fixture literal (TAO-D..) in the Phase 47 sibling test file, cross-linked from its consumer test
   5. `get_bittensor_validators` enriched with delegate identity + commission (take %) + per-netuid registration status; staking to an unregistered/unknown hotkey surfaces a warning at preview
 
-**Plans**: 3 plans (estimate)
+**Plans**: 3 plans
+
+Plans:
+- [ ] 48-01-PLAN.md — additive foundation: 5 extrinsic-builder kinds (hotkey-first pallet order) + 5 BittensorInstructionSummary variants + 5 BITTENSOR_DISPATCH_ALLOWLIST camelCase keys + Fixtures TAO-D..H (hardcoded 0x literals, NO beforeAll-snapshot) + the hotkey↔netuid-swap RED-FLAG regression + FROZEN_FILES extended to cover the 2 reused Bittensor binding modules (TAO-W-09; Wave 1)
+- [ ] 48-02-PLAN.md — TAO-R-05 read enrichment: getValidators + delegate identity (identitiesV2) + take% (normalizeTakePercent reuse) + per-netuid registrations (getDelegate) + isHotkeyRegisteredOnNetuid helper (getNeuronsLite presence) + get_bittensor_validators surfacing (TAO-R-05; Wave 2)
+- [ ] 48-03-PLAN.md — 5 prepare tools (plain add/remove with [NOTICE — no slippage guard], same-owner move/swap, withdrawal-grade transfer_stake with [WITHDRAWAL — CUSTODY CHANGE] + full destination_coldkey) + preview_send DECODED-ARGS arms + the unregistered-hotkey preview WARNING (TAO-W-06/07/08 + TAO-R-05 wiring; Wave 3)
 
 #### Phase 49: Bittensor diagnostics + v2.7 milestone close-out
 
