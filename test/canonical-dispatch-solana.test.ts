@@ -3,12 +3,17 @@
 // EVM analog) shape.
 //
 // Coverage:
-//   - SOLANA_DISPATCH_ALLOWLIST shape (3 entries — System + SPL Token +
-//     Associated Token Program) + base58-correctness for each entry.
+//   - SOLANA_DISPATCH_ALLOWLIST shape (Phase 12 base: System + SPL Token +
+//     Associated Token Program; Phase 13 Plan 13-01 ADDS MarginFi + Kamino
+//     lending program IDs from the contracts SOT — D-06/SOL-W-09) + base58
+//     correctness for each entry.
 //   - checkSolanaDispatchTarget 2-arm coverage (allowed happy path with
-//     System / Token / Associated combos + refused with verbatim offenders).
+//     System / Token / Associated / MarginFi / Kamino combos + refused with
+//     verbatim offenders).
 //   - Mixed-input rejection (allowed entries do NOT rescue refusals).
-//   - Unknown program ID canaries: Jupiter v6 (Phase 14), MarginFi (Phase 13).
+//   - Unknown program ID canaries: Jupiter v6 (Phase 14, still deferred) +
+//     a non-canonical MarginFi-shaped base58 (a wrong program ID still refuses
+//     — only the SOT-resolved program ID is allowed).
 //   - Empty programIds → allowed (no offenders by construction).
 //   - ESM spy round-trip via `_canonicalDispatchSolana` indirection.
 
@@ -24,6 +29,10 @@ import {
   _canonicalDispatchSolana,
   checkSolanaDispatchTarget,
 } from "../src/security/canonical-dispatch-solana.js";
+import {
+  getKaminoLendProgram,
+  getMarginfiProgramId,
+} from "../src/config/contracts.js";
 
 // Canonical program IDs (re-derived inline so the test does not depend on
 // the production import for membership assertions).
@@ -31,21 +40,31 @@ const SYSTEM_PROGRAM = SystemProgram.programId.toBase58();
 const TOKEN_PROGRAM = TOKEN_PROGRAM_ID.toBase58();
 const ASSOCIATED_TOKEN_PROGRAM = ASSOCIATED_TOKEN_PROGRAM_ID.toBase58();
 
-// Canary program IDs for Phases 13-16 deferral. Pinned literals so a future
-// SDK upgrade doesn't silently widen the allowlist by drift.
-//   - Jupiter v6 swap aggregator: JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4
-//     (verified against Jupiter docs / api.jup.ag — Phase 14 widening target)
-//   - MarginFi v2 lending: MFv2hWf31Z9kbCa1snEPYctwafyJfftfPqwXrjBpjpa9
-//     (verified against MarginFi docs — Phase 13 widening target)
+// Phase 13 Plan 13-01 (D-06) — lending program IDs now in the allowlist. Read
+// through the SOT getters (the no-inline sentinel forbids inlining the base58
+// in src/; tests are exempt but consuming the getter keeps drift impossible).
+const MARGINFI_PROGRAM = getMarginfiProgramId();
+const KAMINO_LEND_PROGRAM = getKaminoLendProgram();
+
+// Phase 12 base count (System + Token + Associated) + Phase 13 additions
+// (MarginFi + Kamino). The auxiliary-program slot (Scope / Pyth / Switchboard
+// for the Kamino refresh ceremony) is EXTENDED-IN-13-05, not now.
+const EXPECTED_ALLOWLIST_SIZE = 5;
+
+// Canary program IDs that remain DEFERRED / refused.
+//   - Jupiter v6 swap aggregator (Phase 14 widening target) — still deferred.
+//   - A non-canonical MarginFi-shaped base58 (NOT the SOT program ID) — proves
+//     only the exact SOT-resolved program ID is allowed; a typo/wrong variant
+//     still refuses at Layer 0.5.
 const JUPITER_V6 = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
-const MARGINFI_V2 = "MFv2hWf31Z9kbCa1snEPYctwafyJfftfPqwXrjBpjpa9";
+const MARGINFI_WRONG_VARIANT = "MFv2hWf31Z9kbCa1snEPYctwafyJfftfPqwXrjBpjpa9";
 
 // ---------------------------------------------------------------------------
-// Test 1 — SOLANA_DISPATCH_ALLOWLIST exact membership (3 entries).
+// Test 1 — SOLANA_DISPATCH_ALLOWLIST membership (Phase 12 base + Phase 13 lending).
 // ---------------------------------------------------------------------------
-describe("SOLANA_DISPATCH_ALLOWLIST — exact 3-entry membership (v1.x scope lock)", () => {
-  it("contains exactly 3 entries", () => {
-    expect(SOLANA_DISPATCH_ALLOWLIST.size).toBe(3);
+describe("SOLANA_DISPATCH_ALLOWLIST — membership (Phase 12 base + Phase 13 lending)", () => {
+  it(`contains exactly ${EXPECTED_ALLOWLIST_SIZE} entries (3 base + MarginFi + Kamino)`, () => {
+    expect(SOLANA_DISPATCH_ALLOWLIST.size).toBe(EXPECTED_ALLOWLIST_SIZE);
   });
 
   it("contains SystemProgram.programId", () => {
@@ -60,12 +79,20 @@ describe("SOLANA_DISPATCH_ALLOWLIST — exact 3-entry membership (v1.x scope loc
     expect(SOLANA_DISPATCH_ALLOWLIST.has(ASSOCIATED_TOKEN_PROGRAM)).toBe(true);
   });
 
+  it("contains the MarginFi v2 program ID (Phase 13 — from the SOT)", () => {
+    expect(SOLANA_DISPATCH_ALLOWLIST.has(MARGINFI_PROGRAM)).toBe(true);
+  });
+
+  it("contains the Kamino klend program ID (Phase 13 — from the SOT)", () => {
+    expect(SOLANA_DISPATCH_ALLOWLIST.has(KAMINO_LEND_PROGRAM)).toBe(true);
+  });
+
   it("does NOT contain Jupiter v6 (Phase 14 deferral)", () => {
     expect(SOLANA_DISPATCH_ALLOWLIST.has(JUPITER_V6)).toBe(false);
   });
 
-  it("does NOT contain MarginFi v2 (Phase 13 deferral)", () => {
-    expect(SOLANA_DISPATCH_ALLOWLIST.has(MARGINFI_V2)).toBe(false);
+  it("does NOT contain a non-canonical MarginFi-shaped base58 (only the exact SOT ID allowed)", () => {
+    expect(SOLANA_DISPATCH_ALLOWLIST.has(MARGINFI_WRONG_VARIANT)).toBe(false);
   });
 });
 
@@ -91,12 +118,26 @@ describe("checkSolanaDispatchTarget — allowed cases", () => {
     ).toEqual({ kind: "allowed" });
   });
 
-  it("all 3 entries together → allowed (defensive coverage)", () => {
+  it("MarginFi program only → allowed (Phase 13 lending write shape)", () => {
+    expect(checkSolanaDispatchTarget([MARGINFI_PROGRAM])).toEqual({
+      kind: "allowed",
+    });
+  });
+
+  it("Kamino klend program only → allowed (Phase 13 lending write shape)", () => {
+    expect(checkSolanaDispatchTarget([KAMINO_LEND_PROGRAM])).toEqual({
+      kind: "allowed",
+    });
+  });
+
+  it("all base + lending entries together → allowed (defensive coverage)", () => {
     expect(
       checkSolanaDispatchTarget([
         SYSTEM_PROGRAM,
         TOKEN_PROGRAM,
         ASSOCIATED_TOKEN_PROGRAM,
+        MARGINFI_PROGRAM,
+        KAMINO_LEND_PROGRAM,
       ]),
     ).toEqual({ kind: "allowed" });
   });
@@ -115,18 +156,20 @@ describe("checkSolanaDispatchTarget — refusal cases", () => {
     expect(result.kind).toBe("refused");
     if (result.kind !== "refused") return;
     expect(result.offenders).toEqual([JUPITER_V6]);
-    // Allowlist surfaces the verbatim 3-entry list for self-correction.
-    expect(result.allowlist).toHaveLength(3);
+    // Allowlist surfaces the verbatim entry list for self-correction.
+    expect(result.allowlist).toHaveLength(EXPECTED_ALLOWLIST_SIZE);
     expect(result.allowlist).toContain(SYSTEM_PROGRAM);
     expect(result.allowlist).toContain(TOKEN_PROGRAM);
     expect(result.allowlist).toContain(ASSOCIATED_TOKEN_PROGRAM);
+    expect(result.allowlist).toContain(MARGINFI_PROGRAM);
+    expect(result.allowlist).toContain(KAMINO_LEND_PROGRAM);
   });
 
-  it("MarginFi v2 only → refused with verbatim offender (Phase 13 canary)", () => {
-    const result = checkSolanaDispatchTarget([MARGINFI_V2]);
+  it("non-canonical MarginFi variant → refused (only the exact SOT ID allowed)", () => {
+    const result = checkSolanaDispatchTarget([MARGINFI_WRONG_VARIANT]);
     expect(result.kind).toBe("refused");
     if (result.kind !== "refused") return;
-    expect(result.offenders).toEqual([MARGINFI_V2]);
+    expect(result.offenders).toEqual([MARGINFI_WRONG_VARIANT]);
   });
 
   it("System + Jupiter mixed → refused; allowed entry does NOT rescue refusal", () => {
@@ -136,18 +179,26 @@ describe("checkSolanaDispatchTarget — refusal cases", () => {
     expect(result.offenders).toEqual([JUPITER_V6]);
   });
 
-  it("Token + Jupiter + MarginFi mixed → refused; offenders contains BOTH unknowns", () => {
+  it("MarginFi + Jupiter mixed → refused; allowed lending entry does NOT rescue", () => {
+    const result = checkSolanaDispatchTarget([MARGINFI_PROGRAM, JUPITER_V6]);
+    expect(result.kind).toBe("refused");
+    if (result.kind !== "refused") return;
+    expect(result.offenders).toEqual([JUPITER_V6]);
+    expect(result.offenders).not.toContain(MARGINFI_PROGRAM);
+  });
+
+  it("Token + Jupiter + wrong-MarginFi mixed → refused; offenders contains BOTH unknowns", () => {
     const result = checkSolanaDispatchTarget([
       TOKEN_PROGRAM,
       JUPITER_V6,
-      MARGINFI_V2,
+      MARGINFI_WRONG_VARIANT,
     ]);
     expect(result.kind).toBe("refused");
     if (result.kind !== "refused") return;
     expect(result.offenders).toHaveLength(2);
     expect(result.offenders).toContain(JUPITER_V6);
-    expect(result.offenders).toContain(MARGINFI_V2);
-    // SYSTEM is allowed → must NOT be in offenders.
+    expect(result.offenders).toContain(MARGINFI_WRONG_VARIANT);
+    // TOKEN is allowed → must NOT be in offenders.
     expect(result.offenders).not.toContain(TOKEN_PROGRAM);
   });
 
