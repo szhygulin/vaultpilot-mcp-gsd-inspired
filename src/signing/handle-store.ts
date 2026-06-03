@@ -1139,6 +1139,70 @@ export type BittensorInstructionSummary =
       allowPartial: boolean;
       /** Human-readable subnet identity echoed for the receipt. */
       netuidIdentity?: string;
+    }
+  // --- Phase 48 Plan 48-01 — deferred staking shapes (TAO-W-06/07/08). ---
+  // ADDITIVE union members only (FROZEN guard = additive type surface). Per
+  // 48-RESEARCH §Pitfall 3 the UNIT lives in the field NAME: add-stake is
+  // TAO/RAO (`amountStakedRao`), remove/move/swap/transfer are ALPHA
+  // (`amountUnstakedAlpha` / `alphaAmount`). One field never carries both.
+  | {
+      kind: "add-stake"; // TAO-W-06 — PLAIN add_stake (no slippage guard)
+      /** Validator hotkey SS58 (full, unredacted — TAO-W-04). */
+      hotkey: string;
+      /** Subnet id (u16). */
+      netuid: number;
+      /** Amount STAKED in TAO/RAO (NOT alpha; §Pitfall 3). u64. */
+      amountStakedRao: bigint;
+      /** Human-readable subnet identity echoed for the receipt. */
+      netuidIdentity?: string;
+    }
+  | {
+      kind: "remove-stake"; // TAO-W-06 — PLAIN remove_stake (no slippage guard)
+      /** Validator hotkey SS58 (full, unredacted — TAO-W-04). */
+      hotkey: string;
+      /** Subnet id (u16). */
+      netuid: number;
+      /** Amount UNSTAKED in ALPHA (subnet token — NOT TAO/RAO; §Pitfall 3). u64. */
+      amountUnstakedAlpha: bigint;
+      /** Human-readable subnet identity echoed for the receipt. */
+      netuidIdentity?: string;
+    }
+  | {
+      kind: "move-stake"; // TAO-W-07 — same-owner reallocation (origin→dest hotkey/subnet)
+      /** Origin validator hotkey SS58 (full, unredacted). */
+      originHotkey: string;
+      /** Destination validator hotkey SS58 (full, unredacted). */
+      destinationHotkey: string;
+      /** Origin subnet id (u16). */
+      originNetuid: number;
+      /** Destination subnet id (u16). */
+      destinationNetuid: number;
+      /** Amount in ALPHA. u64. */
+      alphaAmount: bigint;
+    }
+  | {
+      kind: "swap-stake"; // TAO-W-07 — same-owner, one hotkey, subnet→subnet
+      /** Validator hotkey SS58 (full, unredacted). */
+      hotkey: string;
+      /** Origin subnet id (u16). */
+      originNetuid: number;
+      /** Destination subnet id (u16). */
+      destinationNetuid: number;
+      /** Amount in ALPHA. u64. */
+      alphaAmount: bigint;
+    }
+  | {
+      kind: "transfer-stake"; // TAO-W-08 — CUSTODY CHANGE (alpha → destination coldkey)
+      /** Destination coldkey SS58 — the NEW owner. FULL, unredacted (TAO-W-08). */
+      destinationColdkey: string;
+      /** Validator hotkey SS58 (full, unredacted). */
+      hotkey: string;
+      /** Origin subnet id (u16). */
+      originNetuid: number;
+      /** Destination subnet id (u16). */
+      destinationNetuid: number;
+      /** Amount in ALPHA. u64. */
+      alphaAmount: bigint;
     };
 
 /**
