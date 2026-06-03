@@ -21,6 +21,7 @@
 import {
   isAutoDemo,
   isDemoMode,
+  getBittensorRpcUrl,
   getBtcEsploraUrl,
   getRpcProvider,
   getSafeTxServiceApiKey,
@@ -73,7 +74,7 @@ const DESCRIPTION = [
   "Returns a summary of vaultpilot-mcp's current configuration state — demo mode flag, env-var presence (as booleans), paired-account count, WC session-topic suffix (last 8 chars only), WC session persistence flag (boolean), config-file path + presence/malformed flags, Node version, package version, active persona slug, update-check suppression flag, companion-skill integrity state.",
   "Use this when debugging install configuration — 'why is demo mode active?', 'is my RPC URL set?', 'what version am I on?', 'which persona is active?', 'is my Ledger session persisted across restarts?', 'is the vaultpilot-preflight companion skill installed and intact?'.",
   "Do NOT use this to retrieve the actual config values (RPC URL, WC project ID, full session topic) — those are NEVER returned by this tool. For RPC URL: read the `ETHEREUM_RPC_URL` env var directly via your shell. For WC project ID: same — `WALLETCONNECT_PROJECT_ID`.",
-  "Returns `{ demoMode, isAutoDemo, activePersonaSlug, walletConnectProjectIdPresent, ethereumRpcUrlPresent, etherscanApiKeyPresent, rpcProvider, configuredChains, solanaRpcConfigured, tronRpcConfigured, btcEsploraConfigured, bitcoinCoreConfigured, litecoinCoreConfigured, pairedAccountCount, pairedNonEvmChains, pairedNonEvmAccountCount, nonEvmStoragePersistent, wcSessionTopicSuffix, walletConnectStoragePersistent, configFilePath, configFileExists, configFileMalformed, nodeVersion, packageVersion, updateCheckSuppressed, skillIntegrity }`. `rpcProvider` is the verbatim shorthand name (`infura` / `alchemy`) or null when `RPC_PROVIDER` is unset — the API key VALUE is NEVER surfaced. `configuredChains` is a per-chain map (`ethereum / arbitrum / polygon / base / optimism`) of booleans reflecting whether a chain-specific override OR the shorthand resolves a URL (false ⇒ PublicNode fallback for that chain). `solanaRpcConfigured` is true ONLY when `SOLANA_RPC_URL` is explicitly set; the public-RPC fallback does NOT count as configured (mirrors Phase 8 `configuredChains` boolean semantics). `tronRpcConfigured` is true ONLY when `TRON_RPC_URL` is explicitly set; the public TronGrid fallback does NOT count as configured (same semantics as `solanaRpcConfigured`). `btcEsploraConfigured` is true ONLY when `BTC_ESPLORA_URL` is explicitly set; the public Blockstream/mempool.space fallback does NOT count as configured (same semantics as `solanaRpcConfigured` / `tronRpcConfigured`). `bitcoinCoreConfigured` is true ONLY when `BITCOIN_CORE_RPC_URL` is explicitly set; absent → forensic BTC Core tools return a `coreNotConfigured` envelope (same semantics as `solanaRpcConfigured` / `tronRpcConfigured` / `btcEsploraConfigured`). `litecoinCoreConfigured` mirrors the same for `LITECOIN_CORE_RPC_URL`. Neither the URL nor the basic-auth credentials (`_USER`/`_PASS`) ever appear in this response. `pairedNonEvmChains` is the sorted unique list of non-EVM chains with at least one paired account (chain names only, NEVER raw addresses); includes `'tron'` automatically when a TRON pairing exists and `'bitcoin'` automatically when a BTC pairing exists (Phase 17/22 wiring reuses Phase 11's chain-agnostic aggregation; dual segwit + taproot records dedupe to a single `'bitcoin'` entry via `new Set`). `pairedNonEvmAccountCount` is the total record count across all non-EVM chains. `nonEvmStoragePersistent` reflects `VAULTPILOT_NON_EVM_STORAGE`. `skillIntegrity` is a discriminated union: `{ kind: 'ok', path, sha256 }` when the companion `vaultpilot-preflight` skill SHA-256 matches the MCP-pinned value; `{ kind: 'missing' }` when the skill is not installed at any probe path; `{ kind: 'tampered', path }` when the SHA differs (the actual computed vs expected hex is surfaced via the `VAULTPILOT NOTICE` dispatcher block, never via this tool — secret-safe).",
+  "Returns `{ demoMode, isAutoDemo, activePersonaSlug, walletConnectProjectIdPresent, ethereumRpcUrlPresent, etherscanApiKeyPresent, rpcProvider, configuredChains, solanaRpcConfigured, tronRpcConfigured, btcEsploraConfigured, bitcoinCoreConfigured, litecoinCoreConfigured, bittensorRpcConfigured, pairedAccountCount, pairedNonEvmChains, pairedNonEvmAccountCount, nonEvmStoragePersistent, wcSessionTopicSuffix, walletConnectStoragePersistent, configFilePath, configFileExists, configFileMalformed, nodeVersion, packageVersion, updateCheckSuppressed, skillIntegrity }`. `rpcProvider` is the verbatim shorthand name (`infura` / `alchemy`) or null when `RPC_PROVIDER` is unset — the API key VALUE is NEVER surfaced. `configuredChains` is a per-chain map (`ethereum / arbitrum / polygon / base / optimism`) of booleans reflecting whether a chain-specific override OR the shorthand resolves a URL (false ⇒ PublicNode fallback for that chain). `solanaRpcConfigured` is true ONLY when `SOLANA_RPC_URL` is explicitly set; the public-RPC fallback does NOT count as configured (mirrors Phase 8 `configuredChains` boolean semantics). `tronRpcConfigured` is true ONLY when `TRON_RPC_URL` is explicitly set; the public TronGrid fallback does NOT count as configured (same semantics as `solanaRpcConfigured`). `btcEsploraConfigured` is true ONLY when `BTC_ESPLORA_URL` is explicitly set; the public Blockstream/mempool.space fallback does NOT count as configured (same semantics as `solanaRpcConfigured` / `tronRpcConfigured`). `bitcoinCoreConfigured` is true ONLY when `BITCOIN_CORE_RPC_URL` is explicitly set; absent → forensic BTC Core tools return a `coreNotConfigured` envelope (same semantics as `solanaRpcConfigured` / `tronRpcConfigured` / `btcEsploraConfigured`). `litecoinCoreConfigured` mirrors the same for `LITECOIN_CORE_RPC_URL`. Neither the URL nor the basic-auth credentials (`_USER`/`_PASS`) ever appear in this response. `bittensorRpcConfigured` is true ONLY when `BITTENSOR_RPC_URL` is explicitly set; the public Finney subtensor entrypoint fallback does NOT count as configured (same semantics as `solanaRpcConfigured` / `tronRpcConfigured`). `pairedNonEvmChains` is the sorted unique list of non-EVM chains with at least one paired account (chain names only, NEVER raw addresses); includes `'tron'` automatically when a TRON pairing exists, `'bitcoin'` automatically when a BTC pairing exists, and `'bittensor'` automatically when a Bittensor pairing exists (Phase 17/22/46 wiring reuses Phase 11's chain-agnostic aggregation; dual segwit + taproot records dedupe to a single `'bitcoin'` entry via `new Set`). `pairedNonEvmAccountCount` is the total record count across all non-EVM chains. `nonEvmStoragePersistent` reflects `VAULTPILOT_NON_EVM_STORAGE`. `skillIntegrity` is a discriminated union: `{ kind: 'ok', path, sha256 }` when the companion `vaultpilot-preflight` skill SHA-256 matches the MCP-pinned value; `{ kind: 'missing' }` when the skill is not installed at any probe path; `{ kind: 'tampered', path }` when the SHA differs (the actual computed vs expected hex is surfaced via the `VAULTPILOT NOTICE` dispatcher block, never via this tool — secret-safe).",
   "Secret-safety: response contains only booleans, counts, suffixes, paths, and PUBLIC values (Node version, package version, persona slug, config file path, skill-integrity kind/path). No secret values are returned — verifiable by the agent via JSON inspection.",
 ].join(" ");
 
@@ -192,6 +193,14 @@ registerTool(
     // structurally absent so credential leakage is impossible by import-graph construction.
     const bitcoinCoreConfigured = getBitcoinCoreRpcUrl() !== null;
     const litecoinCoreConfigured = getLitecoinCoreRpcUrl() !== null;
+    // Phase 46 Plan 46-01 — Bittensor RPC configured boolean. Mirror of
+    // `solanaRpcConfigured` / `tronRpcConfigured` / `btcEsploraConfigured`
+    // semantics: TRUE iff `BITTENSOR_RPC_URL` is explicitly set; the public
+    // Finney entrypoint fallback (`wss://entrypoint-finney.opentensor.ai:443`)
+    // does NOT count as configured. The `"bittensor"` chain flows into
+    // `pairedNonEvmChains` automatically via the existing `new Set` dedup
+    // once a `chain:"bittensor"` record exists — zero aggregation change.
+    const bittensorRpcConfigured = getBittensorRpcUrl() !== null;
 
     // Q-CONFIG-LEAK lock: surface presence + malformed flags ONLY; the file
     // CONTENT (and the parse-error `cause` string, which may quote raw file
@@ -232,6 +241,7 @@ registerTool(
       btcEsploraConfigured,
       bitcoinCoreConfigured,
       litecoinCoreConfigured,
+      bittensorRpcConfigured,
       pairedAccountCount,
       pairedNonEvmChains,
       pairedNonEvmAccountCount,
@@ -267,6 +277,7 @@ registerTool(
     lines.push(`  btcEsploraConfigured:            ${btcEsploraConfigured}`);
     lines.push(`  bitcoinCoreConfigured:           ${bitcoinCoreConfigured}`);
     lines.push(`  litecoinCoreConfigured:          ${litecoinCoreConfigured}`);
+    lines.push(`  bittensorRpcConfigured:          ${bittensorRpcConfigured}`);
     lines.push(`  pairedAccountCount:              ${pairedAccountCount}`);
     lines.push(
       `  pairedNonEvmChains:              [${pairedNonEvmChains.join(", ")}]`,

@@ -18,6 +18,7 @@
 //     effect on the auto-demo arm (Q-AUTO-DEMO-PERSONA-DEFAULT lock) so
 //     the first read tool call works out of the box.
 
+import { findBittensorPersona } from "./bittensor-persona.js";
 import { findBtcPersona } from "./bitcoin-persona.js";
 import { findLtcPersona } from "./litecoin-persona.js";
 import { PERSONAS, type Persona } from "./personas.js";
@@ -93,11 +94,28 @@ export interface BtcPersona {
   readonly description?: string;
 }
 
+/**
+ * Phase 46 — Plan 46-01 carve. The full `BittensorPersona` interface +
+ * registry ship in `src/demo/bittensor-persona.ts`; this file defines the
+ * minimal shape so `set_demo_wallet`'s Bittensor slug routing + the
+ * read-tool demo-mode address resolvers compile against a stable contract.
+ * Mirror of the 11-05 → 11-06 Solana split. The `bittensor-persona.ts`
+ * registry uses `import type` for this interface, so there is no runtime
+ * import cycle from this file's import of `findBittensorPersona`.
+ */
+export interface BittensorPersona {
+  readonly slug: string;
+  /** Prefix-42 SS58 coldkey. */
+  readonly ss58Address: string;
+  readonly description?: string;
+}
+
 let activePersona: Persona | null = null;
 let activeSolanaPersona: SolanaPersona | null = null;
 let activeTronPersona: TronPersona | null = null;
 let activeBtcPersona: BtcPersona | null = null;
 let activeLtcPersona: LtcPersona | null = null;
+let activeBittensorPersona: BittensorPersona | null = null;
 
 /**
  * Returns the currently active persona, or `null` if none has been set.
@@ -327,6 +345,56 @@ export function setActiveLtcPersonaBySlug(slug: string): LtcPersona {
 }
 
 /**
+ * Returns the currently active Bittensor persona, or `null` if none has
+ * been set. Phase 46 Plan 46-01 surface — consumed by the Bittensor
+ * read-tool demo-mode address resolvers (Plan 46-03) as the fallback when
+ * no paired `chain:"bittensor"` record is in the account store. Mirror of
+ * `getActiveSolanaPersona`.
+ */
+export function getActiveBittensorPersona(): BittensorPersona | null {
+  return activeBittensorPersona;
+}
+
+/**
+ * Activate a Bittensor persona. The registry-agnostic state setter; the
+ * persona registry validation (module-load DOA) lives in
+ * `src/demo/bittensor-persona.ts`. Defense-in-depth: throws if `persona`
+ * is falsy or lacks an `ss58Address`. Mirror of `setActiveSolanaPersona`.
+ */
+export function setActiveBittensorPersona(
+  persona: BittensorPersona,
+): BittensorPersona {
+  if (!persona || typeof persona.ss58Address !== "string") {
+    throw new Error(
+      "setActiveBittensorPersona: persona must have an ss58Address",
+    );
+  }
+  activeBittensorPersona = persona;
+  return persona;
+}
+
+/**
+ * Activate a Bittensor persona by slug. Resolves the slug against the
+ * `BITTENSOR_PERSONAS` registry in `src/demo/bittensor-persona.ts`, then
+ * delegates to `setActiveBittensorPersona`. Throws on unknown slug as
+ * defense-in-depth behind the JSON-Schema enum gate at
+ * `src/tools/set_demo_wallet.ts`. Mirror of `setActiveSolanaPersonaBySlug`.
+ *
+ * The `bittensor-persona.ts` registry uses `import type` for
+ * `BittensorPersona`, so there is no runtime cycle from this file's import
+ * of `findBittensorPersona`.
+ */
+export function setActiveBittensorPersonaBySlug(
+  slug: string,
+): BittensorPersona {
+  const persona = findBittensorPersona(slug);
+  if (!persona) {
+    throw new Error(`unknown Bittensor persona slug: ${String(slug)}`);
+  }
+  return setActiveBittensorPersona(persona);
+}
+
+/**
  * Test-only helper. Production code MUST NOT call this — the active
  * persona is process-local and intentionally non-resettable in normal
  * operation. Tests use this to restore isolation between cases.
@@ -337,4 +405,5 @@ export function _resetActivePersonaForTesting(): void {
   activeTronPersona = null;
   activeBtcPersona = null;
   activeLtcPersona = null;
+  activeBittensorPersona = null;
 }
