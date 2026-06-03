@@ -31,6 +31,9 @@ import {
 } from "../src/security/canonical-dispatch-solana.js";
 import {
   getKaminoLendProgram,
+  getKaminoPythReceiverProgram,
+  getKaminoScopeProgram,
+  getKaminoSwitchboardProgram,
   getMarginfiProgramId,
 } from "../src/config/contracts.js";
 
@@ -45,11 +48,17 @@ const ASSOCIATED_TOKEN_PROGRAM = ASSOCIATED_TOKEN_PROGRAM_ID.toBase58();
 // in src/; tests are exempt but consuming the getter keeps drift impossible).
 const MARGINFI_PROGRAM = getMarginfiProgramId();
 const KAMINO_LEND_PROGRAM = getKaminoLendProgram();
+// Phase 13 Plan 13-05 — auxiliary refresh-ceremony oracle programs (Scope /
+// Pyth receiver / Switchboard). Read through the SOT getters (no-inline sentinel).
+const KAMINO_SCOPE = getKaminoScopeProgram();
+const KAMINO_PYTH = getKaminoPythReceiverProgram();
+const KAMINO_SWITCHBOARD = getKaminoSwitchboardProgram();
 
 // Phase 12 base count (System + Token + Associated) + Phase 13 additions
-// (MarginFi + Kamino). The auxiliary-program slot (Scope / Pyth / Switchboard
-// for the Kamino refresh ceremony) is EXTENDED-IN-13-05, not now.
-const EXPECTED_ALLOWLIST_SIZE = 5;
+// (MarginFi + Kamino lending) + Phase 13 Plan 13-05 auxiliary oracle programs
+// (Scope + Pyth receiver + Switchboard — the Kamino refresh ceremony touches
+// these via CPI, Pitfall 5).
+const EXPECTED_ALLOWLIST_SIZE = 8;
 
 // Canary program IDs that remain DEFERRED / refused.
 //   - Jupiter v6 swap aggregator (Phase 14 widening target) — still deferred.
@@ -85,6 +94,18 @@ describe("SOLANA_DISPATCH_ALLOWLIST — membership (Phase 12 base + Phase 13 len
 
   it("contains the Kamino klend program ID (Phase 13 — from the SOT)", () => {
     expect(SOLANA_DISPATCH_ALLOWLIST.has(KAMINO_LEND_PROGRAM)).toBe(true);
+  });
+
+  it("contains the Kamino Scope oracle program (Phase 13 13-05 refresh ceremony)", () => {
+    expect(SOLANA_DISPATCH_ALLOWLIST.has(KAMINO_SCOPE)).toBe(true);
+  });
+
+  it("contains the Pyth receiver program (Phase 13 13-05 refresh ceremony)", () => {
+    expect(SOLANA_DISPATCH_ALLOWLIST.has(KAMINO_PYTH)).toBe(true);
+  });
+
+  it("contains the Switchboard program (Phase 13 13-05 refresh ceremony)", () => {
+    expect(SOLANA_DISPATCH_ALLOWLIST.has(KAMINO_SWITCHBOARD)).toBe(true);
   });
 
   it("does NOT contain Jupiter v6 (Phase 14 deferral)", () => {
@@ -144,6 +165,46 @@ describe("checkSolanaDispatchTarget — allowed cases", () => {
 
   it("empty programIds → allowed (no offenders by construction)", () => {
     expect(checkSolanaDispatchTarget([])).toEqual({ kind: "allowed" });
+  });
+
+  it("full Kamino write vector (lending + Scope + Pyth + Switchboard) → allowed (Pitfall 5)", () => {
+    // The touched-program set a built Kamino borrow/withdraw tx carries: the
+    // lending program (op + refresh ix) + the three refresh-ceremony oracle
+    // programs. ALL must be allowlisted or preview falsely refuses at Layer 0.5.
+    expect(
+      checkSolanaDispatchTarget([
+        KAMINO_LEND_PROGRAM,
+        KAMINO_SCOPE,
+        KAMINO_PYTH,
+        KAMINO_SWITCHBOARD,
+      ]),
+    ).toEqual({ kind: "allowed" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 2b — a Kamino tx missing one auxiliary program from the allowlist proves
+// the allowlist is over the FULL touched set, not just the lending program.
+// (Simulated by checking a program NOT in the allowlist alongside the allowed
+// set — but here we prove the inverse: removing an aux program from the
+// allowlist would name it as an offender. We assert each aux program is
+// individually required by checking a tampered/unknown oracle is refused.)
+// ---------------------------------------------------------------------------
+describe("checkSolanaDispatchTarget — auxiliary-program enforcement (Pitfall 5)", () => {
+  it("a Kamino vector with an UNKNOWN oracle (e.g. wrong Switchboard variant) names it as an offender", () => {
+    const WRONG_SWITCHBOARD = "SW1TCH7qEPTdLsDHRgPuMQjbQxKdH2aBStViMFnt640"; // off-by-one
+    const result = checkSolanaDispatchTarget([
+      KAMINO_LEND_PROGRAM,
+      KAMINO_SCOPE,
+      KAMINO_PYTH,
+      WRONG_SWITCHBOARD,
+    ]);
+    expect(result.kind).toBe("refused");
+    if (result.kind === "refused") {
+      expect(result.offenders).toEqual([WRONG_SWITCHBOARD]);
+      // the legitimately-allowed entries do NOT rescue the refusal.
+      expect(result.offenders).not.toContain(KAMINO_LEND_PROGRAM);
+    }
   });
 });
 

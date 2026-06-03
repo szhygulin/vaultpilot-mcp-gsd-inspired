@@ -47,6 +47,9 @@ import {
 
 import {
   getKaminoLendProgram,
+  getKaminoPythReceiverProgram,
+  getKaminoScopeProgram,
+  getKaminoSwitchboardProgram,
   getMarginfiProgramId,
 } from "../config/contracts.js";
 
@@ -81,13 +84,17 @@ export const SOLANA_DISPATCH_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   getMarginfiProgramId(),
   getKaminoLendProgram(),
 
-  // AUXILIARY-PROGRAM SLOT — EXTENDED-IN-13-05. The Kamino refresh ceremony
-  // (refreshReserve + refreshObligation) touches the Scope oracle / Pyth
-  // receiver / Switchboard programs (Pitfall 5). Their exact program-ID set is
-  // enumerated from the actual built Kamino instruction vector in 13-05 and
-  // added here then — NOT guessed now. MarginFi lending ix touch no auxiliary
+  // AUXILIARY-PROGRAM SLOT — EXTENDED-IN-13-05 (D-06 / Pitfall 5). The Kamino
+  // refresh ceremony (refreshReserve + refreshObligation) touches the Scope
+  // oracle / Pyth receiver / Switchboard programs via CPI. Enumerated from the
+  // actual built Kamino instruction vector (assembleKaminoTx emits these as
+  // oracleProgramIds) — NOT guessed. Sourced from the contracts SOT getters (NO
+  // inlined base58 in this file). MarginFi lending ix touch no auxiliary
   // program, so the MarginFi batch (13-01..03) needs no addition beyond the
   // two lending program IDs above.
+  getKaminoScopeProgram(),
+  getKaminoPythReceiverProgram(),
+  getKaminoSwitchboardProgram(),
 ]);
 
 /**

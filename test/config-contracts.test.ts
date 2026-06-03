@@ -60,6 +60,9 @@ import {
   getMarginfiGroup,
   getKaminoLendProgram,
   getKaminoMainMarket,
+  getKaminoScopeProgram,
+  getKaminoPythReceiverProgram,
+  getKaminoSwitchboardProgram,
   deriveMarginfiAccountPda,
   deriveKaminoObligationPda,
   deriveKaminoUserMetadataPda,
@@ -1595,15 +1598,36 @@ describe("src/config/contracts.ts — Solana lending SOT (Phase 13 Plan 13-01)",
     );
   });
 
-  it("the four Solana program/market IDs are all distinct base58 pubkeys", () => {
+  it("getKaminoScopeProgram() byte-identical to the VERIFIED Scope oracle program (13-05)", () => {
+    expect(getKaminoScopeProgram()).toBe(
+      "HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ",
+    );
+  });
+
+  it("getKaminoPythReceiverProgram() byte-identical to the VERIFIED Pyth receiver program (13-05)", () => {
+    expect(getKaminoPythReceiverProgram()).toBe(
+      "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
+    );
+  });
+
+  it("getKaminoSwitchboardProgram() byte-identical to the VERIFIED Switchboard program (13-05)", () => {
+    expect(getKaminoSwitchboardProgram()).toBe(
+      "SW1TCH7qEPTdLsDHRgPuMQjbQxKdH2aBStViMFnt64f",
+    );
+  });
+
+  it("the seven Solana program/market/oracle IDs are all distinct base58 pubkeys", () => {
     const ids = [
       getMarginfiProgramId(),
       getMarginfiGroup(),
       getKaminoLendProgram(),
       getKaminoMainMarket(),
+      getKaminoScopeProgram(),
+      getKaminoPythReceiverProgram(),
+      getKaminoSwitchboardProgram(),
     ];
     for (const id of ids) expect(id).toMatch(BASE58_PUBKEY_REGEX);
-    expect(new Set(ids).size).toBe(4);
+    expect(new Set(ids).size).toBe(7);
   });
 
   // No-inline sentinel (SOL-W-10) — mirror of the Compound/Morpho address-inline
@@ -1639,7 +1663,15 @@ describe("src/config/contracts.ts — Solana lending SOT (Phase 13 Plan 13-01)",
         .join("\n");
     }
 
-    const SENTINEL_PREFIXES = ["MFv2hWf31", "KLend2g3", "7u3HeHxY"];
+    const SENTINEL_PREFIXES = [
+      "MFv2hWf31",
+      "KLend2g3",
+      "7u3HeHxY",
+      // 13-05 auxiliary oracle programs.
+      "HFn8GnPAD",
+      "rec5EKMGg",
+      "SW1TCH7qE",
+    ];
 
     it("no src/ file OTHER than contracts.ts contains the program/market literals (code, not comments)", () => {
       const files = collectTsFiles(SRC_DIR).filter(
@@ -1664,6 +1696,9 @@ describe("src/config/contracts.ts — Solana lending SOT (Phase 13 Plan 13-01)",
         "MFv2hWf31Z9kbCa1snEPYctwafyhdvnV7FZnsebVacA",
         "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
         "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF",
+        "HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ",
+        "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
+        "SW1TCH7qEPTdLsDHRgPuMQjbQxKdH2aBStViMFnt64f",
       ];
       for (const lit of fullLiterals) {
         const count = code.split(lit).length - 1;

@@ -1693,6 +1693,12 @@ export interface SolanaContracts {
   kaminoLendProgram: string;
   /** Kamino MAIN lending-market pubkey (Q1 resolved — isPrimary market). */
   kaminoMainMarket: string;
+  /** Kamino Scope oracle program (refreshReserve CPI — EXTENDED-IN-13-05). */
+  kaminoScopeProgram: string;
+  /** Pyth receiver program (refreshReserve CPI — EXTENDED-IN-13-05). */
+  kaminoPythReceiverProgram: string;
+  /** Switchboard program (refreshReserve CPI — EXTENDED-IN-13-05). */
+  kaminoSwitchboardProgram: string;
 }
 
 const SOLANA_CONTRACTS_RAW: Record<"solana", SolanaContracts> = {
@@ -1701,6 +1707,14 @@ const SOLANA_CONTRACTS_RAW: Record<"solana", SolanaContracts> = {
     marginfiGroup: "4qp6Fx6tnZkY5Wropq9wUYgtFxXKwE6viZxFHg3rdAG8",
     kaminoLendProgram: "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
     kaminoMainMarket: "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF",
+    // EXTENDED-IN-13-05 — the Kamino refreshReserve ceremony touches these oracle
+    // programs via CPI (Pitfall 5). VERIFIED from the installed klend-sdk:
+    //   Scope        getScopeAddress() in dist/utils/oracle.js
+    //   Pyth rec     dist/@codegen/pyth_rec/programId.js
+    //   Switchboard  dist/@codegen/switchboard_v2/programId.js
+    kaminoScopeProgram: "HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ",
+    kaminoPythReceiverProgram: "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
+    kaminoSwitchboardProgram: "SW1TCH7qEPTdLsDHRgPuMQjbQxKdH2aBStViMFnt64f",
   },
 };
 
@@ -1737,6 +1751,31 @@ export function getKaminoLendProgram(): string {
  */
 export function getKaminoMainMarket(): string {
   return SOLANA_CONTRACTS_RAW.solana.kaminoMainMarket;
+}
+
+/**
+ * Get the Kamino Scope oracle program ID (base58). EXTENDED-IN-13-05 — the
+ * refreshReserve ceremony touches it via CPI; the dispatch allowlist enumerates
+ * it (Pitfall 5).
+ */
+export function getKaminoScopeProgram(): string {
+  return SOLANA_CONTRACTS_RAW.solana.kaminoScopeProgram;
+}
+
+/**
+ * Get the Pyth receiver program ID (base58). EXTENDED-IN-13-05 — refreshReserve
+ * CPI oracle target; allowlisted for the Kamino write path.
+ */
+export function getKaminoPythReceiverProgram(): string {
+  return SOLANA_CONTRACTS_RAW.solana.kaminoPythReceiverProgram;
+}
+
+/**
+ * Get the Switchboard program ID (base58). EXTENDED-IN-13-05 — refreshReserve
+ * CPI oracle target; allowlisted for the Kamino write path.
+ */
+export function getKaminoSwitchboardProgram(): string {
+  return SOLANA_CONTRACTS_RAW.solana.kaminoSwitchboardProgram;
 }
 
 // PDA-derivation helpers (D-05). Each returns a base58 string and is
@@ -1818,6 +1857,22 @@ export function deriveKaminoUserMetadataPda(owner: string): string {
   const ownerPk = new PublicKey(owner);
   const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from("user_meta", "utf8"), ownerPk.toBuffer()],
+    program,
+  );
+  return pda.toBase58();
+}
+
+/**
+ * Derive the Kamino lendingMarketAuthority PDA for `market`. Seed (klend-sdk
+ * `LENDING_MARKET_AUTH_SEED` constant, verbatim): ["lma", market] under the
+ * klend program. Every value-moving Kamino op ix references this authority.
+ * SEEDED for the Kamino write batch (13-05/06). Returns the base58 PDA.
+ */
+export function deriveKaminoLendingMarketAuthority(market: string): string {
+  const program = new PublicKey(getKaminoLendProgram());
+  const marketPk = new PublicKey(market);
+  const [pda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("lma", "utf8"), marketPk.toBuffer()],
     program,
   );
   return pda.toBase58();
