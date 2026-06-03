@@ -130,6 +130,84 @@ function addStakeLimitMethod(amountStaked: bigint, limitPrice: bigint): string {
   );
 }
 
+// =====================  Phase 48 — Fixtures TAO-D..H  =======================
+// The 5 deferred staking shapes (TAO-W-06/07/08). Each method hex is a
+// DETERMINISTIC, self-consistent SCALE-shape literal: a pinned (pallet, call)
+// index pair + the args in PALLET-MACRO order (§Exact Extrinsic Signatures
+// #1-#5). The fingerprint binds the BYTES; the live builder (Plan 48-03)
+// re-anchors byte-identity via `api.tx`. The pinned call-index literals
+// (`0x09__`, subtensorModule pallet idx 0x09) need only be self-consistent —
+// the hotkey↔netuid-SWAP regression below is the executable guard that the arg
+// ORDER is hotkey-first (the §RED FLAG money-correctness check).
+//
+// EXECUTE-TIME RED-FLAG NOTE: the canonical on-chain order is confirmed against
+// the subtensor pallet `dispatches.rs` macro + the shipped addStakeLimit
+// (hotkey-first) precedent. A live `api.tx.subtensorModule.<method>.meta.args`
+// re-introspection requires live chain metadata (out of scope for the offline
+// fixture build — no live RPC); re-confirm on a subtensor spec bump.
+const FIXTURE_HOTKEY_2 = "bb".repeat(32); // a SECOND hotkey (move-stake dest)
+const FIXTURE_COLDKEY = "cc".repeat(32); // destination coldkey (transfer-stake)
+const NETUID_1_LE = "0100"; // u16 LE = 1 (origin)
+const NETUID_2_LE = "0200"; // u16 LE = 2 (destination)
+
+// #1 add_stake(hotkey, netuid: u16, amount_staked: u64) — HOTKEY-FIRST.
+function addStakeMethod(amountStaked: bigint): string {
+  return "0x0900" + FIXTURE_HOTKEY + NETUID_1_LE + u64LeHex(amountStaked);
+}
+// The RED-FLAG SWAP: encode netuid-where-hotkey-belongs (SDK-helper netuid-first
+// order). A u16 netuid is 2 bytes; to keep the blob the same length we encode a
+// 32-byte field carrying the netuid in its low bytes then the hotkey's first 2
+// bytes as a u16 — i.e. the arg POSITIONS are swapped. The exact swapped bytes
+// do not matter; what matters is the resulting fingerprint MUST differ.
+function addStakeMethodSwapped(amountStaked: bigint): string {
+  // netuid(32B, low-byte=01) ‖ hotkey-first-2-bytes(aaaa) ‖ amount — positions swapped.
+  const netuidAs32 = "01" + "00".repeat(31);
+  return "0x0900" + netuidAs32 + "aaaa" + u64LeHex(amountStaked);
+}
+// #2 remove_stake(hotkey, netuid: u16, amount_unstaked: u64) — HOTKEY-FIRST.
+function removeStakeMethod(amountUnstaked: bigint): string {
+  return "0x0901" + FIXTURE_HOTKEY + NETUID_1_LE + u64LeHex(amountUnstaked);
+}
+function removeStakeMethodSwapped(amountUnstaked: bigint): string {
+  const netuidAs32 = "01" + "00".repeat(31);
+  return "0x0901" + netuidAs32 + "aaaa" + u64LeHex(amountUnstaked);
+}
+// #3 move_stake(origin_hotkey, destination_hotkey, origin_netuid: u16,
+//               destination_netuid: u16, alpha_amount: u64).
+function moveStakeMethod(alphaAmount: bigint): string {
+  return (
+    "0x0902" +
+    FIXTURE_HOTKEY +
+    FIXTURE_HOTKEY_2 +
+    NETUID_1_LE +
+    NETUID_2_LE +
+    u64LeHex(alphaAmount)
+  );
+}
+// #4 swap_stake(hotkey, origin_netuid: u16, destination_netuid: u16,
+//               alpha_amount: u64).
+function swapStakeMethod(alphaAmount: bigint): string {
+  return (
+    "0x0903" +
+    FIXTURE_HOTKEY +
+    NETUID_1_LE +
+    NETUID_2_LE +
+    u64LeHex(alphaAmount)
+  );
+}
+// #5 transfer_stake(destination_coldkey, hotkey, origin_netuid: u16,
+//                   destination_netuid: u16, alpha_amount: u64) — COLDKEY-FIRST.
+function transferStakeMethod(alphaAmount: bigint): string {
+  return (
+    "0x0904" +
+    FIXTURE_COLDKEY +
+    FIXTURE_HOTKEY +
+    NETUID_1_LE +
+    NETUID_2_LE +
+    u64LeHex(alphaAmount)
+  );
+}
+
 describe("computeBittensorPayloadFingerprint — TAO-PREP-01 (binding LOCKED)", () => {
   it("domain-tag content + pairwise distinctness (NOT unique-length — 20 bytes = Solana)", () => {
     // Exact tag value pinned — prevents accidental rename / version bump.
@@ -234,6 +312,168 @@ describe("computeBittensorPayloadFingerprint — TAO-PREP-01 (binding LOCKED)", 
     );
   });
 
+  // =====================  Phase 48 — Fixtures TAO-D..H  =====================
+  // The 5 deferred staking shapes (TAO-W-06/07/08). Each is an INDEPENDENTLY
+  // computed 0x literal (the same `node -e` recipe as TAO-A/B — NOT a beforeAll
+  // snapshot, per CLAUDE.md). Cross-linked to consumer tests in each it() name.
+
+  it("Fixture TAO-D — add_stake fingerprint (hotkey-first; consumer: prepare-bittensor-add-stake)", () => {
+    // add_stake(hotkey=0xaa…, netuid=1, amount_staked=2 TAO = 2_000_000_000 RAO), mode:0.
+    const blob = buildSignableBlob({ methodHex: addStakeMethod(2_000_000_000n) });
+    expect(blob.length).toBe(121);
+    const fp = computeBittensorPayloadFingerprint({ signableBytes: blob });
+    expect(fp).toBe(
+      "0xc19b3f65d74f84c0d86873005018f4f098a3d2c4cd23ebd82afe08388fe01a0e",
+    );
+  });
+
+  it("Fixture TAO-D +1-RAO regression: amount_staked swap changes fingerprint", () => {
+    const fpD = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: addStakeMethod(2_000_000_000n) }),
+    });
+    const fpPlus1 = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: addStakeMethod(2_000_000_001n) }),
+    });
+    expect(fpD).not.toBe(fpPlus1);
+    expect(fpPlus1).toBe(
+      "0x32ee019b1dd4136a445ef73a4066607c0f7687268d2d9d36a1fc2bd5e33cb2ae",
+    );
+  });
+
+  it("RED FLAG (TAO-W-06): hotkey↔netuid SWAP changes the add_stake fingerprint (≠ TAO-D)", () => {
+    // §RED FLAG money-correctness guard. Encoding add_stake in SDK-helper
+    // netuid-first order (instead of pallet hotkey-first) MUST bind different
+    // bytes — proving the param ORDER is in the preimage. A passing TAO-D with a
+    // passing SWAP-equals-TAO-D would be the silent wrong-order bug.
+    const fpD = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: addStakeMethod(2_000_000_000n) }),
+    });
+    const fpSwapped = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: addStakeMethodSwapped(2_000_000_000n) }),
+    });
+    expect(fpSwapped).not.toBe(fpD);
+    expect(fpSwapped).toBe(
+      "0x939f4c983a227c92b15f7f52ff28b785b5da7bf6bae5e7e7ba5c2e7ef0b7861e",
+    );
+  });
+
+  it("Fixture TAO-E — remove_stake fingerprint (ALPHA; consumer: prepare-bittensor-remove-stake)", () => {
+    // remove_stake(hotkey=0xaa…, netuid=1, amount_unstaked=3 ALPHA = 3_000_000_000), mode:0.
+    const blob = buildSignableBlob({ methodHex: removeStakeMethod(3_000_000_000n) });
+    expect(blob.length).toBe(121);
+    const fp = computeBittensorPayloadFingerprint({ signableBytes: blob });
+    expect(fp).toBe(
+      "0x5de53aa60a926ee91ff1ec629833818fccd49293b4046e73ce7aa0e5df0096ae",
+    );
+  });
+
+  it("Fixture TAO-E +1 regression: amount_unstaked swap changes fingerprint", () => {
+    const fpE = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: removeStakeMethod(3_000_000_000n) }),
+    });
+    const fpPlus1 = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: removeStakeMethod(3_000_000_001n) }),
+    });
+    expect(fpE).not.toBe(fpPlus1);
+    expect(fpPlus1).toBe(
+      "0xd29e691500a31b39ef9a027d38fc33977ec1bc8b82396e0268593f6591b2346e",
+    );
+  });
+
+  it("RED FLAG (TAO-W-06): hotkey↔netuid SWAP changes the remove_stake fingerprint (≠ TAO-E)", () => {
+    const fpE = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: removeStakeMethod(3_000_000_000n) }),
+    });
+    const fpSwapped = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: removeStakeMethodSwapped(3_000_000_000n) }),
+    });
+    expect(fpSwapped).not.toBe(fpE);
+    expect(fpSwapped).toBe(
+      "0xf2bd2b9f432fac0bfb222775ce28f837d928cd24831ebfa928dc387ca66d0415",
+    );
+  });
+
+  it("Fixture TAO-F — move_stake fingerprint (same-owner; consumer: prepare-bittensor-move-stake)", () => {
+    // move_stake(orig_hk=0xaa…, dest_hk=0xbb…, orig_net=1, dest_net=2, alpha=5 ALPHA), mode:0.
+    const blob = buildSignableBlob({ methodHex: moveStakeMethod(5_000_000_000n) });
+    expect(blob.length).toBe(155);
+    const fp = computeBittensorPayloadFingerprint({ signableBytes: blob });
+    expect(fp).toBe(
+      "0x467dda8b59f37a909dce8f98cbdd1aee4b1eff4cf8be4efb5de4020291a75974",
+    );
+  });
+
+  it("Fixture TAO-F +1 regression: alpha_amount swap changes fingerprint", () => {
+    const fpF = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: moveStakeMethod(5_000_000_000n) }),
+    });
+    const fpPlus1 = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: moveStakeMethod(5_000_000_001n) }),
+    });
+    expect(fpF).not.toBe(fpPlus1);
+    expect(fpPlus1).toBe(
+      "0xd87d2f54d521772332f5b92e13f660f84980cddc9a0a0f0b70cfc6ed6a555744",
+    );
+  });
+
+  it("Fixture TAO-G — swap_stake fingerprint (same-owner; consumer: prepare-bittensor-swap-stake)", () => {
+    // swap_stake(hotkey=0xaa…, orig_net=1, dest_net=2, alpha=5 ALPHA), mode:0.
+    const blob = buildSignableBlob({ methodHex: swapStakeMethod(5_000_000_000n) });
+    expect(blob.length).toBe(123);
+    const fp = computeBittensorPayloadFingerprint({ signableBytes: blob });
+    expect(fp).toBe(
+      "0xc9d4435269160bb25ad803e3a8f4fecf940ed740ee323fa9f0c4fb8f88d52af4",
+    );
+  });
+
+  it("Fixture TAO-G +1 regression: alpha_amount swap changes fingerprint", () => {
+    const fpG = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: swapStakeMethod(5_000_000_000n) }),
+    });
+    const fpPlus1 = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: swapStakeMethod(5_000_000_001n) }),
+    });
+    expect(fpG).not.toBe(fpPlus1);
+    expect(fpPlus1).toBe(
+      "0x31d00a54657e0fbd7071a56d899efca02f28aebb91f945c0f28494871cf17ea1",
+    );
+  });
+
+  it("Fixture TAO-H — transfer_stake fingerprint (CUSTODY; consumer: prepare-bittensor-transfer-stake)", () => {
+    // transfer_stake(dest_coldkey=0xcc…, hotkey=0xaa…, orig_net=1, dest_net=2, alpha=5 ALPHA), mode:0.
+    // destination_coldkey FIRST — the custody-change param order.
+    const blob = buildSignableBlob({ methodHex: transferStakeMethod(5_000_000_000n) });
+    expect(blob.length).toBe(155);
+    const fp = computeBittensorPayloadFingerprint({ signableBytes: blob });
+    expect(fp).toBe(
+      "0xcebe7bde319701717e0f27601dbbb29c890c9c4eb6dac9e03d18f7061b24a9d7",
+    );
+  });
+
+  it("Fixture TAO-H +1 regression: alpha_amount swap changes fingerprint", () => {
+    const fpH = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: transferStakeMethod(5_000_000_000n) }),
+    });
+    const fpPlus1 = computeBittensorPayloadFingerprint({
+      signableBytes: buildSignableBlob({ methodHex: transferStakeMethod(5_000_000_001n) }),
+    });
+    expect(fpH).not.toBe(fpPlus1);
+    expect(fpPlus1).toBe(
+      "0x4bd626bb29a89295050a39c7ef7e8990044f8932a78dc81e5da07839952350f3",
+    );
+  });
+
+  it("Fixtures TAO-D..H are pairwise-distinct (no two shapes collide)", () => {
+    const fps = [
+      computeBittensorPayloadFingerprint({ signableBytes: buildSignableBlob({ methodHex: addStakeMethod(2_000_000_000n) }) }),
+      computeBittensorPayloadFingerprint({ signableBytes: buildSignableBlob({ methodHex: removeStakeMethod(3_000_000_000n) }) }),
+      computeBittensorPayloadFingerprint({ signableBytes: buildSignableBlob({ methodHex: moveStakeMethod(5_000_000_000n) }) }),
+      computeBittensorPayloadFingerprint({ signableBytes: buildSignableBlob({ methodHex: swapStakeMethod(5_000_000_000n) }) }),
+      computeBittensorPayloadFingerprint({ signableBytes: buildSignableBlob({ methodHex: transferStakeMethod(5_000_000_000n) }) }),
+    ];
+    expect(new Set(fps).size).toBe(5);
+  });
+
   it("mode:1 fixture — recompute on spec bump (metadataHash in additionalSigned tail)", () => {
     // mode:1 enables CheckMetadataHash: the blob gains the 32-byte metadataHash
     // in the additionalSigned tail (47-RESEARCH §Probe 1 + Decision D-MD). The
@@ -296,6 +536,12 @@ describe("FROZEN cryptographic-binding chain — zero-diff vs origin/main (TAO-W
     "src/signing/presign-hash.ts",
     "src/signing/presign-hash-solana.ts",
     "src/signing/presign-hash-tron.ts",
+    // Phase 48 (TAO-W-09): the 2 REUSED Bittensor binding modules. The 5 new
+    // tx shapes flow through these shape-agnostic pure fns UNCHANGED — the
+    // binding gains NO shape-specific branch. Adding them to the gate asserts
+    // they are byte-identical to origin/main this phase.
+    "src/signing/payload-fingerprint-bittensor.ts",
+    "src/signing/presign-hash-bittensor.ts",
   ];
 
   function gitDiff(file: string): string | null {

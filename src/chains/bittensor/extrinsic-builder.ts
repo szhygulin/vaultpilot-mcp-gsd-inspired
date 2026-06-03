@@ -136,6 +136,43 @@ interface SubtensorBuilderApi {
         limitPrice: bigint,
         allowPartial: boolean,
       ): { method: { toHex(): string } };
+      // Phase 48 deferred staking shapes — PALLET-MACRO (hotkey-first) ORDER.
+      // RED FLAG (48-RESEARCH §RED FLAG): the on-chain SCALE param order is
+      // hotkey-first (NOT the Python-SDK-docs netuid-first). Building in
+      // SDK-helper order would bind the WRONG bytes. The order here matches the
+      // subtensor pallet `dispatches.rs` macro + the shipped addStakeLimit
+      // precedent; re-introspect `api.tx.subtensorModule.<method>.meta.args`
+      // against live chain metadata on a spec bump to re-confirm.
+      addStake(
+        hotkey: string,
+        netuid: number,
+        amountStaked: bigint,
+      ): { method: { toHex(): string } };
+      removeStake(
+        hotkey: string,
+        netuid: number,
+        amountUnstaked: bigint,
+      ): { method: { toHex(): string } };
+      moveStake(
+        originHotkey: string,
+        destinationHotkey: string,
+        originNetuid: number,
+        destinationNetuid: number,
+        alphaAmount: bigint,
+      ): { method: { toHex(): string } };
+      swapStake(
+        hotkey: string,
+        originNetuid: number,
+        destinationNetuid: number,
+        alphaAmount: bigint,
+      ): { method: { toHex(): string } };
+      transferStake(
+        destinationColdkey: string,
+        hotkey: string,
+        originNetuid: number,
+        destinationNetuid: number,
+        alphaAmount: bigint,
+      ): { method: { toHex(): string } };
     };
   };
   rpc: {
@@ -195,6 +232,59 @@ export type BuildBittensorInput =
       allowPartial?: boolean;
       ss58Address: string;
       netuidIdentity?: string;
+    }
+  // ---- Phase 48 deferred staking shapes (TAO-W-06/07/08) ----
+  // Param fields carry their UNIT in the name (48-RESEARCH §Pitfall 3): one
+  // field never carries both TAO/RAO and ALPHA. PLAIN/reallocation/transfer
+  // shapes have NO limit_price (no guard — that is the point; the NOTICE block
+  // in Plan 48-03 is the steer to the *_limit defaults).
+  | {
+      kind: "add-stake"; // TAO-W-06 — PLAIN add_stake (no slippage guard)
+      hotkey: string;
+      netuid: number;
+      /** amount_staked in TAO/RAO (NOT alpha — §Pitfall 3). */
+      amountStakedRao: bigint;
+      ss58Address: string;
+      netuidIdentity?: string;
+    }
+  | {
+      kind: "remove-stake"; // TAO-W-06 — PLAIN remove_stake (no slippage guard)
+      hotkey: string;
+      netuid: number;
+      /** amount_unstaked in ALPHA (subnet token — NOT TAO/RAO; §Pitfall 3). */
+      amountUnstakedAlpha: bigint;
+      ss58Address: string;
+      netuidIdentity?: string;
+    }
+  | {
+      kind: "move-stake"; // TAO-W-07 — same-owner reallocation (origin→dest hotkey/subnet)
+      originHotkey: string;
+      destinationHotkey: string;
+      originNetuid: number;
+      destinationNetuid: number;
+      /** alpha_amount in ALPHA. */
+      alphaAmount: bigint;
+      ss58Address: string;
+    }
+  | {
+      kind: "swap-stake"; // TAO-W-07 — same-owner, one hotkey, subnet→subnet
+      hotkey: string;
+      originNetuid: number;
+      destinationNetuid: number;
+      /** alpha_amount in ALPHA. */
+      alphaAmount: bigint;
+      ss58Address: string;
+    }
+  | {
+      kind: "transfer-stake"; // TAO-W-08 — CUSTODY CHANGE (alpha → destination coldkey)
+      /** destination_coldkey FIRST (pallet-macro order) — the NEW owner. */
+      destinationColdkey: string;
+      hotkey: string;
+      originNetuid: number;
+      destinationNetuid: number;
+      /** alpha_amount in ALPHA. */
+      alphaAmount: bigint;
+      ss58Address: string;
     };
 
 /** The byte-stable build result the prepare tools store on the handle. */
@@ -285,7 +375,7 @@ export async function buildBittensorUnsignedTx(
       allowPartial,
       netuidIdentity: input.netuidIdentity,
     };
-  } else {
+  } else if (input.kind === "remove-stake-limit") {
     section = "subtensorModule";
     method = "removeStakeLimit";
     const bps = tolerancePctToBps(input.tolerancePct ?? DEFAULT_STAKE_TOLERANCE_PCT);
@@ -315,6 +405,105 @@ export async function buildBittensorUnsignedTx(
       limitPrice,
       allowPartial,
       netuidIdentity: input.netuidIdentity,
+    };
+  } else if (input.kind === "add-stake") {
+    // TAO-W-06 — PLAIN add_stake. NO limit_price, NO simSwap (no guard).
+    // HOTKEY-FIRST per pallet-macro order (§RED FLAG); re-introspect
+    // `api.tx.subtensorModule.addStake.meta.args` on a spec bump to re-confirm
+    // hotkey-first BEFORE re-pinning Fixture TAO-D.
+    section = "subtensorModule";
+    method = "addStake";
+    const call = api.tx.subtensorModule.addStake(
+      input.hotkey,
+      input.netuid,
+      input.amountStakedRao,
+    );
+    methodHex = call.method.toHex();
+    instructionSummary = {
+      kind: "add-stake",
+      hotkey: input.hotkey,
+      netuid: input.netuid,
+      amountStakedRao: input.amountStakedRao,
+      netuidIdentity: input.netuidIdentity,
+    };
+  } else if (input.kind === "remove-stake") {
+    // TAO-W-06 — PLAIN remove_stake. amount is ALPHA. HOTKEY-FIRST (§RED FLAG);
+    // re-introspect `api.tx.subtensorModule.removeStake.meta.args` on a spec
+    // bump to re-confirm hotkey-first BEFORE re-pinning Fixture TAO-E.
+    section = "subtensorModule";
+    method = "removeStake";
+    const call = api.tx.subtensorModule.removeStake(
+      input.hotkey,
+      input.netuid,
+      input.amountUnstakedAlpha,
+    );
+    methodHex = call.method.toHex();
+    instructionSummary = {
+      kind: "remove-stake",
+      hotkey: input.hotkey,
+      netuid: input.netuid,
+      amountUnstakedAlpha: input.amountUnstakedAlpha,
+      netuidIdentity: input.netuidIdentity,
+    };
+  } else if (input.kind === "move-stake") {
+    // TAO-W-07 — same-owner reallocation (origin→dest hotkey/subnet). ALPHA.
+    section = "subtensorModule";
+    method = "moveStake";
+    const call = api.tx.subtensorModule.moveStake(
+      input.originHotkey,
+      input.destinationHotkey,
+      input.originNetuid,
+      input.destinationNetuid,
+      input.alphaAmount,
+    );
+    methodHex = call.method.toHex();
+    instructionSummary = {
+      kind: "move-stake",
+      originHotkey: input.originHotkey,
+      destinationHotkey: input.destinationHotkey,
+      originNetuid: input.originNetuid,
+      destinationNetuid: input.destinationNetuid,
+      alphaAmount: input.alphaAmount,
+    };
+  } else if (input.kind === "swap-stake") {
+    // TAO-W-07 — same-owner, one hotkey, subnet→subnet. ALPHA.
+    section = "subtensorModule";
+    method = "swapStake";
+    const call = api.tx.subtensorModule.swapStake(
+      input.hotkey,
+      input.originNetuid,
+      input.destinationNetuid,
+      input.alphaAmount,
+    );
+    methodHex = call.method.toHex();
+    instructionSummary = {
+      kind: "swap-stake",
+      hotkey: input.hotkey,
+      originNetuid: input.originNetuid,
+      destinationNetuid: input.destinationNetuid,
+      alphaAmount: input.alphaAmount,
+    };
+  } else {
+    // TAO-W-08 — transfer_stake. CUSTODY CHANGE. destination_coldkey FIRST
+    // (pallet-macro order) — alpha leaves the user's coldkey for a DIFFERENT
+    // owner. ALPHA. Withdrawal-grade handling lives in Plan 48-03.
+    section = "subtensorModule";
+    method = "transferStake";
+    const call = api.tx.subtensorModule.transferStake(
+      input.destinationColdkey,
+      input.hotkey,
+      input.originNetuid,
+      input.destinationNetuid,
+      input.alphaAmount,
+    );
+    methodHex = call.method.toHex();
+    instructionSummary = {
+      kind: "transfer-stake",
+      destinationColdkey: input.destinationColdkey,
+      hotkey: input.hotkey,
+      originNetuid: input.originNetuid,
+      destinationNetuid: input.destinationNetuid,
+      alphaAmount: input.alphaAmount,
     };
   }
 

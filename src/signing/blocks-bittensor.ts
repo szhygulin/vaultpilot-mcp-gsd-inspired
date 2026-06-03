@@ -75,6 +75,139 @@ export const PREPARE_RECEIPT_BITTENSOR_REMOVE_STAKE_TEMPLATE: string = [
   "  allow_partial:   {ALLOW_PARTIAL}",
 ].join("\n");
 
+// =====================  Phase 48 — deferred staking blocks  =================
+// PREPARE RECEIPT templates for the 5 plain/reallocation/transfer tools + the
+// preview-arm advisory blocks (NOTICE / WITHDRAWAL / WARNING). Same SOT rule:
+// no tool/preview-arm inlines a block — all live here. Per-extrinsic UNIT
+// labels are load-bearing (§Pitfall 3): add_stake amount = TAO/RAO; remove /
+// move / swap / transfer amounts = ALPHA.
+
+/**
+ * PREPARE RECEIPT — PLAIN add_stake (Phase 48, TAO-W-06). No limit_price line
+ * (unguarded — the NOTICE block steers to the *_limit default). Slots:
+ *   `{HOTKEY}` (full SS58), `{NETUID}`, `{SUBNET}`, `{AMOUNT_RAO}` (TAO/RAO).
+ */
+export const PREPARE_RECEIPT_BITTENSOR_ADD_STAKE_PLAIN_TEMPLATE: string = [
+  "PREPARE RECEIPT (Bittensor — add_stake, PLAIN / no slippage guard)",
+  "  chain:            bittensor (subtensor / Finney)",
+  "  call:             subtensorModule.add_stake",
+  "  hotkey:           {HOTKEY}",
+  "  netuid:           {NETUID}",
+  "  subnet:           {SUBNET}",
+  "  amount (TAO/RAO): {AMOUNT_RAO}",
+  "  NOTE: no limit_price — prefer prepare_bittensor_add_stake_limit (guarded).",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT — PLAIN remove_stake (Phase 48, TAO-W-06). Amount ALPHA.
+ * Slots: `{HOTKEY}`, `{NETUID}`, `{SUBNET}`, `{AMOUNT_ALPHA}`.
+ */
+export const PREPARE_RECEIPT_BITTENSOR_REMOVE_STAKE_PLAIN_TEMPLATE: string = [
+  "PREPARE RECEIPT (Bittensor — remove_stake, PLAIN / no slippage guard)",
+  "  chain:           bittensor (subtensor / Finney)",
+  "  call:            subtensorModule.remove_stake",
+  "  hotkey:          {HOTKEY}",
+  "  netuid:          {NETUID}",
+  "  subnet:          {SUBNET}",
+  "  amount (ALPHA):  {AMOUNT_ALPHA}",
+  "  NOTE: no limit_price — prefer prepare_bittensor_remove_stake_limit (guarded).",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT — move_stake (Phase 48, TAO-W-07). SAME-owner reallocation
+ * (origin→dest hotkey AND/OR subnet). Amount ALPHA. NO custody-change line —
+ * the coldkey owner is unchanged. Slots: `{ORIGIN_HOTKEY}`,
+ * `{DESTINATION_HOTKEY}` (both full SS58), `{ORIGIN_NETUID}`,
+ * `{DESTINATION_NETUID}`, `{AMOUNT_ALPHA}`.
+ */
+export const PREPARE_RECEIPT_BITTENSOR_MOVE_STAKE_TEMPLATE: string = [
+  "PREPARE RECEIPT (Bittensor — move_stake, SAME-owner reallocation)",
+  "  chain:              bittensor (subtensor / Finney)",
+  "  call:               subtensorModule.move_stake",
+  "  origin_hotkey:      {ORIGIN_HOTKEY}",
+  "  destination_hotkey: {DESTINATION_HOTKEY}",
+  "  origin_netuid:      {ORIGIN_NETUID}",
+  "  destination_netuid: {DESTINATION_NETUID}",
+  "  amount (ALPHA):     {AMOUNT_ALPHA}",
+  "  ownership:          UNCHANGED — same coldkey owner (NOT a transfer).",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT — swap_stake (Phase 48, TAO-W-07). SAME-owner, ONE hotkey,
+ * subnet→subnet. Amount ALPHA. Slots: `{HOTKEY}` (full SS58),
+ * `{ORIGIN_NETUID}`, `{DESTINATION_NETUID}`, `{AMOUNT_ALPHA}`.
+ */
+export const PREPARE_RECEIPT_BITTENSOR_SWAP_STAKE_TEMPLATE: string = [
+  "PREPARE RECEIPT (Bittensor — swap_stake, SAME-owner subnet swap)",
+  "  chain:              bittensor (subtensor / Finney)",
+  "  call:               subtensorModule.swap_stake",
+  "  hotkey:             {HOTKEY}",
+  "  origin_netuid:      {ORIGIN_NETUID}",
+  "  destination_netuid: {DESTINATION_NETUID}",
+  "  amount (ALPHA):     {AMOUNT_ALPHA}",
+  "  ownership:          UNCHANGED — same coldkey owner (NOT a transfer).",
+].join("\n");
+
+/**
+ * PREPARE RECEIPT — transfer_stake (Phase 48, TAO-W-08). CUSTODY CHANGE — the
+ * alpha leaves the paired coldkey for `{DESTINATION_COLDKEY}` (a DIFFERENT
+ * owner). The destination coldkey is echoed FULL/untruncated (TAO-W-08 + the
+ * shipped no-truncation invariant). Amount ALPHA. Slots:
+ * `{DESTINATION_COLDKEY}` (full SS58), `{HOTKEY}` (full SS58),
+ * `{ORIGIN_NETUID}`, `{DESTINATION_NETUID}`, `{AMOUNT_ALPHA}`.
+ */
+export const PREPARE_RECEIPT_BITTENSOR_TRANSFER_STAKE_TEMPLATE: string = [
+  "PREPARE RECEIPT (Bittensor — transfer_stake, CUSTODY CHANGE)",
+  "  chain:               bittensor (subtensor / Finney)",
+  "  call:                subtensorModule.transfer_stake",
+  "  destination_coldkey: {DESTINATION_COLDKEY}",
+  "  hotkey:              {HOTKEY}",
+  "  origin_netuid:       {ORIGIN_NETUID}",
+  "  destination_netuid:  {DESTINATION_NETUID}",
+  "  amount (ALPHA):      {AMOUNT_ALPHA}",
+  "  ownership:           CHANGES — alpha is moved to destination_coldkey",
+  "                       (a DIFFERENT owner than your paired Ledger coldkey).",
+].join("\n");
+
+/**
+ * NOTICE — no slippage guard (Phase 48, TAO-W-06, §Pattern C). ADVISORY (NOT a
+ * refusal) steering the plain add/remove to the *_limit guarded defaults.
+ * Emitted ABOVE the LEDGER BLIND-SIGN HASH in the preview DECODED-ARGS arm.
+ * Constant prose — no placeholders.
+ */
+export const NOTICE_NO_SLIPPAGE_GUARD_BITTENSOR_TEMPLATE: string = [
+  "[NOTICE — no slippage guard]",
+  "  This is a PLAIN add_stake / remove_stake with NO limit_price protection.",
+  "  The dTAO AMM is concentrated-liquidity — a large stake can slip or be sandwiched.",
+  "  PREFER prepare_bittensor_add_stake_limit / _remove_stake_limit (the slippage-guarded DEFAULTS).",
+].join("\n");
+
+/**
+ * WITHDRAWAL — CUSTODY CHANGE (Phase 48, TAO-W-08, §Pattern D). Emitted ONLY
+ * for transfer_stake (move/swap do NOT emit it — the distinctness guard). The
+ * destination coldkey is echoed FULL/unredacted. Slot: `{DESTINATION_COLDKEY}`.
+ */
+export const WITHDRAWAL_CUSTODY_CHANGE_BITTENSOR_TEMPLATE: string = [
+  "[WITHDRAWAL — CUSTODY CHANGE]",
+  "  transfer_stake moves your alpha to a DIFFERENT coldkey. After this, the alpha",
+  "  is OWNED BY destination_coldkey — NOT your paired Ledger coldkey.",
+  "  destination_coldkey: {DESTINATION_COLDKEY}",
+  "  This is NOT move_stake (which keeps your ownership). Confirm the destination coldkey on-device.",
+].join("\n");
+
+/**
+ * WARNING — hotkey not registered on netuid (Phase 48, TAO-R-05, §Pattern E).
+ * Preview-time ADVISORY (never a refusal) when the staked hotkey is absent from
+ * getNeuronsLite(netuid). Slot: `{NETUID}`.
+ */
+export const UNREGISTERED_HOTKEY_WARNING_BITTENSOR_TEMPLATE: string = [
+  "[WARNING — hotkey not registered on netuid {NETUID}]",
+  "  The target hotkey was NOT found among the neurons registered on this subnet.",
+  "  Staking to an unregistered/unknown hotkey can send funds to a dead validator.",
+  "  Double-check the hotkey + netuid before you approve on-device. (Advisory — the",
+  "  on-device hash is the trust anchor; a transient RPC failure also yields no signal.)",
+].join("\n");
+
 /**
  * LEDGER BLIND-SIGN HASH (Bittensor) — the blake2-256 device-display hash
  * surface, emitted by the preview_send Bittensor branch (Plan 47-03). THE

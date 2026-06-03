@@ -63,6 +63,46 @@ export function fixtureAddStakeLimitMethodHex(
   );
 }
 
+// =====================  Phase 48 — TAO-D..H fixture method hexes  ===========
+// Byte-identical to the offline fixtures in test/signing-fingerprint-bittensor
+// (pinned 0x09__ pallet/call literals, pallet-macro arg order). The factories
+// return these regardless of the real SS58 args the prepare tools pass (the
+// test controls byte-identity) but DO depend on the amount so a +1 amount
+// changes the fingerprint. netuid origin=1 (0100), dest=2 (0200).
+const FIXTURE_HOTKEY_2 = "bb".repeat(32);
+const FIXTURE_COLDKEY = "cc".repeat(32);
+const N1_LE = "0100";
+const N2_LE = "0200";
+export function fixtureAddStakeMethodHex(amountStaked: bigint): string {
+  return "0x0900" + FIXTURE_HOTKEY + N1_LE + u64LeHex(amountStaked);
+}
+export function fixtureRemoveStakeMethodHex(amountUnstaked: bigint): string {
+  return "0x0901" + FIXTURE_HOTKEY + N1_LE + u64LeHex(amountUnstaked);
+}
+export function fixtureMoveStakeMethodHex(alphaAmount: bigint): string {
+  return (
+    "0x0902" +
+    FIXTURE_HOTKEY +
+    FIXTURE_HOTKEY_2 +
+    N1_LE +
+    N2_LE +
+    u64LeHex(alphaAmount)
+  );
+}
+export function fixtureSwapStakeMethodHex(alphaAmount: bigint): string {
+  return "0x0903" + FIXTURE_HOTKEY + N1_LE + N2_LE + u64LeHex(alphaAmount);
+}
+export function fixtureTransferStakeMethodHex(alphaAmount: bigint): string {
+  return (
+    "0x0904" +
+    FIXTURE_COLDKEY +
+    FIXTURE_HOTKEY +
+    N1_LE +
+    N2_LE +
+    u64LeHex(alphaAmount)
+  );
+}
+
 /** Probed swap-sim envelope shape (47-RESEARCH §Probe 6) — concentrated AMM. */
 export interface SwapSimConfig {
   /** RAO-per-alpha price (1e9-scaled fixed-point) returned by currentAlphaPrice. */
@@ -171,6 +211,43 @@ export function makeMockBittensorApi(opts: MockApiOptions = {}): unknown {
       method: {
         toHex: () => fixtureAddStakeLimitMethodHex(amountUnstaked, limitPrice),
       },
+    }),
+    // Phase 48 deferred staking shapes — pallet-macro (hotkey-first) order.
+    addStake: (_hotkey: string, _netuid: number, amountStaked: bigint) => ({
+      method: { toHex: () => fixtureAddStakeMethodHex(amountStaked) },
+    }),
+    removeStake: (
+      _hotkey: string,
+      _netuid: number,
+      amountUnstaked: bigint,
+    ) => ({
+      method: { toHex: () => fixtureRemoveStakeMethodHex(amountUnstaked) },
+    }),
+    moveStake: (
+      _originHotkey: string,
+      _destinationHotkey: string,
+      _originNetuid: number,
+      _destinationNetuid: number,
+      alphaAmount: bigint,
+    ) => ({
+      method: { toHex: () => fixtureMoveStakeMethodHex(alphaAmount) },
+    }),
+    swapStake: (
+      _hotkey: string,
+      _originNetuid: number,
+      _destinationNetuid: number,
+      alphaAmount: bigint,
+    ) => ({
+      method: { toHex: () => fixtureSwapStakeMethodHex(alphaAmount) },
+    }),
+    transferStake: (
+      _destinationColdkey: string,
+      _hotkey: string,
+      _originNetuid: number,
+      _destinationNetuid: number,
+      alphaAmount: bigint,
+    ) => ({
+      method: { toHex: () => fixtureTransferStakeMethodHex(alphaAmount) },
     }),
   };
 

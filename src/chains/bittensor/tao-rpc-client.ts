@@ -46,6 +46,13 @@ interface SubtensorRuntimeApi {
         addr: string,
       ): Promise<{ data: { free: { toBigInt(): bigint } } }>;
     };
+    subtensorModule: {
+      // Phase 48 (TAO-R-05): on-chain validator identity, keyed by COLDKEY
+      // AccountId. `IdentitiesV2` is a StorageMap; `.toJSON()` decodes the
+      // value struct (name/url/etc.) or `null` when absent. OQ-1: the exact
+      // value-struct field names are fixture-at-execute — tolerated null.
+      identitiesV2(coldkey: string): Promise<{ toJSON(): unknown }>;
+    };
   };
   call: {
     stakeInfoRuntimeApi: {
@@ -59,6 +66,12 @@ interface SubtensorRuntimeApi {
     };
     neuronInfoRuntimeApi: {
       getNeuronsLite(netuid: number): Promise<{ toJSON(): unknown }>;
+    };
+    // Phase 48 (TAO-R-05): decoded delegate info (take/commission +
+    // per-netuid registrations). `getDelegate(hotkey)` → Option<DelegateInfo>;
+    // `.toJSON()` → the DelegateInfo shape or `null` when not a delegate.
+    delegateInfoRuntimeApi: {
+      getDelegate(hotkey: string): Promise<{ toJSON(): unknown }>;
     };
   };
 }
@@ -350,8 +363,10 @@ export async function getSubnets(): Promise<BittensorSubnetRow[]> {
 }
 
 /**
- * A single validator row (minimal — TAO-R-05 delegate-identity +
- * commission enrichment is Phase 48).
+ * A single validator row. Phase 48 (TAO-R-05) enriches the minimal Phase-46
+ * shape with on-chain delegate `identity` (name) + per-netuid
+ * `registeredNetuids`, sourced from `delegateInfoRuntimeApi.getDelegate` +
+ * `identitiesV2`. Both enrichment fields tolerate absence (null / empty).
  */
 export interface BittensorValidatorRow {
   netuid: number;
@@ -362,11 +377,22 @@ export interface BittensorValidatorRow {
   /**
    * Validator commission as a percentage string (e.g. `"18"` for 18%). The
    * delegate take on-chain is a u16 fraction of `2^16 - 1` (65535); we
-   * normalize to a 0-100 percentage rounded to 2 decimals. `null` when the
-   * lite shape does not carry a take for this neuron (the minimal
-   * enumeration tolerates absence — Phase-48 enrichment fills the gaps).
+   * normalize to a 0-100 percentage rounded to 2 decimals. `null` when no
+   * take is resolvable (lite shape omits it AND getDelegate returns None).
    */
   takePercent: string | null;
+  /**
+   * On-chain delegate identity name (TAO-R-05), decoded from `identitiesV2`
+   * keyed by the delegate's owner coldkey. `null` when the hotkey is not a
+   * registered delegate OR has no on-chain identity (OQ-1 tolerance —
+   * mirrors the shipped null-take tolerance).
+   */
+  identity: string | null;
+  /**
+   * Subnet ids this hotkey is registered on (TAO-R-05), from
+   * `DelegateInfo.registrations`. Empty `[]` when getDelegate returns None.
+   */
+  registeredNetuids: number[];
 }
 
 /** u16 take denominator — the delegate take is a fraction of 2^16 - 1. */
@@ -386,16 +412,62 @@ function normalizeTakePercent(rawTake: unknown): string | null {
 }
 
 /**
+ * The decoded `DelegateInfo.toJSON()` shape (Phase 48 — TAO-R-05). polkadot-js
+ * `.toJSON()` camelCases the on-chain struct field names (`owner_ss58` →
+ * `ownerSs58`). `take` is a Compact<u16> (fraction of 65535); `registrations`
+ * is a `Vec<NetUid>`. Fields are optional/tolerant — `getDelegate` may return
+ * `null` (not a delegate). `[CITED: 48-RESEARCH §Validator Enrichment Reads]`.
+ */
+interface DelegateInfoJson {
+  take?: unknown;
+  ownerSs58?: string;
+  registrations?: Array<number | string>;
+  validatorPermits?: Array<number | string>;
+}
+
+/**
+ * Decode an `identitiesV2(coldkey).toJSON()` value to a display name string,
+ * or `null` (TAO-R-05, OQ-1 — the value-struct field names are
+ * fixture-at-execute). The on-chain `IdentitiesV2` value is a struct; the name
+ * field is most likely `name` (a byte-vector) but the exact shape is probed at
+ * execute time. Tolerant: handles a `{ name }` byte-vector / string field, a
+ * bare string, or `null`/absent → `null`. Never throws (a malformed identity
+ * must not break the enumeration — mirrors the shipped null-take tolerance).
+ */
+function decodeIdentityName(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  // The decoded value is an object with a `name` field (the common case) …
+  if (typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    const nameField = obj.name ?? obj.Name ?? obj.display;
+    if (nameField !== undefined && nameField !== null) {
+      const decoded = decodeByteString(nameField);
+      return decoded.length > 0 ? decoded : null;
+    }
+    return null;
+  }
+  // … or a bare hex/byte-array/string value.
+  const decoded = decodeByteString(raw);
+  return decoded.length > 0 ? decoded : null;
+}
+
+/**
  * Validator enumeration via the decoded `neuronInfoRuntimeApi.getNeuronsLite`
- * runtime API (Open Question 2, RESOLVED in 46-01 at execute time
- * 2026-06-03): ONE call returns all neurons for a netuid with `hotkey`
- * (SS58), `uid`, `validatorPermit` (bool), and the delegate `take` (u16) —
- * the lowest-round-trip path. The lite shape does NOT carry on-chain
- * identity (Phase-48 TAO-R-05 enrichment), so the minimal enumeration here
- * filters `validatorPermit === true` and surfaces hotkey + uid + take%.
+ * runtime API (Open Question 2, RESOLVED in 46-01) — ONE call returns all
+ * neurons for a netuid with `hotkey` (SS58), `uid`, `validatorPermit` (bool),
+ * and the lite delegate `take` (u16). Filters `validatorPermit === true`.
  *
- * `netuid` is REQUIRED — `getNeuronsLite` is per-subnet. The tool layer
- * gates a missing netuid before the round-trip.
+ * Phase 48 (TAO-R-05) ENRICHMENT: each permit-holding row is enriched with
+ *   - `takePercent` — from `delegateInfoRuntimeApi.getDelegate(hotkey).take`
+ *     via the shipped `normalizeTakePercent` (falls back to the lite take);
+ *   - `registeredNetuids` — from `DelegateInfo.registrations`;
+ *   - `identity` — from `identitiesV2(ownerSs58)` (coldkey-keyed name).
+ * getDelegate returning None → identity null, registeredNetuids []. An empty
+ * identitiesV2 → identity null. Neither is an error (OQ-1 tolerance).
+ *
+ * `netuid` is REQUIRED — `getNeuronsLite` is per-subnet. The tool layer gates
+ * a missing netuid before the round-trip. All api access routes through
+ * `_bittensorRegistry.getApi()` (the test-spy seam — NEVER a live socket).
  */
 export async function getValidators(
   netuid: number,
@@ -409,15 +481,77 @@ export async function getValidators(
       validatorPermit: boolean;
       take?: unknown;
     }>;
-    return (neurons ?? [])
-      .filter((n) => n.validatorPermit === true)
-      .map((n) => ({
+    const permitted = (neurons ?? []).filter((n) => n.validatorPermit === true);
+
+    const rows: BittensorValidatorRow[] = [];
+    for (const n of permitted) {
+      // Enrich via getDelegate (take/registrations) + identitiesV2 (name).
+      // getDelegate returning None → null delegate → identity null + [] nets.
+      let delegate: DelegateInfoJson | null = null;
+      try {
+        const rawDelegate =
+          await api.call.delegateInfoRuntimeApi.getDelegate(n.hotkey);
+        delegate = (rawDelegate.toJSON() as DelegateInfoJson | null) ?? null;
+      } catch {
+        delegate = null; // best-effort — a per-hotkey enrich failure is tolerated.
+      }
+
+      // take%: prefer the decoded DelegateInfo take, else the lite take.
+      const takePercent =
+        delegate && delegate.take !== undefined
+          ? normalizeTakePercent(delegate.take)
+          : normalizeTakePercent(n.take);
+
+      const registeredNetuids = (delegate?.registrations ?? []).map((x) =>
+        Number(toBigIntSafe(x)),
+      );
+
+      // Identity name keyed by the delegate's owner coldkey (OQ-1 tolerant).
+      let identity: string | null = null;
+      if (delegate?.ownerSs58) {
+        try {
+          const rawIdent = await api.query.subtensorModule.identitiesV2(
+            delegate.ownerSs58,
+          );
+          identity = decodeIdentityName(rawIdent.toJSON());
+        } catch {
+          identity = null; // empty / malformed identity → null (tolerated).
+        }
+      }
+
+      rows.push({
         netuid,
         uid: n.uid,
         hotkey: n.hotkey,
         validatorPermit: n.validatorPermit,
-        takePercent: normalizeTakePercent(n.take),
-      }));
+        takePercent,
+        identity,
+        registeredNetuids,
+      });
+    }
+    return rows;
+  } catch (e) {
+    throw new BittensorRpcError(e);
+  }
+}
+
+/**
+ * Per-netuid registration signal (Phase 48 — TAO-R-05, OQ-2 resolved): is
+ * `hotkey` registered on `netuid`? Resolved by the hotkey's PRESENCE in
+ * `getNeuronsLite(netuid)` — the cheapest per-target-subnet check (one decoded
+ * call against the exact subnet the staking call targets). Plan 48-03 consumes
+ * this for the preview-time unregistered-hotkey warning. Routes through
+ * `_bittensorRegistry.getApi()` (the test-spy seam — NEVER a live socket).
+ */
+export async function isHotkeyRegisteredOnNetuid(
+  hotkey: string,
+  netuid: number,
+): Promise<boolean> {
+  try {
+    const api = asSubtensor(await _bittensorRegistry.getApi());
+    const raw = await api.call.neuronInfoRuntimeApi.getNeuronsLite(netuid);
+    const neurons = raw.toJSON() as Array<{ hotkey: string }>;
+    return (neurons ?? []).some((n) => n.hotkey === hotkey);
   } catch (e) {
     throw new BittensorRpcError(e);
   }

@@ -1,10 +1,12 @@
 // (section,method) Bittensor dispatch allowlist regression. Phase 47 — Plan
-// 47-03 (TAO-W-04). NON-EVM sibling-arm pattern (mirror canonical-dispatch-tron).
+// 47-03 (TAO-W-04). EXTENDED Phase 48 — Plan 48-01 (TAO-W-09): +5 deferred
+// staking pairs. NON-EVM sibling-arm pattern (mirror canonical-dispatch-tron).
 //
 // Invariants:
-//   - the 3 milestone-locked pairs pass;
+//   - the 8 milestone-locked pairs pass (3 shipped + 5 Phase-48 deferred);
 //   - sudo / swapColdkey / arbitrary pairs refuse with the offender + allowlist;
-//   - camelCase keying is pinned — a snake_case key (add_stake_limit) MUST NOT match.
+//   - camelCase keying is pinned — a snake_case key (add_stake_limit /
+//     add_stake / transfer_stake) MUST NOT match (the copy-from-receipt guard).
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -15,15 +17,20 @@ import {
 } from "../src/security/canonical-dispatch-bittensor.js";
 
 describe("checkBittensorDispatch — TAO-W-04 (section,method) allowlist", () => {
-  it("the allowlist contains exactly the 3 camelCase pairs", () => {
+  it("the allowlist contains exactly the 8 camelCase pairs", () => {
     expect([...BITTENSOR_DISPATCH_ALLOWLIST].sort()).toEqual(
       [
         "balances.transferKeepAlive",
         "subtensorModule.addStakeLimit",
         "subtensorModule.removeStakeLimit",
+        "subtensorModule.addStake", // TAO-W-06
+        "subtensorModule.removeStake", // TAO-W-06
+        "subtensorModule.moveStake", // TAO-W-07
+        "subtensorModule.swapStake", // TAO-W-07
+        "subtensorModule.transferStake", // TAO-W-08
       ].sort(),
     );
-    expect(BITTENSOR_DISPATCH_ALLOWLIST.size).toBe(3);
+    expect(BITTENSOR_DISPATCH_ALLOWLIST.size).toBe(8);
   });
 
   it("allows subtensorModule.addStakeLimit", () => {
@@ -44,13 +51,45 @@ describe("checkBittensorDispatch — TAO-W-04 (section,method) allowlist", () =>
     });
   });
 
+  // --- Phase 48 deferred staking pairs (TAO-W-06/07/08) ---
+  it("allows subtensorModule.addStake (TAO-W-06 PLAIN add_stake)", () => {
+    expect(checkBittensorDispatch("subtensorModule", "addStake")).toEqual({
+      kind: "allowed",
+    });
+  });
+
+  it("allows subtensorModule.removeStake (TAO-W-06 PLAIN remove_stake)", () => {
+    expect(checkBittensorDispatch("subtensorModule", "removeStake")).toEqual({
+      kind: "allowed",
+    });
+  });
+
+  it("allows subtensorModule.moveStake (TAO-W-07 same-owner reallocation)", () => {
+    expect(checkBittensorDispatch("subtensorModule", "moveStake")).toEqual({
+      kind: "allowed",
+    });
+  });
+
+  it("allows subtensorModule.swapStake (TAO-W-07 same-owner subnet swap)", () => {
+    expect(checkBittensorDispatch("subtensorModule", "swapStake")).toEqual({
+      kind: "allowed",
+    });
+  });
+
+  it("allows subtensorModule.transferStake (TAO-W-08 CUSTODY CHANGE)", () => {
+    expect(checkBittensorDispatch("subtensorModule", "transferStake")).toEqual({
+      kind: "allowed",
+    });
+  });
+
   it("refuses sudo.sudo with offender + allowlist", () => {
     const res = checkBittensorDispatch("sudo", "sudo");
     expect(res.kind).toBe("refused");
     if (res.kind === "refused") {
       expect(res.offender).toBe("sudo.sudo");
       expect(res.allowlist).toContain("subtensorModule.addStakeLimit");
-      expect(res.allowlist).toHaveLength(3);
+      expect(res.allowlist).toContain("subtensorModule.transferStake");
+      expect(res.allowlist).toHaveLength(8);
     }
   });
 
@@ -72,6 +111,22 @@ describe("checkBittensorDispatch — TAO-W-04 (section,method) allowlist", () =>
     expect(res.kind).toBe("refused");
     if (res.kind === "refused") {
       expect(res.offender).toBe("subtensorModule.add_stake_limit");
+    }
+  });
+
+  it("camelCase keying pinned — snake_case add_stake does NOT match (TAO-W-06 copy-from-receipt guard)", () => {
+    const res = checkBittensorDispatch("subtensorModule", "add_stake");
+    expect(res.kind).toBe("refused");
+    if (res.kind === "refused") {
+      expect(res.offender).toBe("subtensorModule.add_stake");
+    }
+  });
+
+  it("camelCase keying pinned — snake_case transfer_stake does NOT match (TAO-W-08 copy-from-receipt guard)", () => {
+    const res = checkBittensorDispatch("subtensorModule", "transfer_stake");
+    expect(res.kind).toBe("refused");
+    if (res.kind === "refused") {
+      expect(res.offender).toBe("subtensorModule.transfer_stake");
     }
   });
 
