@@ -71,22 +71,24 @@ agent call: get_bittensor_setup_status({ wallet? })
   resolve walletAddress  ◄── listAccounts({chainFilter:"bittensor"})  (no arg → first record;
         │                                                              no arg + no record → INVALID_INPUT)
         ▼
-  Promise.allSettled([  3 INDEPENDENT lazy probes, fired at invocation only ])
+  Promise.allSettled([  2 INDEPENDENT lazy arms (RPC + a single fused device open), fired at invocation only ])
     ├─ ARM A (RPC):        getStakeInfo(ss58)              ── rejected → stakePositionsPresent=false + rpcDegraded.reason
     │    via _bittensorRegistry.getApi()                  ── fulfilled → stakePositionsPresent = rows.length > 0
-    ├─ ARM B (USB-HID):    fetchBittensorAddress(path)     ── rejected → walletAddressOnDevice=null + deviceStatus.reason
-    │    (device returns SS58 pre-encoded)                ── fulfilled → walletAddressOnDevice = address
-    └─ ARM C (app-version): _transport.getVersionViaApp(app) ── rejected → ledgerPolkadotAppVersion=null
-         {major,minor,patch}                              ── fulfilled → `${major}.${minor}.${patch}`
+    └─ DEVICE ARM (USB-HID, ONE open): fetchBittensorSetup(path) → { address, pubKey, appVersion }
+         (ARMs B+C FUSED — RESOLVED Option 1)             ── rejected → walletAddressOnDevice=null + deviceStatus.reason
+                                                             AND ledgerPolkadotAppVersion=null (one open → both demote together)
+                                                          ── fulfilled → walletAddressOnDevice = address;
+                                                                         ledgerPolkadotAppVersion = `${major}.${minor}.${patch}`
         │
         ▼
-  addressVerified (optional) = walletAddress === walletAddressOnDevice  (false when device unreachable)
+  (addressVerified OMITTED — TAO-DIAG-01 spec is authoritative; the agent itself compares
+   walletAddressOnDevice to the stored address if it needs that check)
         │
         ▼
   structuredContent { ledgerPolkadotAppVersion?, walletAddressOnDevice, stakePositionsPresent, rpcDegraded?, deviceStatus? }
 ```
 
-**KEY DESIGN NOTE on ARM B vs ARM C coupling.** In the TRON analog, `fetchTronAddress` BUNDLES
+**KEY DESIGN NOTE on ARM B vs ARM C coupling — RESOLVED: Option 1 (single fused device open via the additive `fetchBittensorSetup` helper; see Open Questions (RESOLVED) below).** In the TRON analog, `fetchTronAddress` BUNDLES
 `getAppConfiguration()` so address + appVersion come from a SINGLE transport open (D-03a). The
 Bittensor transport DIFFERS: `fetchBittensorAddress` opens its own transport (calling
 `getVersionViaApp` internally only as an app-not-open probe, discarding the result) and returns
@@ -224,23 +226,24 @@ not sign at all.
 |---|-------|---------|---------------|
 | A1 | `getVersion()` returns `{ major, minor, patch }` | Pattern 2 | LOW — taken from shipped test mock (`test/ledger-bittensor-transport.test.ts:95`) + Phase 46 RESEARCH §A2; deps not installed in worktree so not re-read from live `.d.ts`. Worst case the field names differ (e.g. nested under `.version`); confirm at execute time. The arm demotes to null on any throw regardless, so a shape mismatch fails safe. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Option 1 vs Option 2 for the version probe (single vs double transport open)**
    - What we know: `_transport.getVersionViaApp` + `buildGenericApp` + `open` all exist; the TRON
      precedent bundles version into the address fetch (single open).
    - What's unclear: whether the planner prefers the single-approval UX (Option 1, one additive
      helper) or the zero-transport-edit diff (Option 2, two arms).
-   - Recommendation: Option 1 (additive bundled helper) — matches TRON precedent + single device
-     approval. Either way it's additive, not a FROZEN-file edit.
+   - **RESOLVED (49-01-PLAN, Task 2):** Option 1 — additive bundled `fetchBittensorSetup` helper
+     (single transport open, single device approval; matches TRON precedent). Additive, NOT a
+     FROZEN-file edit. ARMs B+C settle together as one device arm.
 
 2. **`addressVerified` in the envelope?**
    - What we know: the TAO-DIAG-01 spec shape is `{ ledgerPolkadotAppVersion?,
      walletAddressOnDevice, stakePositionsPresent }` — it does NOT list `addressVerified`, but the
      TRON analog surfaces it.
-   - Recommendation: the SPEC shape is authoritative — do not add `addressVerified` as a required
-     field. If included, make it an OPTIONAL extra (the agent can compare `walletAddressOnDevice`
-     to the stored address itself). Planner decides; lean to matching the spec exactly.
+   - **RESOLVED (49-01-PLAN, Tasks 1+3):** `addressVerified` OMITTED entirely — the TAO-DIAG-01
+     spec shape is authoritative. The agent compares `walletAddressOnDevice` to the stored address
+     itself if it needs that check.
 
 ## Environment Availability
 
