@@ -12,6 +12,13 @@ import "./get_portfolio_summary.js";
 import "./get_solana_balance.js";
 import "./get_solana_token_balance.js";
 import "./get_solana_token_metadata.js";
+// Phase 46 Plan 46-03 — Bittensor read tools (TAO-R-01/02/03). Placed in the
+// read-tool region (separate from 46-02's pair/status block) to keep the
+// 46-02 ∥ 46-03 register-all carve conflict-free.
+import "./get_bittensor_balance.js"; // Phase 46 Plan 46-03 (TAO-R-01)
+import "./get_bittensor_stake.js"; // Phase 46 Plan 46-03 (TAO-R-02)
+import "./get_bittensor_subnets.js"; // Phase 46 Plan 46-03 (TAO-R-03)
+import "./get_bittensor_validators.js"; // Phase 46 Plan 46-03 (TAO-R-03)
 import "./get_lending_positions.js";
 import "./get_morpho_positions.js"; // Phase 29 Plan 29-02 (MOR-01) — Morpho Blue isolated-market positions on Ethereum mainnet
 import "./get_compound_market_info.js";  // Phase 28 Plan 28-04 (CMP-02) — Compound V3 per-Comet market info
@@ -21,6 +28,9 @@ import "./pair_ledger_live_wait.js";
 import "./get_ledger_status.js";
 import "./pair_solana_ledger.js";
 import "./get_solana_status.js";
+// Phase 46 Plan 46-02 (TAO-PAIR-01 / TAO-PAIR-02) — Bittensor pairing + status.
+import "./pair_bittensor_ledger.js"; // Phase 46 Plan 46-02 (TAO-PAIR-01)
+import "./get_bittensor_status.js"; // Phase 46 Plan 46-02 (TAO-PAIR-02)
 import "./pair_tron_ledger.js"; // Phase 17 Plan 17-03 (TRON-PAIR-01)
 import "./pair_btc_ledger.js"; // Phase 22 Plan 22-02 (BTC-PAIR-01) — dual-address (segwit + taproot) pair
 import "./pair_litecoin_ledger.js"; // Phase 26 Plan 26-01 (LTC-PAIR-01) — dual-address (legacy + segwit) LTC pair
