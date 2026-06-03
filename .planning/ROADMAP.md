@@ -416,8 +416,8 @@ Plans:
 
 Plans:
 
-- [ ] 14-01: `src/clients/jupiter.ts` — Jupiter v6 HTTP client (mirrors `fourbyte.ts` / `etherscan.ts` shape — never-throws, LRU cache, `_resetJupiter_ForTesting` hook); `get_jupiter_quote` tool
-- [ ] 14-02: `prepare_jupiter_swap` + Jupiter quote → serialized tx integration; sandwich-MEV slippage gate at >2% price impact; canonical-dispatch allowlist extension; Fixture K (Jupiter swap fingerprint) literal anchor
+- [ ] 14-01-PLAN.md — Jupiter v6 quote read + foundation: `src/clients/jupiter.ts` (never-throws 3-arm HTTP client, `asLegacyTransaction:true`, `JUPITER_API_KEY` env seam) + `get_jupiter_quote` (SOL-W-11) + Jupiter v6 program ID in contracts SOT + canonical-dispatch Solana allowlist arm (Open-Q1 wrap/unwrap program enumeration)
+- [ ] 14-02-PLAN.md — `prepare_jupiter_swap` (SOL-W-12/13): legacy-tx deserialize -> FROZEN `computeSolanaPayloadFingerprint` unchanged + sandwich-MEV refusal gate (>2% impact, no explicit slippage) + 1232-byte size-overflow hard refusal + CHECKS PERFORMED From/To/impact from quote + Fixture AA (Jupiter swap fingerprint) literal anchor + FROZEN-zero-diff gate
 
 #### Phase 15: Staking — Marinade + Jito + native SOL
 
