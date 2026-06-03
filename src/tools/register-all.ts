@@ -72,6 +72,11 @@ import "./sign_message_ltc.js"; // Phase 26 Plan 26-02 (LTC-W-02) — BIP-137 co
 import "./prepare_bittensor_native_send.js"; // Phase 47 Plan 47-02 (TAO-W-01) — Bittensor native TAO transferKeepAlive
 import "./prepare_bittensor_add_stake_limit.js"; // Phase 47 Plan 47-02 (TAO-W-02) — Bittensor slippage-guarded add_stake_limit (DEFAULT entry)
 import "./prepare_bittensor_remove_stake_limit.js"; // Phase 47 Plan 47-02 (TAO-W-03) — Bittensor slippage-guarded remove_stake_limit (DEFAULT exit)
+import "./prepare_bittensor_add_stake.js"; // Phase 48 Plan 48-03 (TAO-W-06) — Bittensor PLAIN add_stake (no slippage guard)
+import "./prepare_bittensor_remove_stake.js"; // Phase 48 Plan 48-03 (TAO-W-06) — Bittensor PLAIN remove_stake (no slippage guard)
+import "./prepare_bittensor_move_stake.js"; // Phase 48 Plan 48-03 (TAO-W-07) — Bittensor same-owner move_stake reallocation
+import "./prepare_bittensor_swap_stake.js"; // Phase 48 Plan 48-03 (TAO-W-07) — Bittensor same-owner swap_stake subnet swap
+import "./prepare_bittensor_transfer_stake.js"; // Phase 48 Plan 48-03 (TAO-W-08) — Bittensor transfer_stake CUSTODY CHANGE
 // Phase 25 Plan 25-01 — BTC multisig registry + read tools (BTC-PSBT-03/04)
 import "./register_btc_multisig_wallet.js"; // Phase 25 Plan 25-01 (BTC-PSBT-03) — multisig wallet registration
 import "./get_btc_multisig_balance.js"; // Phase 25 Plan 25-01 (BTC-PSBT-04) — aggregate balance via Esplora gap-limit scan
