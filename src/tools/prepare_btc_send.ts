@@ -631,6 +631,41 @@ registerTool(
       }
 
       // -----------------------------------------------------------------------
+      // WR-04 parity (BTC): silent change-forfeiture guard.
+      // When no change address is derivable (`changeAddress === null`), changeSats
+      // is folded into the miner fee (no change output). In REAL mode this only
+      // happens for a legacy account paired before change-output (xpub) support —
+      // a small send from a large UTXO would then silently burn the change to
+      // miners (e.g. a 1 BTC UTXO sending 0.001 BTC forfeiting ~0.999 BTC). Refuse
+      // when that forfeiture exceeds a safe threshold, mirroring the LTC WR-04 gate.
+      //
+      // Demo mode is intentionally EXEMPT: personas carry no xpub by simulation
+      // (stub pubkeys, no real funds), so folding change to fee is a demo artifact,
+      // not a real loss — the rehearsal flow must stay unblocked. (LTC applies its
+      // guard unconditionally only because LTC has no xpub/change path at all; BTC
+      // distinguishes a real legacy account from a simulated demo persona.)
+      // -----------------------------------------------------------------------
+      const CHANGE_FORFEIT_REFUSE_THRESHOLD = 10_000n; // sats (WR-04 parity with LTC)
+      if (
+        !demoActive &&
+        changeAddress === null &&
+        changeSats > CHANGE_FORFEIT_REFUSE_THRESHOLD
+      ) {
+        const utxoTotal = selectedInputs.reduce((s, u) => s + u.valueSats, 0n);
+        const message =
+          `BTC change would be forfeited: ${changeSats} sats exceeds the ` +
+          `${CHANGE_FORFEIT_REFUSE_THRESHOLD}-sat threshold. The paired account has no xpub ` +
+          `for change-address derivation (a legacy account paired before change-output support). ` +
+          `Re-pair with pair_btc_ledger to enable change outputs, or size the send to consume ` +
+          `the full UTXO balance (${utxoTotal} sats) minus the fee.`;
+        return {
+          isError: true,
+          content: [{ type: "text", text: `error: ${message}` }],
+          structuredContent: errEnvelope("INVALID_INPUT", message),
+        };
+      }
+
+      // -----------------------------------------------------------------------
       // Step 7: Build PSBT via _btcPsbt.buildBtcPsbt.
       // Populate BIP-32 derivation entries (PSBT metadata for Ledger signing).
       // -----------------------------------------------------------------------
@@ -809,13 +844,21 @@ registerTool(
         )
         .join("\n");
 
-      const prepareReceipt = PREPARE_RECEIPT_BTC_NATIVE_TEMPLATE
+      let prepareReceipt = PREPARE_RECEIPT_BTC_NATIVE_TEMPLATE
         .replace("{TO}", rawTo)
         .replace("{SATS}", rawSats)
         .replace("{FEE_SATS}", String(psbtResult.feeSats))
         .replace("{FEE_RATE}", String(feeRate))
         .replace("{INPUT_ROWS}", inputRows)
         .replace("{OUTPUT_ROWS}", outputRows);
+
+      // WR-04 parity (BTC): disclose sub-threshold change folded into the miner fee
+      // on the real-mode legacy no-xpub path (above-threshold forfeitures already
+      // refused). Demo mode is exempt (simulation artifact — see the guard above).
+      if (!demoActive && !hasChangeOutput && changeSats > 0n) {
+        prepareReceipt +=
+          `\nCHANGE FORFEITED: ${changeSats} sats (no xpub for change-address derivation — re-pair with pair_btc_ledger to enable change outputs)`;
+      }
 
       const feeSatsStr = String(psbtResult.feeSats);
       const responseText = `${prepareReceipt}\n\nHandle: ${handle}\npayloadFingerprint: ${payloadFingerprint}\n\nNext step: pass this handle to preview_send.`;
