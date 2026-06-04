@@ -63,6 +63,7 @@ import {
   getKaminoScopeProgram,
   getKaminoPythReceiverProgram,
   getKaminoSwitchboardProgram,
+  getJupiterV6Program,
   deriveMarginfiAccountPda,
   deriveKaminoObligationPda,
   deriveKaminoUserMetadataPda,
@@ -1616,7 +1617,14 @@ describe("src/config/contracts.ts — Solana lending SOT (Phase 13 Plan 13-01)",
     );
   });
 
-  it("the seven Solana program/market/oracle IDs are all distinct base58 pubkeys", () => {
+  // Phase 14 Plan 14-01 (SOL-W-11) — Jupiter v6 aggregator program ID in the SOT.
+  it("getJupiterV6Program() byte-identical to the VERIFIED Jupiter v6 aggregator program ID", () => {
+    expect(getJupiterV6Program()).toBe(
+      "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+    );
+  });
+
+  it("the eight Solana program/market/oracle IDs are all distinct base58 pubkeys", () => {
     const ids = [
       getMarginfiProgramId(),
       getMarginfiGroup(),
@@ -1625,9 +1633,10 @@ describe("src/config/contracts.ts — Solana lending SOT (Phase 13 Plan 13-01)",
       getKaminoScopeProgram(),
       getKaminoPythReceiverProgram(),
       getKaminoSwitchboardProgram(),
+      getJupiterV6Program(),
     ];
     for (const id of ids) expect(id).toMatch(BASE58_PUBKEY_REGEX);
-    expect(new Set(ids).size).toBe(7);
+    expect(new Set(ids).size).toBe(8);
   });
 
   // No-inline sentinel (SOL-W-10) — mirror of the Compound/Morpho address-inline
@@ -1671,6 +1680,9 @@ describe("src/config/contracts.ts — Solana lending SOT (Phase 13 Plan 13-01)",
       "HFn8GnPAD",
       "rec5EKMGg",
       "SW1TCH7qE",
+      // 14-01 Jupiter v6 aggregator program (canonical-dispatch imports the
+      // getter; the base58 lives ONLY in contracts.ts).
+      "JUP6LkbZ",
     ];
 
     it("no src/ file OTHER than contracts.ts contains the program/market literals (code, not comments)", () => {
@@ -1699,6 +1711,7 @@ describe("src/config/contracts.ts — Solana lending SOT (Phase 13 Plan 13-01)",
         "HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ",
         "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
         "SW1TCH7qEPTdLsDHRgPuMQjbQxKdH2aBStViMFnt64f",
+        "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
       ];
       for (const lit of fullLiterals) {
         const count = code.split(lit).length - 1;

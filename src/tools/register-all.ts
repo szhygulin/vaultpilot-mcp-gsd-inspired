@@ -71,6 +71,7 @@ import "./prepare_marginfi_withdraw.js"; // Phase 13 Plan 13-03 (SOL-W-04) — l
 import "./prepare_marginfi_borrow.js"; // Phase 13 Plan 13-03 (SOL-W-04) — lending_account_borrow (vault-authority PDA, D-03 gate)
 import "./prepare_marginfi_repay.js"; // Phase 13 Plan 13-03 (SOL-W-04) — lending_account_repay (D-01 hand-encode, D-03 gate)
 import "./get_kamino_positions.js"; // Phase 13 Plan 13-04 (SOL-W-06) — Kamino reserve-keyed supplied/borrowed + per-reserve-LTV health (read-only, D-02/D-07)
+import "./get_jupiter_quote.js"; // Phase 14 Plan 14-01 (SOL-W-11) — Jupiter v6 quote read companion + sandwich-MEV WARNING + [AGENT TASK] recheck
 import "./prepare_kamino_supply.js"; // Phase 13 Plan 13-05 (SOL-W-07) — depositReserveLiquidityAndObligationCollateral (D-01 hand-encode, refresh ceremony, D-03 gate VP_S007)
 import "./prepare_kamino_repay.js"; // Phase 13 Plan 13-05 (SOL-W-07) — repayObligationLiquidity (refresh ceremony, D-03 gate)
 import "./prepare_kamino_borrow.js"; // Phase 13 Plan 13-05 (SOL-W-07) — borrowObligationLiquidity (multi-reserve refresh ceremony, D-03 gate)
