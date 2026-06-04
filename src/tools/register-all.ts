@@ -88,6 +88,7 @@ import "./prepare_btc_send.js"; // Phase 23 Plan 23-03 (BTC-PSBT-01) — BTC nat
 import "./prepare_btc_rbf_bump.js"; // Phase 24 Plan 24-01 (BTC-W-02) — BIP-125 RBF fee bump
 import "./prepare_litecoin_native_send.js"; // Phase 26 Plan 26-02 (LTC-W-01) — LTC native segwit P2WPKH PSBT send
 import "./prepare_btc_lifi_swap.js"; // Phase 26 Plan 26-03 (BTC-LIFI-01) — BTC→EVM/SOL LiFi cross-chain swap
+import "./prepare_solana_lifi_swap.js"; // Phase 16 Plan 16-02/03 (SOL-W-21) — Solana↔EVM LiFi bridge
 import "./sign_message_btc.js"; // Phase 24 Plan 24-02 (BTC-W-03) — BIP-137 compact message signing
 import "./sign_message_ltc.js"; // Phase 26 Plan 26-02 (LTC-W-02) — BIP-137 compact message signing (LTC magic bytes)
 import "./prepare_bittensor_native_send.js"; // Phase 47 Plan 47-02 (TAO-W-01) — Bittensor native TAO transferKeepAlive
