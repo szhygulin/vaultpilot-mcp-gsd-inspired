@@ -435,13 +435,13 @@ Plans:
   5. Marinade + Jito program IDs + native Stake Program added to canonical-dispatch allowlist
   6. Ledger clear-signs each staking instruction (Solana app coverage) — conditional LEDGER NOTICE only when CAL coverage absent
 
-**Plans**: 3 plans (estimate)
+**Plans**: 3 plans
 
 Plans:
 
-- [ ] 15-01: Marinade — `prepare_marinade_stake` + `prepare_marinade_immediate_unstake` + Marinade program ID in contracts SOT + fee-surfacing in CHECKS PERFORMED
-- [ ] 15-02: Jito — `prepare_jito_stake_pool_deposit` + Jito stake-pool program ID + `[NOTICE — unstake not yet supported]` block (deferred per upstream gap)
-- [ ] 15-03: Native SOL — `prepare_solana_delegate` + `prepare_solana_deactivate` + `prepare_solana_withdraw` + stake-account creation sub-helper + Stake Program allowlist entry
+- [ ] 15-01-PLAN.md — Native SOL lifecycle (SOL-W-17/18/19/20 native arm): `prepare_solana_delegate` (createAccountWithSeed sub-helper when no stake account) + `prepare_solana_deactivate` + `prepare_solana_withdraw` via built-in `StakeProgram` + native Stake Program ID in contracts SOT + dispatch allowlist + fixtures E/F/G/H
+- [ ] 15-02-PLAN.md — Marinade (SOL-W-14/15): `prepare_marinade_stake` + `prepare_marinade_immediate_unstake` (variable fee read from on-chain LiqPool, surfaced verbatim in CHECKS PERFORMED) via hand-encoded vendored-IDL BorshInstructionCoder + Marinade program/state/mSOL-mint in SOT + dispatch arm + fixtures I/AA
+- [ ] 15-03-PLAN.md — Jito (SOL-W-16): `prepare_jito_stake_pool_deposit` (deposit-only; pinned-verified DepositSol variant tag + primitive borsh) + `[NOTICE — Jito stake-pool unstake not yet supported]` block + Jito pool/jitoSOL-mint/SPL-stake-pool-program in SOT + dispatch arm + fixture AB; phase-final register-all + full-suite + FROZEN-zero-diff gate
 
 #### Phase 16: LiFi-routed EVM↔Solana bridging + Solana diagnostics
 
