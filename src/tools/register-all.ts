@@ -81,6 +81,8 @@ import "./prepare_jupiter_swap.js"; // Phase 14 Plan 14-02 (SOL-W-12/13) — Jup
 import "./prepare_solana_delegate.js"; // Phase 15 Plan 15-01 (SOL-W-17) — native SOL delegate (+ createAccountWithSeed bundle when no stake account; blind-sign)
 import "./prepare_solana_deactivate.js"; // Phase 15 Plan 15-01 (SOL-W-18) — native SOL deactivate (begins ~2-day cooldown; blind-sign)
 import "./prepare_solana_withdraw.js"; // Phase 15 Plan 15-01 (SOL-W-19) — native SOL withdraw (deactivated stake → wallet; blind-sign)
+import "./prepare_marinade_stake.js"; // Phase 15 Plan 15-02 (SOL-W-14) — Marinade deposit (SOL → mSOL, D-01 hand-encode; blind-sign)
+import "./prepare_marinade_immediate_unstake.js"; // Phase 15 Plan 15-02 (SOL-W-15) — Marinade liquidUnstake (mSOL → SOL now, VARIABLE fee verbatim; blind-sign)
 import "./prepare_btc_send.js"; // Phase 23 Plan 23-03 (BTC-PSBT-01) — BTC native segwit+taproot PSBT send
 import "./prepare_btc_rbf_bump.js"; // Phase 24 Plan 24-01 (BTC-W-02) — BIP-125 RBF fee bump
 import "./prepare_litecoin_native_send.js"; // Phase 26 Plan 26-02 (LTC-W-01) — LTC native segwit P2WPKH PSBT send

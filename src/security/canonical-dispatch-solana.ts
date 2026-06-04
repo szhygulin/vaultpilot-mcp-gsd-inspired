@@ -52,6 +52,7 @@ import {
   getKaminoScopeProgram,
   getKaminoSwitchboardProgram,
   getMarginfiProgramId,
+  getMarinadeProgram,
   getNativeStakeProgram,
 } from "../config/contracts.js";
 
@@ -122,6 +123,12 @@ export const SOLANA_DISPATCH_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // Enumerated from the actual built ix vector (assembleStakeTx programIds);
   // sourced from the contracts SOT getter (NO inlined base58 in this file).
   getNativeStakeProgram(),
+
+  // Phase 15 Plan 15-02 (SOL-W-14/15 Marinade arm) — the Marinade program. The
+  // deposit / liquidUnstake tools build Marinade instructions; System + Token are
+  // already above (the CPI targets enumerated from assembleMarinadeTx programIds).
+  // Sourced from the contracts SOT getter (NO inlined base58 in this file).
+  getMarinadeProgram(),
 ]);
 
 /**

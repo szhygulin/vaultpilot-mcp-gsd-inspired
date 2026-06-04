@@ -63,6 +63,8 @@ import {
   _solanaStake,
   deriveStakeAccount,
 } from "../src/protocols/solana-stake.js";
+// Phase 15 Plan 15-02 — Marinade builders for fixtures I + AA.
+import { _marinade } from "../src/protocols/marinade.js";
 
 // Pinned inputs — used identically by Fixture K + L. Stable across runs.
 // `FROM` is the curated `solana-whale` persona address from Plan 11-06
@@ -888,6 +890,109 @@ describe("native SOL Stake fingerprint fixtures E/F/G/H (Plan 15-01, built-in St
     const b = fpOf(_solanaStake.buildWithdrawIxs({ stakeAccount: S_STAKE, authorizedPubkey: S_FROM, toPubkey: S_TO, lamports: 1_000_000_001n }));
     expect(a).not.toBe(b);
     expect(a).toBe("0x91b04458188f414dedb90b092b52cb17e4c80320d9220a2f544a9f1500056545");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 15 Plan 15-02 — Marinade fixtures I (deposit) + AA (liquidUnstake).
+//
+// Hand-encoded via BorshInstructionCoder over the vendored Marinade IDL. Each
+// fixture asserts the IDL-pinned discriminator at the head of the encoded data,
+// the computed fingerprint as a HARDCODED 0x… literal (NO beforeAll-snapshot),
+// and a per-fixture embedding regression (amount swap). Plus an IDL-casing guard
+// (Pitfall 4 / A2): camelCase `msolAmount` encodes the amount; snake_case
+// `msol_amount` is silently dropped → wrong bytes.
+//
+// Label map: 15-01 consumed E/F/G/H; the next FREE single label is I, then the
+// FREE double-letter AA.
+//   I  — Marinade deposit: deposit(lamports)
+//   AA — Marinade immediate-unstake: liquidUnstake(msolAmount)
+//
+// Cross-linked from test/prepare-marinade-stake.test.ts (I) +
+// test/prepare-marinade-immediate-unstake.test.ts (AA).
+// ---------------------------------------------------------------------------
+describe("Marinade fingerprint fixtures I + AA (Plan 15-02, D-01 hand-encode)", () => {
+  const M_FROM = new PublicKey("5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9");
+  const M_STATE = new PublicKey("8szGkuLTAux9XMgZ2vtY39jVSowEcpBfFfD8hXSEqdGC");
+  const M_MSOL_MINT = new PublicKey("mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So");
+  const M_A1 = new PublicKey("AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9");
+  const M_A2 = new PublicKey("3m9y53V2QwBbrQxtv5WN4T8SA5zw7BpZ2ZBYpZZAu8MW");
+  const M_A3 = new PublicKey("7uYDwDDvFvKsHnvjt9D8gj2Gfd9Xzn4QYsf8KXrXrJsy");
+  const M_A4 = new PublicKey("D9z5pxYZ7tqkQ6oFwvQyZ4QyhRjuw6JtVefdT4U6kx2y");
+  const M_A5 = new PublicKey("CCKtUs6Cgwo4aaQUmBPmyoApH2gUDErxNZCAntD6LYGh");
+  const M_A6 = new PublicKey("HRk9CMrpq7Jn9sh7mzxE8CChHG8dneX9p475QKz4Fsfc");
+  const M_MINT_TO = new PublicKey("FzbcyEZ9m8xjtergWgWDq7mfPoHEbboBF791B6cTpzbq");
+  const M_MSOL_FROM = new PublicKey("3wvJdyFnGvaMWpbq93NU91SggiVRveULUXL6iX5VZDGP");
+
+  const DEPOSIT_DISC = [242, 35, 198, 137, 82, 225, 242, 182];
+  const LIQUID_UNSTAKE_DISC = [30, 30, 119, 240, 191, 227, 12, 16];
+
+  const depositAccounts = {
+    state: M_STATE, msolMint: M_MSOL_MINT, liqPoolSolLegPda: M_A1, liqPoolMsolLeg: M_A2,
+    liqPoolMsolLegAuthority: M_A3, reservePda: M_A4, transferFrom: M_FROM, mintTo: M_MINT_TO,
+    msolMintAuthority: M_A5,
+  };
+  const luAccounts = {
+    state: M_STATE, msolMint: M_MSOL_MINT, liqPoolSolLegPda: M_A1, liqPoolMsolLeg: M_A2,
+    treasuryMsolAccount: M_A6, getMsolFrom: M_MSOL_FROM, getMsolFromAuthority: M_FROM,
+    transferSolTo: M_FROM,
+  };
+
+  function discHead(ix: { data: Uint8Array | Buffer }): number[] {
+    return [...ix.data.slice(0, 8)];
+  }
+  function fpOf(ix: import("@solana/web3.js").TransactionInstruction, name: string): string {
+    const { messageBytes } = _marinade.assembleMarinadeTx({ instruction: ix, feePayer: M_FROM, recentBlockhash: FIXED_BLOCKHASH, ixName: name });
+    return computeSolanaPayloadFingerprint({ messageBytes });
+  }
+
+  it("Fixture I — Marinade deposit: discriminator + hardcoded fingerprint", () => {
+    const ix = _marinade.buildDepositIx({ accounts: depositAccounts, lamports: 1_000_000_000n });
+    expect(discHead(ix)).toEqual(DEPOSIT_DISC);
+    expect(fpOf(ix, "deposit")).toBe(
+      "0xa08f6970cbeb286e14da3612423f79e89fe7c2d116ae684c643b436ebadb6ebc",
+    );
+  });
+
+  it("Fixture I embedding regression: lamports swap changes the fingerprint", () => {
+    const a = fpOf(_marinade.buildDepositIx({ accounts: depositAccounts, lamports: 1_000_000_000n }), "deposit");
+    const b = fpOf(_marinade.buildDepositIx({ accounts: depositAccounts, lamports: 1_000_000_001n }), "deposit");
+    expect(a).not.toBe(b);
+    expect(a).toBe("0xa08f6970cbeb286e14da3612423f79e89fe7c2d116ae684c643b436ebadb6ebc");
+  });
+
+  it("Fixture AA — Marinade liquidUnstake: discriminator + hardcoded fingerprint", () => {
+    const ix = _marinade.buildLiquidUnstakeIx({ accounts: luAccounts, msolAmount: 500_000_000n });
+    expect(discHead(ix)).toEqual(LIQUID_UNSTAKE_DISC);
+    expect(fpOf(ix, "liquidUnstake")).toBe(
+      "0x23652c7c68c0a3740e7975611c9f89cdc6a25d223162ab4c30c33817ba239887",
+    );
+  });
+
+  it("Fixture AA embedding regression: msolAmount swap changes the fingerprint", () => {
+    const a = fpOf(_marinade.buildLiquidUnstakeIx({ accounts: luAccounts, msolAmount: 500_000_000n }), "liquidUnstake");
+    const b = fpOf(_marinade.buildLiquidUnstakeIx({ accounts: luAccounts, msolAmount: 500_000_001n }), "liquidUnstake");
+    expect(a).not.toBe(b);
+    expect(a).toBe("0x23652c7c68c0a3740e7975611c9f89cdc6a25d223162ab4c30c33817ba239887");
+  });
+
+  it("IDL casing guard (Pitfall 4 / A2): camelCase msolAmount encodes the amount; snake_case is dropped", async () => {
+    // The coder reads the IDL's EXACT camelCase arg name. A mis-cased
+    // `msol_amount` is silently dropped → the amount encodes as 0 → DIFFERENT
+    // bytes than the correct camelCase encode. We assert against the raw coder.
+    const { BorshInstructionCoder } = await import("@coral-xyz/anchor");
+    const BN = (await import("bn.js")).default;
+    const idl = (await import("../src/config/idl/marinade_finance_v0.json", { with: { type: "json" } })).default;
+    const coder = new BorshInstructionCoder(idl as never);
+    const correct = coder.encode("liquidUnstake", { msolAmount: new BN(1000) });
+    const miscased = coder.encode("liquidUnstake", { msol_amount: new BN(1000) } as never);
+    // Both carry the discriminator; the AMOUNT differs (miscased encodes 0).
+    expect([...correct.slice(0, 8)]).toEqual(LIQUID_UNSTAKE_DISC);
+    expect(correct.equals(miscased)).toBe(false);
+    // The mis-cased tail (after the 8-byte disc) is all zeros (dropped field).
+    expect([...miscased.slice(8)]).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+    // The correct tail is the LE u64 of 1000 (0xe8 0x03 ...).
+    expect([...correct.slice(8, 10)]).toEqual([0xe8, 0x03]);
   });
 });
 

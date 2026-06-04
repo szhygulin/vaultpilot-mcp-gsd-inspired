@@ -37,6 +37,7 @@ import {
   getKaminoSwitchboardProgram,
   getMarginfiProgramId,
   getNativeStakeProgram,
+  getMarinadeProgram,
 } from "../src/config/contracts.js";
 // Phase 14 Plan 14-01 — the SINGLE pinned Jupiter swap legacy-tx fixture this
 // plan OWNS. Decoded ONCE here to enumerate the dispatch allowlist; 14-02 imports
@@ -66,13 +67,16 @@ const COMPUTE_BUDGET = ComputeBudgetProgram.programId.toBase58();
 
 // Phase 15 Plan 15-01 — native Stake Program (native arm of SOL-W-20).
 const NATIVE_STAKE = getNativeStakeProgram();
+// Phase 15 Plan 15-02 — Marinade program (Marinade arm of SOL-W-14/15).
+const MARINADE_PROGRAM = getMarinadeProgram();
 
 // Phase 12 base count (System + Token + Associated) + Phase 13 additions
 // (MarginFi + Kamino lending) + Phase 13 Plan 13-05 auxiliary oracle programs
 // (Scope + Pyth receiver + Switchboard) + Phase 14 Plan 14-01 (Jupiter v6 +
 // ComputeBudget — the wrapAndUnwrapSol legacy swap top-level set enumerated from
-// the single owned fixture decode) + Phase 15 Plan 15-01 (native Stake Program).
-const EXPECTED_ALLOWLIST_SIZE = 11;
+// the single owned fixture decode) + Phase 15 Plan 15-01 (native Stake Program)
+// + Phase 15 Plan 15-02 (Marinade program).
+const EXPECTED_ALLOWLIST_SIZE = 12;
 
 // Canary program IDs that remain refused.
 //   - A non-canonical MarginFi-shaped base58 (NOT the SOT program ID) — proves
@@ -132,6 +136,10 @@ describe("SOLANA_DISPATCH_ALLOWLIST — membership (Phase 12 base + Phase 13 len
     expect(SOLANA_DISPATCH_ALLOWLIST.has(NATIVE_STAKE)).toBe(true);
   });
 
+  it("contains the Marinade program ID (Phase 15 Plan 15-02 — from the SOT)", () => {
+    expect(SOLANA_DISPATCH_ALLOWLIST.has(MARINADE_PROGRAM)).toBe(true);
+  });
+
   it("does NOT contain a non-canonical MarginFi-shaped base58 (only the exact SOT ID allowed)", () => {
     expect(SOLANA_DISPATCH_ALLOWLIST.has(MARGINFI_WRONG_VARIANT)).toBe(false);
   });
@@ -160,6 +168,32 @@ describe("checkSolanaDispatchTarget — native Stake arm (Phase 15 Plan 15-01)",
     if (result.kind !== "refused") return;
     expect(result.offenders).toEqual([UNKNOWN]);
     expect(result.offenders).not.toContain(NATIVE_STAKE);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 15 Plan 15-02 — Marinade dispatch arm (SOL-W-14/15). The deposit /
+// liquidUnstake programIds = {Marinade, System, Token}; ALL must pass. An unknown
+// program in a Marinade-shaped array still refuses.
+// ---------------------------------------------------------------------------
+describe("checkSolanaDispatchTarget — Marinade arm (Phase 15 Plan 15-02)", () => {
+  it("Marinade program only → allowed (deposit/liquidUnstake shape)", () => {
+    expect(checkSolanaDispatchTarget([MARINADE_PROGRAM])).toEqual({ kind: "allowed" });
+  });
+
+  it("Marinade deposit/liquidUnstake programIds {Marinade, System, Token} → all allowed", () => {
+    expect(
+      checkSolanaDispatchTarget([MARINADE_PROGRAM, SYSTEM_PROGRAM, TOKEN_PROGRAM]),
+    ).toEqual({ kind: "allowed" });
+  });
+
+  it("an UNKNOWN program alongside the Marinade set still refuses, naming the offender", () => {
+    const UNKNOWN = "EvilProgram1111111111111111111111111111111";
+    const result = checkSolanaDispatchTarget([MARINADE_PROGRAM, TOKEN_PROGRAM, UNKNOWN]);
+    expect(result.kind).toBe("refused");
+    if (result.kind !== "refused") return;
+    expect(result.offenders).toEqual([UNKNOWN]);
+    expect(result.offenders).not.toContain(MARINADE_PROGRAM);
   });
 });
 

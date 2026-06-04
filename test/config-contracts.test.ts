@@ -1785,3 +1785,51 @@ describe("src/config/contracts.ts — native Stake Program SOT (Phase 15 Plan 15
     expect(getNativeStakeProgram()).toBe(StakeProgram.programId.toBase58());
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 15 Plan 15-02 — Marinade SOT (SOL-W-14/15).
+// ---------------------------------------------------------------------------
+describe("src/config/contracts.ts — Marinade SOT (Phase 15 Plan 15-02)", () => {
+  const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+  it("getMarinadeProgram() returns the VERIFIED Marinade program ID", () => {
+    expect(getMarinadeProgram()).toBe("MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD");
+  });
+
+  it("getMarinadeState() returns the VERIFIED Marinade state account", () => {
+    expect(getMarinadeState()).toBe("8szGkuLTAux9XMgZ2vtY39jVSowEcpBfFfD8hXSEqdGC");
+  });
+
+  it("getMsolMint() returns the VERIFIED mSOL mint", () => {
+    expect(getMsolMint()).toBe("mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So");
+  });
+
+  it("the three Marinade IDs are distinct base58 pubkeys", () => {
+    const ids = [getMarinadeProgram(), getMarinadeState(), getMsolMint()];
+    for (const id of ids) expect(id).toMatch(BASE58);
+    expect(new Set(ids).size).toBe(3);
+  });
+
+  it("no-inline sentinel: the Marinade program literal lives only in contracts.ts", () => {
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const SRC_DIR = resolve(__dirname, "../src");
+    const { readdirSync, statSync } = require("node:fs") as typeof import("node:fs");
+    function collect(dir: string): string[] {
+      const out: string[] = [];
+      for (const entry of readdirSync(dir)) {
+        const full = resolve(dir, entry);
+        if (statSync(full).isDirectory()) out.push(...collect(full));
+        else if (full.endsWith(".ts")) out.push(full);
+      }
+      return out;
+    }
+    function stripComments(src: string): string {
+      const noBlock = src.replace(/\/\*[\s\S]*?\*\//g, "");
+      return noBlock.split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+    }
+    const offenders = collect(SRC_DIR)
+      .filter((f) => !f.endsWith("/config/contracts.ts"))
+      .filter((f) => stripComments(readFileSync(f, "utf8")).includes("MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD"));
+    expect(offenders).toEqual([]);
+  });
+});
