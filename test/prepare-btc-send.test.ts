@@ -898,3 +898,153 @@ describe("prepare_btc_send — WALLET_NOT_PAIRED (real mode, no paired account)"
     expect(sc.errorCode).toBe("WALLET_NOT_PAIRED");
   });
 });
+
+// ============================================================================
+// WR-04 parity (BTC) — silent change-forfeiture guard on the legacy no-xpub path.
+// Real-mode legacy accounts (paired before xpub/change-output support) fold change
+// into the miner fee; a large forfeiture is refused, a small one is disclosed.
+// Demo personas carry no xpub by simulation and are EXEMPT. Quick task 260605-0yz.
+// ============================================================================
+
+describe("prepare_btc_send — WR-04 change-forfeiture guard (real-mode legacy no-xpub)", () => {
+  // Legacy account: fetchBtcAddresses returns empty xpub strings → no change
+  // address is derivable → change is folded into the miner fee.
+  const NO_XPUB_FETCH_RESULT = {
+    ...STUB_FETCH_BTC_ADDRESSES_RESULT,
+    segwit: { ...STUB_FETCH_BTC_ADDRESSES_RESULT.segwit, xpub: "" },
+    taproot: { ...STUB_FETCH_BTC_ADDRESSES_RESULT.taproot, xpub: "" },
+  };
+
+  it("refuses with INVALID_INPUT when forfeited change exceeds the 10_000-sat threshold", async () => {
+    listAccountsSpy.mockReturnValue([
+      PAIRED_BTC_SEGWIT_ACCOUNT,
+      PAIRED_BTC_TAPROOT_ACCOUNT,
+    ]);
+    vi.spyOn(_btcLedgerTransport, "fetchBtcAddresses").mockResolvedValue(
+      NO_XPUB_FETCH_RESULT,
+    );
+    vi.stubGlobal("fetch", buildFetchStub());
+    // 94300 sats of change (> 10_000) would be silently burned to miners.
+    vi.spyOn(_btcCoinSelect, "selectCoinsBnb").mockReturnValue({
+      ...STUB_COIN_SELECT_OK,
+      changeSats: BigInt(94300),
+    });
+    const buildSpy = vi
+      .spyOn(_btcPsbt, "buildBtcPsbt")
+      .mockReturnValue(STUB_PSBT_RESULT);
+
+    const result = await callTool({
+      to: TEST_SEGWIT_TO,
+      sats: TEST_SATS,
+      feeRate: TEST_FEE_RATE,
+    });
+
+    expect(result.isError).toBe(true);
+    const sc = result.structuredContent as { errorCode: string };
+    expect(sc.errorCode).toBe("INVALID_INPUT");
+    const errText = (result.content[0] as { text: string }).text;
+    expect(errText).toMatch(/change\s+would\s+be\s+forfeited/i);
+    expect(errText).toContain("94300");
+    // Refusal happens BEFORE the PSBT is built — no forfeiting tx is ever assembled.
+    expect(buildSpy).not.toHaveBeenCalled();
+  });
+
+  it("sub-threshold forfeit succeeds and discloses 'CHANGE FORFEITED' in the PREPARE RECEIPT", async () => {
+    listAccountsSpy.mockReturnValue([
+      PAIRED_BTC_SEGWIT_ACCOUNT,
+      PAIRED_BTC_TAPROOT_ACCOUNT,
+    ]);
+    vi.spyOn(_btcLedgerTransport, "fetchBtcAddresses").mockResolvedValue(
+      NO_XPUB_FETCH_RESULT,
+    );
+    vi.stubGlobal("fetch", buildFetchStub());
+    // 5000 sats of change (<= 10_000) — folded into the fee, disclosed not refused.
+    vi.spyOn(_btcCoinSelect, "selectCoinsBnb").mockReturnValue({
+      ...STUB_COIN_SELECT_OK,
+      changeSats: BigInt(5000),
+    });
+    vi.spyOn(_btcPsbt, "buildBtcPsbt").mockReturnValue({
+      ...STUB_PSBT_RESULT,
+      outputs: [
+        {
+          address: TEST_SEGWIT_TO,
+          valueSats: BigInt(100000),
+          role: "recipient" as const,
+        },
+      ],
+      changeSats: BigInt(0),
+    });
+    vi.spyOn(_btcSighash, "computeAllSighashes").mockReturnValue([STUB_SIGHASH]);
+    vi.spyOn(_btcFingerprint, "computeBtcPayloadFingerprint").mockReturnValue(
+      FIXTURE_O_FINGERPRINT as `0x${string}`,
+    );
+
+    const result = await callTool({
+      to: TEST_SEGWIT_TO,
+      sats: TEST_SATS,
+      feeRate: TEST_FEE_RATE,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { prepareReceipt: string };
+    expect(sc.prepareReceipt).toContain("CHANGE FORFEITED: 5000 sats");
+  });
+
+  it("modern account WITH xpub creates a change output — no refusal, no forfeiture line", async () => {
+    listAccountsSpy.mockReturnValue([
+      PAIRED_BTC_SEGWIT_ACCOUNT,
+      PAIRED_BTC_TAPROOT_ACCOUNT,
+    ]);
+    vi.spyOn(_btcLedgerTransport, "fetchBtcAddresses").mockResolvedValue(
+      STUB_FETCH_BTC_ADDRESSES_RESULT, // xpubs present
+    );
+    vi.stubGlobal("fetch", buildFetchStub());
+    vi.spyOn(_btcCoinSelect, "selectCoinsBnb").mockReturnValue({
+      ...STUB_COIN_SELECT_OK,
+      changeSats: BigInt(94300), // large change, but a change OUTPUT is created
+    });
+    vi.spyOn(_changeIndex, "nextChangeIndex").mockResolvedValue(0);
+    vi.spyOn(_btcPsbt, "buildBtcPsbt").mockReturnValue(STUB_PSBT_RESULT);
+    vi.spyOn(_btcSighash, "computeAllSighashes").mockReturnValue([STUB_SIGHASH]);
+    vi.spyOn(_btcFingerprint, "computeBtcPayloadFingerprint").mockReturnValue(
+      FIXTURE_O_FINGERPRINT as `0x${string}`,
+    );
+
+    const result = await callTool({
+      to: TEST_SEGWIT_TO,
+      sats: TEST_SATS,
+      feeRate: TEST_FEE_RATE,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { prepareReceipt: string };
+    expect(sc.prepareReceipt).not.toContain("CHANGE FORFEITED");
+  });
+
+  it("demo mode is EXEMPT — no xpub by design, but no refusal and no forfeiture line", async () => {
+    process.env[DEMO_KEY] = "true";
+    _resetDemoModeForTesting();
+    setActiveBtcPersonaBySlug("btc-whale");
+    vi.stubGlobal("fetch", buildFetchStub());
+    // Large change in demo: would refuse in real mode, but demo is exempt.
+    vi.spyOn(_btcCoinSelect, "selectCoinsBnb").mockReturnValue({
+      ...STUB_COIN_SELECT_OK,
+      changeSats: BigInt(94300),
+    });
+    vi.spyOn(_btcPsbt, "buildBtcPsbt").mockReturnValue(STUB_PSBT_RESULT);
+    vi.spyOn(_btcSighash, "computeAllSighashes").mockReturnValue([STUB_SIGHASH]);
+    vi.spyOn(_btcFingerprint, "computeBtcPayloadFingerprint").mockReturnValue(
+      FIXTURE_O_FINGERPRINT as `0x${string}`,
+    );
+
+    const result = await callTool({
+      to: TEST_SEGWIT_TO,
+      sats: TEST_SATS,
+      feeRate: TEST_FEE_RATE,
+    });
+
+    expect(result.isError).toBeFalsy();
+    const sc = result.structuredContent as { prepareReceipt: string };
+    expect(sc.prepareReceipt).not.toContain("CHANGE FORFEITED");
+  });
+});
