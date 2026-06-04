@@ -64,6 +64,13 @@ import {
   getKaminoPythReceiverProgram,
   getKaminoSwitchboardProgram,
   getJupiterV6Program,
+  getNativeStakeProgram,
+  getMarinadeProgram,
+  getMarinadeState,
+  getMsolMint,
+  getJitoStakePool,
+  getJitoSolMint,
+  getSplStakePoolProgram,
   deriveMarginfiAccountPda,
   deriveKaminoObligationPda,
   deriveKaminoUserMetadataPda,
@@ -1760,5 +1767,21 @@ describe("src/config/contracts.ts — Solana lending SOT (Phase 13 Plan 13-01)",
       expect(pda).toMatch(BASE58_PUBKEY_REGEX);
       expect(deriveKaminoUserMetadataPda(OWNER)).toBe(pda);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 15 Plan 15-01 — native Stake Program SOT (SOL-W-20 native arm).
+// ---------------------------------------------------------------------------
+describe("src/config/contracts.ts — native Stake Program SOT (Phase 15 Plan 15-01)", () => {
+  it("getNativeStakeProgram() returns the canonical native Stake Program ID", () => {
+    expect(getNativeStakeProgram()).toBe(
+      "Stake11111111111111111111111111111111111111",
+    );
+  });
+
+  it("getNativeStakeProgram() equals StakeProgram.programId.toBase58() (cross-SOT identity)", async () => {
+    const { StakeProgram } = await import("@solana/web3.js");
+    expect(getNativeStakeProgram()).toBe(StakeProgram.programId.toBase58());
   });
 });

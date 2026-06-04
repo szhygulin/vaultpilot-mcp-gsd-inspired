@@ -1701,6 +1701,20 @@ export interface SolanaContracts {
   kaminoSwitchboardProgram: string;
   /** Jupiter v6 aggregator program ID (Phase 14 — prepare_jupiter_swap dispatch target). */
   jupiterV6Program: string;
+  /** Native Stake Program ID (Phase 15 — delegate/deactivate/withdraw dispatch target). */
+  nativeStakeProgram: string;
+  /** Marinade liquid-staking program ID (Phase 15 — deposit/liquidUnstake). */
+  marinadeProgram: string;
+  /** Marinade global state account (every Marinade ix references it as account[0]). */
+  marinadeState: string;
+  /** Marinade mSOL mint (the LST minted by deposit / burned by liquidUnstake). */
+  msolMint: string;
+  /** Jito SPL stake pool account (Phase 15 — DepositSol target pool). */
+  jitoStakePool: string;
+  /** jitoSOL mint (the LST minted by the Jito stake-pool DepositSol). */
+  jitoSolMint: string;
+  /** SPL Stake Pool program ID (Phase 15 — Jito DepositSol dispatch target). */
+  splStakePoolProgram: string;
 }
 
 const SOLANA_CONTRACTS_RAW: Record<"solana", SolanaContracts> = {
@@ -1722,6 +1736,25 @@ const SOLANA_CONTRACTS_RAW: Record<"solana", SolanaContracts> = {
     // / Meteora / Phoenix) run as CPI under this single outer program. Consumed by
     // canonical-dispatch-solana (allowlist) + prepare_jupiter_swap (14-02).
     jupiterV6Program: "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+    // Phase 15 Plan 15-01 (SOL-W-17..20 native arm). The native Stake Program ID
+    // is the well-known constant `StakeProgram.programId.toBase58()`; pinned RAW
+    // here as the SOT (the no-inline grep sentinel forbids inlining the base58 in
+    // the protocol / tool / dispatch files). Asserted byte-identical to
+    // StakeProgram.programId.toBase58() in test/config-contracts.test.ts.
+    nativeStakeProgram: "Stake11111111111111111111111111111111111111",
+    // Phase 15 Plan 15-02 (SOL-W-14/15 Marinade). VERIFIED from the installed-SDK
+    // probe (@marinade.finance/marinade-ts-sdk v5.0.18 default config + IDL
+    // address). marinadeState is the global state account every Marinade ix
+    // references; msolMint is the LST.
+    marinadeProgram: "MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD",
+    marinadeState: "8szGkuLTAux9XMgZ2vtY39jVSowEcpBfFfD8hXSEqdGC",
+    msolMint: "mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So",
+    // Phase 15 Plan 15-03 (SOL-W-16 Jito). VERIFIED from Jito docs + WebSearch
+    // cross-confirm; splStakePoolProgram is the SPL Stake Pool program constant
+    // (`STAKE_POOL_PROGRAM_ID` in @solana/spl-stake-pool — reference-only SDK).
+    jitoStakePool: "Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb",
+    jitoSolMint: "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",
+    splStakePoolProgram: "SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy",
   },
 };
 
@@ -1794,6 +1827,57 @@ export function getKaminoSwitchboardProgram(): string {
  */
 export function getJupiterV6Program(): string {
   return SOLANA_CONTRACTS_RAW.solana.jupiterV6Program;
+}
+
+/**
+ * Get the native Stake Program ID (base58). Phase 15 Plan 15-01. Consumed by
+ * `src/security/canonical-dispatch-solana.ts` (allowlist native arm) and
+ * `src/protocols/solana-stake.ts` (asserted equal to StakeProgram.programId).
+ * The no-inline grep sentinel forbids inlining the base58 anywhere else.
+ */
+export function getNativeStakeProgram(): string {
+  return SOLANA_CONTRACTS_RAW.solana.nativeStakeProgram;
+}
+
+/**
+ * Get the Marinade program ID (base58). Phase 15 Plan 15-02. Consumed by
+ * `src/protocols/marinade.ts` (hand-encoded ix programId) and the dispatch
+ * allowlist Marinade arm.
+ */
+export function getMarinadeProgram(): string {
+  return SOLANA_CONTRACTS_RAW.solana.marinadeProgram;
+}
+
+/** Get the Marinade global state account (base58). Phase 15 Plan 15-02. */
+export function getMarinadeState(): string {
+  return SOLANA_CONTRACTS_RAW.solana.marinadeState;
+}
+
+/** Get the Marinade mSOL mint (base58). Phase 15 Plan 15-02. */
+export function getMsolMint(): string {
+  return SOLANA_CONTRACTS_RAW.solana.msolMint;
+}
+
+/**
+ * Get the Jito SPL stake pool account (base58). Phase 15 Plan 15-03. Consumed by
+ * `src/protocols/jito-stake-pool.ts` (DepositSol account[0]) + the Jito tool.
+ */
+export function getJitoStakePool(): string {
+  return SOLANA_CONTRACTS_RAW.solana.jitoStakePool;
+}
+
+/** Get the jitoSOL mint (base58). Phase 15 Plan 15-03. */
+export function getJitoSolMint(): string {
+  return SOLANA_CONTRACTS_RAW.solana.jitoSolMint;
+}
+
+/**
+ * Get the SPL Stake Pool program ID (base58). Phase 15 Plan 15-03. Consumed by
+ * `src/protocols/jito-stake-pool.ts` (DepositSol programId) and the dispatch
+ * allowlist Jito arm. The no-inline grep sentinel forbids inlining the base58.
+ */
+export function getSplStakePoolProgram(): string {
+  return SOLANA_CONTRACTS_RAW.solana.splStakePoolProgram;
 }
 
 // PDA-derivation helpers (D-05). Each returns a base58 string and is

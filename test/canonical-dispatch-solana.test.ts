@@ -36,6 +36,7 @@ import {
   getKaminoScopeProgram,
   getKaminoSwitchboardProgram,
   getMarginfiProgramId,
+  getNativeStakeProgram,
 } from "../src/config/contracts.js";
 // Phase 14 Plan 14-01 — the SINGLE pinned Jupiter swap legacy-tx fixture this
 // plan OWNS. Decoded ONCE here to enumerate the dispatch allowlist; 14-02 imports
@@ -63,12 +64,15 @@ const KAMINO_SWITCHBOARD = getKaminoSwitchboardProgram();
 const JUPITER_V6 = getJupiterV6Program();
 const COMPUTE_BUDGET = ComputeBudgetProgram.programId.toBase58();
 
+// Phase 15 Plan 15-01 — native Stake Program (native arm of SOL-W-20).
+const NATIVE_STAKE = getNativeStakeProgram();
+
 // Phase 12 base count (System + Token + Associated) + Phase 13 additions
 // (MarginFi + Kamino lending) + Phase 13 Plan 13-05 auxiliary oracle programs
 // (Scope + Pyth receiver + Switchboard) + Phase 14 Plan 14-01 (Jupiter v6 +
 // ComputeBudget — the wrapAndUnwrapSol legacy swap top-level set enumerated from
-// the single owned fixture decode).
-const EXPECTED_ALLOWLIST_SIZE = 10;
+// the single owned fixture decode) + Phase 15 Plan 15-01 (native Stake Program).
+const EXPECTED_ALLOWLIST_SIZE = 11;
 
 // Canary program IDs that remain refused.
 //   - A non-canonical MarginFi-shaped base58 (NOT the SOT program ID) — proves
@@ -124,8 +128,38 @@ describe("SOLANA_DISPATCH_ALLOWLIST — membership (Phase 12 base + Phase 13 len
     expect(SOLANA_DISPATCH_ALLOWLIST.has(COMPUTE_BUDGET)).toBe(true);
   });
 
+  it("contains the native Stake Program ID (Phase 15 Plan 15-01 — from the SOT)", () => {
+    expect(SOLANA_DISPATCH_ALLOWLIST.has(NATIVE_STAKE)).toBe(true);
+  });
+
   it("does NOT contain a non-canonical MarginFi-shaped base58 (only the exact SOT ID allowed)", () => {
     expect(SOLANA_DISPATCH_ALLOWLIST.has(MARGINFI_WRONG_VARIANT)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 15 Plan 15-01 — native Stake Program dispatch arm (SOL-W-20 native).
+// The delegate-with-create bundle's programIds = {System, Stake}; BOTH must
+// pass. An unknown program in a stake-shaped array still refuses.
+// ---------------------------------------------------------------------------
+describe("checkSolanaDispatchTarget — native Stake arm (Phase 15 Plan 15-01)", () => {
+  it("native Stake Program only → allowed (delegate/deactivate/withdraw shape)", () => {
+    expect(checkSolanaDispatchTarget([NATIVE_STAKE])).toEqual({ kind: "allowed" });
+  });
+
+  it("delegate-with-create bundle programIds {System, Stake} → both allowed", () => {
+    expect(checkSolanaDispatchTarget([SYSTEM_PROGRAM, NATIVE_STAKE])).toEqual({
+      kind: "allowed",
+    });
+  });
+
+  it("an UNKNOWN program alongside the Stake bundle still refuses, naming the offender", () => {
+    const UNKNOWN = "EvilProgram1111111111111111111111111111111";
+    const result = checkSolanaDispatchTarget([SYSTEM_PROGRAM, NATIVE_STAKE, UNKNOWN]);
+    expect(result.kind).toBe("refused");
+    if (result.kind !== "refused") return;
+    expect(result.offenders).toEqual([UNKNOWN]);
+    expect(result.offenders).not.toContain(NATIVE_STAKE);
   });
 });
 

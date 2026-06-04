@@ -52,6 +52,7 @@ import {
   getKaminoScopeProgram,
   getKaminoSwitchboardProgram,
   getMarginfiProgramId,
+  getNativeStakeProgram,
 } from "../config/contracts.js";
 
 /**
@@ -114,6 +115,13 @@ export const SOLANA_DISPATCH_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // getter — NO inlined base58 in this file.
   getJupiterV6Program(),
   ComputeBudgetProgram.programId.toBase58(),
+
+  // Phase 15 Plan 15-01 (SOL-W-20 native arm) — the native Stake Program. The
+  // delegate / deactivate / withdraw tools build StakeProgram instructions; the
+  // delegate-with-create bundle ALSO touches the System program (already above).
+  // Enumerated from the actual built ix vector (assembleStakeTx programIds);
+  // sourced from the contracts SOT getter (NO inlined base58 in this file).
+  getNativeStakeProgram(),
 ]);
 
 /**

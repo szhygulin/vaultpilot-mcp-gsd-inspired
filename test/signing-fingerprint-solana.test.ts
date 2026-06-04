@@ -57,6 +57,12 @@ import {
   KAMINO_DISCRIMINATOR,
   _kamino,
 } from "../src/protocols/kamino.js";
+// Phase 15 Plan 15-01 — native SOL Stake Program builders for fixtures E/F/G/H.
+import {
+  STAKE_SEED,
+  _solanaStake,
+  deriveStakeAccount,
+} from "../src/protocols/solana-stake.js";
 
 // Pinned inputs — used identically by Fixture K + L. Stable across runs.
 // `FROM` is the curated `solana-whale` persona address from Plan 11-06
@@ -784,6 +790,104 @@ describe("Fixture Z — Jupiter v6 swap fingerprint (Plan 14-02, FROZEN binding 
     );
     expect(fpA).toMatch(/^0x[0-9a-f]{64}$/);
     expect(fpB).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 15 Plan 15-01 — native SOL Stake Program fixtures E/F/G/H.
+//
+// Each fixture builds the canonical native-stake instruction vector (pinned
+// feePayer + recentBlockhash + accounts/seed/amount), assembles via
+// _solanaStake.assembleStakeTx (which serializes the message), runs the FROZEN
+// computeSolanaPayloadFingerprint, and asserts a HARDCODED 0x… literal — NO
+// beforeAll-snapshot (drift in the StakeProgram-extract preimage MUST fail at a
+// specific line). Per-fixture embedding regression proves the load-bearing field
+// is in the preimage.
+//
+// Label map (FREE single label after Phase 13/14 consumed K–Z): E/F/G/H.
+//   E — native delegate (existing stake account): StakeProgram.delegate.instructions
+//   F — native delegate-with-create BUNDLE: createAccountWithSeed + delegate
+//   G — native deactivate: StakeProgram.deactivate.instructions
+//   H — native withdraw: StakeProgram.withdraw.instructions
+//
+// Cross-linked from test/prepare-solana-delegate.test.ts (E + F),
+// test/prepare-solana-deactivate.test.ts (G), test/prepare-solana-withdraw.test.ts (H).
+// ---------------------------------------------------------------------------
+describe("native SOL Stake fingerprint fixtures E/F/G/H (Plan 15-01, built-in StakeProgram)", () => {
+  // Pinned canonical accounts (deterministic literals). FEE_PAYER == authority.
+  const S_FROM = new PublicKey("5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9");
+  const S_STAKE = new PublicKey("AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9");
+  const S_VOTE = new PublicKey("3m9y53V2QwBbrQxtv5WN4T8SA5zw7BpZ2ZBYpZZAu8MW");
+  const S_TO = new PublicKey("7uYDwDDvFvKsHnvjt9D8gj2Gfd9Xzn4QYsf8KXrXrJsy");
+  const STAKE_RENT = 2_282_880n;
+
+  function fpOf(instructions: import("@solana/web3.js").TransactionInstruction[]): string {
+    const { messageBytes } = _solanaStake.assembleStakeTx({
+      instructions,
+      ixNames: instructions.map(() => "x"),
+      feePayer: S_FROM,
+      recentBlockhash: FIXED_BLOCKHASH,
+    });
+    return computeSolanaPayloadFingerprint({ messageBytes });
+  }
+
+  it("Fixture E — native delegate (existing stake account): hardcoded fingerprint", () => {
+    const fp = fpOf(
+      _solanaStake.buildDelegateIxs({ stakeAccount: S_STAKE, authorizedPubkey: S_FROM, votePubkey: S_VOTE }),
+    );
+    expect(fp).toBe("0x6888db92d4e0528da9c26a3f493ed0c3e9b1c3424292730b3ad9669ad16aaa0c");
+  });
+
+  it("Fixture E embedding regression: votePubkey swap changes the fingerprint", () => {
+    const a = fpOf(_solanaStake.buildDelegateIxs({ stakeAccount: S_STAKE, authorizedPubkey: S_FROM, votePubkey: S_VOTE }));
+    const b = fpOf(_solanaStake.buildDelegateIxs({ stakeAccount: S_STAKE, authorizedPubkey: S_FROM, votePubkey: S_TO }));
+    expect(a).not.toBe(b);
+    expect(a).toBe("0x6888db92d4e0528da9c26a3f493ed0c3e9b1c3424292730b3ad9669ad16aaa0c");
+  });
+
+  it("Fixture F — native delegate-with-create BUNDLE (createAccountWithSeed + delegate): hardcoded fingerprint + derived address", () => {
+    const built = _solanaStake.buildDelegateWithCreateIxs({
+      feePayer: S_FROM, stakeSeed: STAKE_SEED, votePubkey: S_VOTE, lamports: 1_000_000_000n, rentExemptLamports: STAKE_RENT,
+    });
+    // The derived stake address is pinned (no ephemeral keypair — A3).
+    expect(built.stakeAccount.toBase58()).toBe("HQhu6oCtrgVzSLmyhXYnqD3w3kBh4GNzhrtL76CYVnWE");
+    expect(deriveStakeAccount(S_FROM).toBase58()).toBe("HQhu6oCtrgVzSLmyhXYnqD3w3kBh4GNzhrtL76CYVnWE");
+    expect(fpOf(built.instructions)).toBe(
+      "0xf297332e4be50c89334aa81e5350abe0291ba073012fd021b3f9ac823f1993ba",
+    );
+  });
+
+  it("Fixture F embedding regression: stake-seed swap changes the derived stake address → changes the fingerprint", () => {
+    const a = _solanaStake.buildDelegateWithCreateIxs({ feePayer: S_FROM, stakeSeed: STAKE_SEED, votePubkey: S_VOTE, lamports: 1_000_000_000n, rentExemptLamports: STAKE_RENT });
+    const b = _solanaStake.buildDelegateWithCreateIxs({ feePayer: S_FROM, stakeSeed: "vaultpilot:stake2", votePubkey: S_VOTE, lamports: 1_000_000_000n, rentExemptLamports: STAKE_RENT });
+    expect(a.stakeAccount.toBase58()).not.toBe(b.stakeAccount.toBase58());
+    expect(fpOf(a.instructions)).not.toBe(fpOf(b.instructions));
+  });
+
+  it("Fixture G — native deactivate: hardcoded fingerprint", () => {
+    const fp = fpOf(_solanaStake.buildDeactivateIxs({ stakeAccount: S_STAKE, authorizedPubkey: S_FROM }));
+    expect(fp).toBe("0xa590954636de3bb04431f6737811886ad654aa3f6244281ff7e6ba902f0b7144");
+  });
+
+  it("Fixture G embedding regression: stakePubkey swap changes the fingerprint", () => {
+    const a = fpOf(_solanaStake.buildDeactivateIxs({ stakeAccount: S_STAKE, authorizedPubkey: S_FROM }));
+    const b = fpOf(_solanaStake.buildDeactivateIxs({ stakeAccount: S_VOTE, authorizedPubkey: S_FROM }));
+    expect(a).not.toBe(b);
+    expect(a).toBe("0xa590954636de3bb04431f6737811886ad654aa3f6244281ff7e6ba902f0b7144");
+  });
+
+  it("Fixture H — native withdraw: hardcoded fingerprint", () => {
+    const fp = fpOf(
+      _solanaStake.buildWithdrawIxs({ stakeAccount: S_STAKE, authorizedPubkey: S_FROM, toPubkey: S_TO, lamports: 1_000_000_000n }),
+    );
+    expect(fp).toBe("0x91b04458188f414dedb90b092b52cb17e4c80320d9220a2f544a9f1500056545");
+  });
+
+  it("Fixture H embedding regression: lamports swap changes the fingerprint (amount is in the preimage)", () => {
+    const a = fpOf(_solanaStake.buildWithdrawIxs({ stakeAccount: S_STAKE, authorizedPubkey: S_FROM, toPubkey: S_TO, lamports: 1_000_000_000n }));
+    const b = fpOf(_solanaStake.buildWithdrawIxs({ stakeAccount: S_STAKE, authorizedPubkey: S_FROM, toPubkey: S_TO, lamports: 1_000_000_001n }));
+    expect(a).not.toBe(b);
+    expect(a).toBe("0x91b04458188f414dedb90b092b52cb17e4c80320d9220a2f544a9f1500056545");
   });
 });
 
