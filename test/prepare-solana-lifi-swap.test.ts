@@ -180,6 +180,40 @@ describe("prepare_solana_lifi_swap — OUTBOUND Inv #6b (decode FROM signed call
   });
 });
 
+describe("prepare_solana_lifi_swap — INBOUND (EVM→Solana) branch (b) refuse [16-03]", () => {
+  it("v0 LiFi inbound tx → typed refusal (FROZEN binding untouched, no handle)", async () => {
+    // INBOUND: toChainId === LiFi Solana chain id. The LiFi tx is a base64 v0
+    // Solana tx (byte-0 0xd3, the live-captured shape). Build a v0 base64.
+    const sigCount = Buffer.from([1]);
+    const sigBlob = Buffer.alloc(64, 0);
+    const message = Buffer.from([0xd3, 0, 0, 0]); // v0 high-bit header
+    const v0b64 = Buffer.concat([sigCount, sigBlob, message]).toString("base64");
+
+    fetchLifiQuoteMock.mockResolvedValue({
+      kind: "ok",
+      quote: {
+        action: { toAddress: "7gxcsRkHzkbqfQwjV2eDdmCkK8gPjVf9YpY5fG5L8aBc" },
+        fromChainId: 42161, // EVM source
+        toChainId: LIFI_SOLANA_CHAIN_ID, // Solana target → INBOUND
+        transactionRequest: { to: "0x0", data: v0b64, value: "0" },
+      },
+    });
+
+    const result = await callTool({
+      fromChain: "ARB",
+      fromToken: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+      toChain: "SOL",
+      toToken: "So11111111111111111111111111111111111111112",
+      amount: "1.0",
+      toAddress: "7gxcsRkHzkbqfQwjV2eDdmCkK8gPjVf9YpY5fG5L8aBc",
+    });
+
+    expect(result.isError).toBe(true);
+    const text = result.content[0]?.text ?? "";
+    expect(text).toMatch(/v0|Versioned|legacy/i);
+  });
+});
+
 describe("prepare_solana_lifi_swap — gates", () => {
   it("demo mode → DEMO_MODE_REFUSED (before any network)", async () => {
     process.env.VAULTPILOT_DEMO = "true";

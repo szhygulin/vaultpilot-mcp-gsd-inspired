@@ -39,6 +39,10 @@ import {
   createHandle,
 } from "../signing/handle-store.js";
 import { computePayloadFingerprint } from "../signing/payload-fingerprint.js";
+import {
+  LifiV0TransactionError,
+  _lifiSolana,
+} from "../protocols/lifi-solana.js";
 import { registerTool, type ToolHandlerResult } from "./index.js";
 
 function errEnvelope(
@@ -75,19 +79,47 @@ const LEDGER_NOTICE_BLIND_SIGN = [
 // Routed through the `_solanaLifi` indirection so 16-03 replaces ONLY this
 // function (and a test can spy it). The split is the contract: 16-03 adds the
 // inbound body, never restructures the tool.
-async function prepareInbound(_ctx: {
+async function prepareInbound(ctx: {
   quote: LifiQuote;
   toAddress: string;
   toChain: string;
   toToken: string;
   amount: string;
 }): Promise<ToolHandlerResult> {
-  // 16-02 leaves this as a typed dispatch point. 16-03 replaces the body with the
-  // v0-guard + (conditional) legacy decode + Inv #6b OR the typed v0 refusal.
-  const message =
-    "EVM→Solana inbound LiFi bridging is delivered by Plan 16-03 (v0-guard + " +
-    "conditional legacy decode). It is not yet wired in this build.";
-  return errResult("INTERNAL_ERROR", message);
+  // Plan 16-03 — BRANCH (b) CONSERVATIVE REFUSE (resolved at execute-time).
+  //
+  // The execute-time live /v1/quote capture for EVM→Solana returned a v0/
+  // VersionedTransaction (byte-0 0xd3 >= 0x80). The FROZEN Solana binding accepts
+  // ONLY legacy serializeMessage() bytes, so we run the v0-guard over the LiFi-
+  // returned base64 tx. v0 → LifiV0TransactionError → typed refusal (NO handle,
+  // NO decode, the Solana dispatch arm stays inactive). v0 is NEVER silently
+  // accepted; the FROZEN binding is NEVER touched. (If LiFi ever returns a legacy
+  // tx, deserializeLifiSolanaTx returns its serializeMessage() bytes — a future
+  // follow-up then ships the recipient decode + Inv #6b + Fixture AD. Today that
+  // path is unreachable, so we refuse honestly rather than ship a stub claim.)
+  const b64 = ctx.quote.transactionRequest.data;
+  try {
+    _lifiSolana.deserializeLifiSolanaTx(b64);
+  } catch (err) {
+    if (err instanceof LifiV0TransactionError) {
+      return errResult("INTERNAL_ERROR", err.message);
+    }
+    return errResult(
+      "INTERNAL_ERROR",
+      `LiFi inbound Solana tx could not be parsed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // Legacy tx parsed (not expected under the current branch-b reality): the
+  // recipient decode + Inv #6b + canonical-dispatch activation are not shipped
+  // in this build (no legacy upstream path was found at execute-time). Refuse
+  // rather than mint a handle without the Inv #6b recipient assertion.
+  return errResult(
+    "INTERNAL_ERROR",
+    "LiFi returned a legacy Solana tx, but the EVM→Solana inbound recipient decode (Inv #6b) " +
+      "is not shipped in this build (LiFi returns v0 transactions for this route; see SECURITY.md). " +
+      "Refusing to mint a handle without the final-recipient assertion.",
+  );
 }
 
 /**
