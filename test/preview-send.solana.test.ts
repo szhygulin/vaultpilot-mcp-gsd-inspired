@@ -420,7 +420,9 @@ describe("preview_send (Solana) — SIMULATION_REFUSED on RPC error", () => {
 describe("preview_send (Solana) — Layer 0.5 DISPATCH_TARGET_REFUSED", () => {
   it("non-allowlisted programId in record.tx.programIds → refuses with DISPATCH_TARGET_REFUSED + verbatim offenders + simulation NEVER called", async () => {
     const messageBytes = buildFixtureKMessageBytes();
-    const JUPITER_V6 = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
+    // Phase 14: Jupiter v6 is now ALLOWLISTED (prepare_jupiter_swap). The
+    // non-allowlisted canary is a genuinely-unknown program ID.
+    const UNKNOWN_PROGRAM = "EvilProgram1111111111111111111111111111111";
     const handle = createHandle({
       args: {
         to: FIXTURE_K_TO_BASE58,
@@ -437,8 +439,9 @@ describe("preview_send (Solana) — Layer 0.5 DISPATCH_TARGET_REFUSED", () => {
         messageBytes,
         feePayer: FROM.toBase58(),
         recentBlockhash: FIXED_BLOCKHASH,
-        // Inject a non-allowlisted programId — Phase 14 Jupiter deferral.
-        programIds: [JUPITER_V6],
+        // Inject a non-allowlisted programId — genuinely unknown (NOT Jupiter,
+        // which Phase 14 14-01 added to the allowlist).
+        programIds: [UNKNOWN_PROGRAM],
         instructionSummary: buildFixtureKInstructionSummary(),
       },
       payloadFingerprint: FIXTURE_K_FINGERPRINT,
@@ -449,7 +452,7 @@ describe("preview_send (Solana) — Layer 0.5 DISPATCH_TARGET_REFUSED", () => {
     expect(result.isError).toBe(true);
     const sc = result.structuredContent as { errorCode: string; message: string };
     expect(sc.errorCode).toBe("DISPATCH_TARGET_REFUSED");
-    expect(sc.message).toContain(JUPITER_V6);
+    expect(sc.message).toContain(UNKNOWN_PROGRAM);
     // Layer 0.5 short-circuits BEFORE Layer 0.7 simulation.
     expect(_simulationSolana.runSolanaPreviewSimulation).not.toHaveBeenCalled();
     // Handle status STAYS prepared.
