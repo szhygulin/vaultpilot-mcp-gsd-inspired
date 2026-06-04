@@ -18,7 +18,7 @@
 //   - ESM spy round-trip via `_canonicalDispatchSolana` indirection.
 
 import { describe, expect, it, vi } from "vitest";
-import { SystemProgram } from "@solana/web3.js";
+import { ComputeBudgetProgram, SystemProgram, Transaction } from "@solana/web3.js";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -30,12 +30,17 @@ import {
   checkSolanaDispatchTarget,
 } from "../src/security/canonical-dispatch-solana.js";
 import {
+  getJupiterV6Program,
   getKaminoLendProgram,
   getKaminoPythReceiverProgram,
   getKaminoScopeProgram,
   getKaminoSwitchboardProgram,
   getMarginfiProgramId,
 } from "../src/config/contracts.js";
+// Phase 14 Plan 14-01 — the SINGLE pinned Jupiter swap legacy-tx fixture this
+// plan OWNS. Decoded ONCE here to enumerate the dispatch allowlist; 14-02 imports
+// the identical literal (never a second copy).
+import { JUPITER_SWAP_LEGACY_B64 } from "./fixtures/jupiter-swap-legacy.b64.js";
 
 // Canonical program IDs (re-derived inline so the test does not depend on
 // the production import for membership assertions).
@@ -54,25 +59,28 @@ const KAMINO_SCOPE = getKaminoScopeProgram();
 const KAMINO_PYTH = getKaminoPythReceiverProgram();
 const KAMINO_SWITCHBOARD = getKaminoSwitchboardProgram();
 
+// Phase 14 Plan 14-01 — Jupiter v6 program + ComputeBudget (Open-Q1 enumeration).
+const JUPITER_V6 = getJupiterV6Program();
+const COMPUTE_BUDGET = ComputeBudgetProgram.programId.toBase58();
+
 // Phase 12 base count (System + Token + Associated) + Phase 13 additions
 // (MarginFi + Kamino lending) + Phase 13 Plan 13-05 auxiliary oracle programs
-// (Scope + Pyth receiver + Switchboard — the Kamino refresh ceremony touches
-// these via CPI, Pitfall 5).
-const EXPECTED_ALLOWLIST_SIZE = 8;
+// (Scope + Pyth receiver + Switchboard) + Phase 14 Plan 14-01 (Jupiter v6 +
+// ComputeBudget — the wrapAndUnwrapSol legacy swap top-level set enumerated from
+// the single owned fixture decode).
+const EXPECTED_ALLOWLIST_SIZE = 10;
 
-// Canary program IDs that remain DEFERRED / refused.
-//   - Jupiter v6 swap aggregator (Phase 14 widening target) — still deferred.
+// Canary program IDs that remain refused.
 //   - A non-canonical MarginFi-shaped base58 (NOT the SOT program ID) — proves
 //     only the exact SOT-resolved program ID is allowed; a typo/wrong variant
 //     still refuses at Layer 0.5.
-const JUPITER_V6 = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 const MARGINFI_WRONG_VARIANT = "MFv2hWf31Z9kbCa1snEPYctwafyJfftfPqwXrjBpjpa9";
 
 // ---------------------------------------------------------------------------
 // Test 1 — SOLANA_DISPATCH_ALLOWLIST membership (Phase 12 base + Phase 13 lending).
 // ---------------------------------------------------------------------------
-describe("SOLANA_DISPATCH_ALLOWLIST — membership (Phase 12 base + Phase 13 lending)", () => {
-  it(`contains exactly ${EXPECTED_ALLOWLIST_SIZE} entries (3 base + MarginFi + Kamino)`, () => {
+describe("SOLANA_DISPATCH_ALLOWLIST — membership (Phase 12 base + Phase 13 lending + Phase 14 Jupiter)", () => {
+  it(`contains exactly ${EXPECTED_ALLOWLIST_SIZE} entries (3 base + MarginFi + Kamino×4 + Jupiter + ComputeBudget)`, () => {
     expect(SOLANA_DISPATCH_ALLOWLIST.size).toBe(EXPECTED_ALLOWLIST_SIZE);
   });
 
@@ -108,12 +116,60 @@ describe("SOLANA_DISPATCH_ALLOWLIST — membership (Phase 12 base + Phase 13 len
     expect(SOLANA_DISPATCH_ALLOWLIST.has(KAMINO_SWITCHBOARD)).toBe(true);
   });
 
-  it("does NOT contain Jupiter v6 (Phase 14 deferral)", () => {
-    expect(SOLANA_DISPATCH_ALLOWLIST.has(JUPITER_V6)).toBe(false);
+  it("contains the Jupiter v6 aggregator program ID (Phase 14 — from the SOT)", () => {
+    expect(SOLANA_DISPATCH_ALLOWLIST.has(JUPITER_V6)).toBe(true);
+  });
+
+  it("contains the ComputeBudget program (Phase 14 — Open-Q1 enumeration: top-level in the swap fixture)", () => {
+    expect(SOLANA_DISPATCH_ALLOWLIST.has(COMPUTE_BUDGET)).toBe(true);
   });
 
   it("does NOT contain a non-canonical MarginFi-shaped base58 (only the exact SOT ID allowed)", () => {
     expect(SOLANA_DISPATCH_ALLOWLIST.has(MARGINFI_WRONG_VARIANT)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Test 1b — Phase 14 Open-Q1: derive the top-level program set FROM the single
+// pinned decode this plan OWNS (NOT guessed). The enumerated wrap/unwrap set the
+// fixture emits MUST be `allowed`; an unknown program ID still refuses.
+// ---------------------------------------------------------------------------
+describe("SOLANA_DISPATCH_ALLOWLIST — Phase 14 Jupiter swap fixture enumeration (Open Q1)", () => {
+  // Decode the SINGLE owned fixture ONCE; derive the top-level program set.
+  const decoded = Transaction.from(Buffer.from(JUPITER_SWAP_LEGACY_B64, "base64"));
+  const topLevelPrograms = [
+    ...new Set(decoded.instructions.map((ix) => ix.programId.toBase58())),
+  ];
+
+  it("the decoded top-level set is exactly { ComputeBudget, ATA, System, Token, Jupiter v6 }", () => {
+    expect(new Set(topLevelPrograms)).toEqual(
+      new Set([
+        COMPUTE_BUDGET,
+        ASSOCIATED_TOKEN_PROGRAM,
+        SYSTEM_PROGRAM,
+        TOKEN_PROGRAM,
+        JUPITER_V6,
+      ]),
+    );
+  });
+
+  it("the full enumerated wrap/unwrap top-level set is allowed (no false refusal at preview)", () => {
+    expect(checkSolanaDispatchTarget(topLevelPrograms)).toEqual({
+      kind: "allowed",
+    });
+  });
+
+  it("checkSolanaDispatchTarget([Jupiter v6]) → allowed", () => {
+    expect(checkSolanaDispatchTarget([JUPITER_V6])).toEqual({ kind: "allowed" });
+  });
+
+  it("an unknown program ID alongside the enumerated set still refuses (with that pid in offenders)", () => {
+    const UNKNOWN = "EvilProgram1111111111111111111111111111111";
+    const result = checkSolanaDispatchTarget([...topLevelPrograms, UNKNOWN]);
+    expect(result.kind).toBe("refused");
+    if (result.kind !== "refused") return;
+    expect(result.offenders).toEqual([UNKNOWN]);
+    expect(result.offenders).not.toContain(JUPITER_V6);
   });
 });
 
@@ -141,6 +197,12 @@ describe("checkSolanaDispatchTarget — allowed cases", () => {
 
   it("MarginFi program only → allowed (Phase 13 lending write shape)", () => {
     expect(checkSolanaDispatchTarget([MARGINFI_PROGRAM])).toEqual({
+      kind: "allowed",
+    });
+  });
+
+  it("Jupiter v6 only → allowed (Phase 14 swap write shape)", () => {
+    expect(checkSolanaDispatchTarget([JUPITER_V6])).toEqual({
       kind: "allowed",
     });
   });
@@ -212,11 +274,15 @@ describe("checkSolanaDispatchTarget — auxiliary-program enforcement (Pitfall 5
 // Test 3 — checkSolanaDispatchTarget refusal arms.
 // ---------------------------------------------------------------------------
 describe("checkSolanaDispatchTarget — refusal cases", () => {
-  it("Jupiter v6 only → refused with verbatim offender (Phase 14 canary)", () => {
-    const result = checkSolanaDispatchTarget([JUPITER_V6]);
+  // Phase 14: Jupiter v6 is now ALLOWED — the unknown-program canary is a
+  // genuinely-unknown program ID (NOT a real protocol target).
+  const UNKNOWN_PROGRAM = "EvilProgram1111111111111111111111111111111";
+
+  it("unknown program only → refused with verbatim offender (Layer 0.5 canary)", () => {
+    const result = checkSolanaDispatchTarget([UNKNOWN_PROGRAM]);
     expect(result.kind).toBe("refused");
     if (result.kind !== "refused") return;
-    expect(result.offenders).toEqual([JUPITER_V6]);
+    expect(result.offenders).toEqual([UNKNOWN_PROGRAM]);
     // Allowlist surfaces the verbatim entry list for self-correction.
     expect(result.allowlist).toHaveLength(EXPECTED_ALLOWLIST_SIZE);
     expect(result.allowlist).toContain(SYSTEM_PROGRAM);
@@ -224,6 +290,8 @@ describe("checkSolanaDispatchTarget — refusal cases", () => {
     expect(result.allowlist).toContain(ASSOCIATED_TOKEN_PROGRAM);
     expect(result.allowlist).toContain(MARGINFI_PROGRAM);
     expect(result.allowlist).toContain(KAMINO_LEND_PROGRAM);
+    expect(result.allowlist).toContain(JUPITER_V6);
+    expect(result.allowlist).toContain(COMPUTE_BUDGET);
   });
 
   it("non-canonical MarginFi variant → refused (only the exact SOT ID allowed)", () => {
@@ -233,31 +301,31 @@ describe("checkSolanaDispatchTarget — refusal cases", () => {
     expect(result.offenders).toEqual([MARGINFI_WRONG_VARIANT]);
   });
 
-  it("System + Jupiter mixed → refused; allowed entry does NOT rescue refusal", () => {
-    const result = checkSolanaDispatchTarget([SYSTEM_PROGRAM, JUPITER_V6]);
+  it("System + unknown mixed → refused; allowed entry does NOT rescue refusal", () => {
+    const result = checkSolanaDispatchTarget([SYSTEM_PROGRAM, UNKNOWN_PROGRAM]);
     expect(result.kind).toBe("refused");
     if (result.kind !== "refused") return;
-    expect(result.offenders).toEqual([JUPITER_V6]);
+    expect(result.offenders).toEqual([UNKNOWN_PROGRAM]);
   });
 
-  it("MarginFi + Jupiter mixed → refused; allowed lending entry does NOT rescue", () => {
-    const result = checkSolanaDispatchTarget([MARGINFI_PROGRAM, JUPITER_V6]);
+  it("Jupiter + unknown mixed → refused; allowed Jupiter entry does NOT rescue", () => {
+    const result = checkSolanaDispatchTarget([JUPITER_V6, UNKNOWN_PROGRAM]);
     expect(result.kind).toBe("refused");
     if (result.kind !== "refused") return;
-    expect(result.offenders).toEqual([JUPITER_V6]);
-    expect(result.offenders).not.toContain(MARGINFI_PROGRAM);
+    expect(result.offenders).toEqual([UNKNOWN_PROGRAM]);
+    expect(result.offenders).not.toContain(JUPITER_V6);
   });
 
-  it("Token + Jupiter + wrong-MarginFi mixed → refused; offenders contains BOTH unknowns", () => {
+  it("Token + unknown + wrong-MarginFi mixed → refused; offenders contains BOTH unknowns", () => {
     const result = checkSolanaDispatchTarget([
       TOKEN_PROGRAM,
-      JUPITER_V6,
+      UNKNOWN_PROGRAM,
       MARGINFI_WRONG_VARIANT,
     ]);
     expect(result.kind).toBe("refused");
     if (result.kind !== "refused") return;
     expect(result.offenders).toHaveLength(2);
-    expect(result.offenders).toContain(JUPITER_V6);
+    expect(result.offenders).toContain(UNKNOWN_PROGRAM);
     expect(result.offenders).toContain(MARGINFI_WRONG_VARIANT);
     // TOKEN is allowed → must NOT be in offenders.
     expect(result.offenders).not.toContain(TOKEN_PROGRAM);
@@ -282,12 +350,13 @@ describe("_canonicalDispatchSolana — ESM spy-affordance round-trip", () => {
       .mockReturnValue({ kind: "allowed" });
     try {
       // Call through the indirection — the spy ought to intercept.
+      const UNKNOWN = "EvilProgram1111111111111111111111111111111";
       const result = _canonicalDispatchSolana.checkSolanaDispatchTarget([
-        JUPITER_V6, // would normally refuse
+        UNKNOWN, // would normally refuse
       ]);
       expect(result).toEqual({ kind: "allowed" });
       expect(spy).toHaveBeenCalledTimes(1);
-      expect(spy).toHaveBeenCalledWith([JUPITER_V6]);
+      expect(spy).toHaveBeenCalledWith([UNKNOWN]);
     } finally {
       spy.mockRestore();
     }

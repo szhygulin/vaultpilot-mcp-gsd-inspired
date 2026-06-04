@@ -1699,6 +1699,8 @@ export interface SolanaContracts {
   kaminoPythReceiverProgram: string;
   /** Switchboard program (refreshReserve CPI — EXTENDED-IN-13-05). */
   kaminoSwitchboardProgram: string;
+  /** Jupiter v6 aggregator program ID (Phase 14 — prepare_jupiter_swap dispatch target). */
+  jupiterV6Program: string;
 }
 
 const SOLANA_CONTRACTS_RAW: Record<"solana", SolanaContracts> = {
@@ -1715,6 +1717,11 @@ const SOLANA_CONTRACTS_RAW: Record<"solana", SolanaContracts> = {
     kaminoScopeProgram: "HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ",
     kaminoPythReceiverProgram: "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
     kaminoSwitchboardProgram: "SW1TCH7qEPTdLsDHRgPuMQjbQxKdH2aBStViMFnt64f",
+    // Phase 14 Plan 14-01 (D — Jupiter v6 aggregator program, RESEARCH § Claude's
+    // Discretion CITED). The on-chain swap target; inner DEX hops (Raydium / Orca
+    // / Meteora / Phoenix) run as CPI under this single outer program. Consumed by
+    // canonical-dispatch-solana (allowlist) + prepare_jupiter_swap (14-02).
+    jupiterV6Program: "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
   },
 };
 
@@ -1776,6 +1783,17 @@ export function getKaminoPythReceiverProgram(): string {
  */
 export function getKaminoSwitchboardProgram(): string {
   return SOLANA_CONTRACTS_RAW.solana.kaminoSwitchboardProgram;
+}
+
+/**
+ * Get the Jupiter v6 aggregator program ID (base58). Phase 14 Plan 14-01.
+ * Consumed by `src/security/canonical-dispatch-solana.ts` (allowlist arm) and
+ * `src/protocols/jupiter.ts` / `src/tools/prepare_jupiter_swap.ts` (14-02 — the
+ * decoded swap tx's top-level program must equal this). The no-inline grep
+ * sentinel forbids inlining the base58 anywhere else.
+ */
+export function getJupiterV6Program(): string {
+  return SOLANA_CONTRACTS_RAW.solana.jupiterV6Program;
 }
 
 // PDA-derivation helpers (D-05). Each returns a base58 string and is

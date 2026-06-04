@@ -39,13 +39,14 @@
 // monkey-patching the named export (ESM bindings are immutable; direct
 // spies on named exports are no-ops for cross-export internal calls).
 
-import { SystemProgram } from "@solana/web3.js";
+import { ComputeBudgetProgram, SystemProgram } from "@solana/web3.js";
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 
 import {
+  getJupiterV6Program,
   getKaminoLendProgram,
   getKaminoPythReceiverProgram,
   getKaminoScopeProgram,
@@ -95,6 +96,24 @@ export const SOLANA_DISPATCH_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   getKaminoScopeProgram(),
   getKaminoPythReceiverProgram(),
   getKaminoSwitchboardProgram(),
+
+  // Phase 14 Plan 14-01 (SOL-W-11 / SC #5) — Jupiter v6 aggregator program +
+  // the wrap/unwrap auxiliary top-level set. A Jupiter swap is ONE outer call
+  // into the Jupiter program (inner DEX hops are CPI, invisible at the top
+  // level); `wrapAndUnwrapSol:true` prepends a ComputeBudget pair + a wrap/unwrap
+  // (System + SPL-Token + Associated-Token) bracket around the route.
+  //
+  // OPEN-QUESTION-1 RESOLVED BY ENUMERATION (NOT guessed) — mirror of the
+  // Phase-13 "enumerated from the actual built instruction vector" discipline.
+  // The SINGLE pinned legacy SOL→USDC wrapAndUnwrapSol:true swap fixture
+  // (test/fixtures/jupiter-swap-legacy.b64.ts, owned by 14-01) decodes to the
+  // top-level set { ComputeBudget, AssociatedToken, System, SPL-Token, Jupiter
+  // v6 }. System / SPL-Token / Associated-Token are already above; ComputeBudget
+  // DOES appear top-level in the decode, so it is added here (14-02 re-asserts
+  // against the identical bytes). The Jupiter program ID is read via the SOT
+  // getter — NO inlined base58 in this file.
+  getJupiterV6Program(),
+  ComputeBudgetProgram.programId.toBase58(),
 ]);
 
 /**

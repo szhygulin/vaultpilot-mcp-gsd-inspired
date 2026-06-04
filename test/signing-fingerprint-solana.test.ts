@@ -728,6 +728,66 @@ describe("Kamino obligation-init fixture X–Y (Plan 13-06, D-01 + V9 2-step)", 
 });
 
 // ---------------------------------------------------------------------------
+// Phase 14 Plan 14-02 — Fixture Z: Jupiter v6 swap fingerprint.
+//
+// The swap tx is constructed by a THIRD PARTY (Jupiter); we bind its
+// serializeMessage() bytes through the FROZEN computeSolanaPayloadFingerprint
+// UNCHANGED. Fixture Z anchors that fingerprint as a HARDCODED 0x… literal
+// computed at write-time (NO beforeAll-snapshot — CLAUDE.md cryptographic-binding
+// rule). The message bytes come from deserializing the SINGLE shared pinned
+// legacy-swap fixture 14-01 owns (test/fixtures/jupiter-swap-legacy.b64.ts) — the
+// IDENTICAL bytes the protocol decoder + prepare tool feed the binding.
+//
+// Label rationale (Z, NOT K): Fixture K is the Phase-12 native-SOL transfer in
+// THIS file; K–X are assigned (X is the highest), Y is consumed by the Phase 13-06
+// obligation-init "Fixture X–Y" pair — Z is the next free label here. (A
+// double-letter label was avoided because that namespace collides with the
+// unrelated EVM/BTC BTC-LIFI fixture in test/signing-fingerprint.test.ts.)
+//
+// Cross-linked from test/prepare-jupiter-swap.test.ts (binding byte-identity) and
+// test/protocols-jupiter.test.ts (the decode that produces these bytes).
+// ---------------------------------------------------------------------------
+describe("Fixture Z — Jupiter v6 swap fingerprint (Plan 14-02, FROZEN binding over a third-party tx)", () => {
+  it("Fixture Z — computeSolanaPayloadFingerprint over the pinned legacy swap message bytes (hardcoded literal anchor)", async () => {
+    const { JUPITER_SWAP_LEGACY_B64 } = await import("./fixtures/jupiter-swap-legacy.b64.js");
+    // Deserialize the LEGACY tx exactly as src/protocols/jupiter.ts does, then
+    // take serializeMessage() — the EXACT preimage the FROZEN binding hashes.
+    const tx = Transaction.from(Buffer.from(JUPITER_SWAP_LEGACY_B64, "base64"));
+    const messageBytes = new Uint8Array(tx.serializeMessage());
+    // Stable byte-length anchor — catches any future serializeMessage shape change.
+    expect(messageBytes.length).toBe(447);
+
+    const fp = computeSolanaPayloadFingerprint({ messageBytes });
+    // Hardcoded literal anchor (write-time computation pinned forever; NO
+    // beforeAll-snapshot). A tampered swap-tx byte flips this at THIS line.
+    expect(fp).toBe(
+      "0x6d14fb2164f56333cc15386d8ca1943d86458473f14526439baf2cffba459550",
+    );
+  });
+
+  it("Fixture Z embedding regression: a single message-byte flip changes the fingerprint", async () => {
+    const { JUPITER_SWAP_LEGACY_B64 } = await import("./fixtures/jupiter-swap-legacy.b64.js");
+    const tx = Transaction.from(Buffer.from(JUPITER_SWAP_LEGACY_B64, "base64"));
+    const original = new Uint8Array(tx.serializeMessage());
+
+    const fpA = computeSolanaPayloadFingerprint({ messageBytes: original });
+
+    // Flip one byte in the route/amount region (the trailing instruction-data
+    // bytes) — proves the swap tx's data IS in the preimage (mirror Fixture L/O).
+    const tampered = new Uint8Array(original);
+    tampered[tampered.length - 2] ^= 0x01;
+    const fpB = computeSolanaPayloadFingerprint({ messageBytes: tampered });
+
+    expect(fpA).not.toBe(fpB);
+    expect(fpA).toBe(
+      "0x6d14fb2164f56333cc15386d8ca1943d86458473f14526439baf2cffba459550",
+    );
+    expect(fpA).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(fpB).toMatch(/^0x[0-9a-f]{64}$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Phase 44 Plan 44-01 — FROZEN cryptographic-binding-chain zero-diff gate.
 //
 // The Solana fingerprint + presign-hash modules are FROZEN: Phase 44 nonce
