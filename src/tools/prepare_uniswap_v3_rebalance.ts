@@ -100,7 +100,7 @@ const DESCRIPTION = [
   "NO new ERC-20 transfer-in beyond the collected amounts — the rebalance keeps capital constant (the new position is funded from the decreased-and-collected old position's proceeds).",
   "LEDGER NOTICE emitted UNCONDITIONALLY — the NPM contract is NOT in the Ledger ERC-7730 clear-sign registry; the device blind-signs the full outer multicall hash.",
   "`chain` is REQUIRED and locked to 'ethereum'. Phase 33 is Ethereum-mainnet-only.",
-  "`slippageBps` defaults to 50 (0.5%) — applied to BOTH the decrease and the mint min-amounts. `deadlineSeconds` defaults to 1800.",
+  "`slippageBps` defaults to 50 (0.5%) — applied to the mint (re-add) leg's min-amounts only. The decrease (exit) leg's amount0Min/1Min are 0 (slippage floor not enforced at the prepare layer — deferred to v2.4.x; see CHECKS PERFORMED). `deadlineSeconds` defaults to 1800.",
   "Returns { handle, chainId, from, to, valueWei, data, payloadFingerprint, tokenId, newTickLower, newTickUpper, expectedAmount0, expectedAmount1, decreaseAmount0Min, decreaseAmount1Min, mintAmount0Min, mintAmount1Min, deadline } plus PREPARE RECEIPT + CHECKS PERFORMED + LEDGER NOTICE.",
   "Failure modes: INVALID_INPUT (non-ethereum / malformed tokenId / not-owner / empty position / snap delta > 100 bps / degenerate new range); WALLET_NOT_PAIRED; WRONG_MODE; INTERNAL_ERROR.",
 ].join(" ");
@@ -132,7 +132,7 @@ const INPUT_SCHEMA = {
     slippageBps: {
       type: "number",
       description:
-        "Slippage tolerance in basis points (1..10000); default 50 (0.5%). Applied to BOTH the decrease and the mint min-amounts.",
+        "Slippage tolerance in basis points (1..10000); default 50 (0.5%). Applied to the mint (re-add) leg's min-amounts only; the decrease (exit) leg's min-amounts are 0 (floor not enforced at the prepare layer — deferred to v2.4.x).",
     },
     deadlineSeconds: {
       type: "number",
