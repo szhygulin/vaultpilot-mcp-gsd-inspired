@@ -52,6 +52,9 @@ import {
   getKaminoScopeProgram,
   getKaminoSwitchboardProgram,
   getMarginfiProgramId,
+  getMarinadeProgram,
+  getNativeStakeProgram,
+  getSplStakePoolProgram,
 } from "../config/contracts.js";
 
 /**
@@ -114,6 +117,25 @@ export const SOLANA_DISPATCH_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // getter — NO inlined base58 in this file.
   getJupiterV6Program(),
   ComputeBudgetProgram.programId.toBase58(),
+
+  // Phase 15 Plan 15-01 (SOL-W-20 native arm) — the native Stake Program. The
+  // delegate / deactivate / withdraw tools build StakeProgram instructions; the
+  // delegate-with-create bundle ALSO touches the System program (already above).
+  // Enumerated from the actual built ix vector (assembleStakeTx programIds);
+  // sourced from the contracts SOT getter (NO inlined base58 in this file).
+  getNativeStakeProgram(),
+
+  // Phase 15 Plan 15-02 (SOL-W-14/15 Marinade arm) — the Marinade program. The
+  // deposit / liquidUnstake tools build Marinade instructions; System + Token are
+  // already above (the CPI targets enumerated from assembleMarinadeTx programIds).
+  // Sourced from the contracts SOT getter (NO inlined base58 in this file).
+  getMarinadeProgram(),
+
+  // Phase 15 Plan 15-03 (SOL-W-16/20 Jito arm) — the SPL Stake Pool program (Jito
+  // IS the SPL stake pool). The DepositSol tool builds an SPL-stake-pool ix;
+  // System + Token are already above (assembleJitoTx programIds). Sourced from the
+  // contracts SOT getter (NO inlined base58 in this file).
+  getSplStakePoolProgram(),
 ]);
 
 /**

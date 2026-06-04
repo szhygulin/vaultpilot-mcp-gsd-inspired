@@ -1,0 +1,831 @@
+{
+  "address": "MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD",
+  "metadata": {
+    "name": "marinade_finance",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Marinade State account-decode IDL (build-time, for LiqPool fee read; vendored from SDK 5.0.18, converted to Anchor 0.30 format)"
+  },
+  "instructions": [],
+  "accounts": [
+    {
+      "name": "State",
+      "discriminator": [
+        216,
+        146,
+        107,
+        94,
+        104,
+        75,
+        182,
+        177
+      ]
+    }
+  ],
+  "events": [],
+  "errors": [],
+  "types": [
+    {
+      "name": "SplitStakeAccountInfo",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "account",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "U64ValueChange",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "old",
+            "type": "u64"
+          },
+          {
+            "name": "new",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "U32ValueChange",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "old",
+            "type": "u32"
+          },
+          {
+            "name": "new",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeValueChange",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "old",
+            "type": {
+              "defined": {
+                "name": "Fee"
+              }
+            }
+          },
+          {
+            "name": "new",
+            "type": {
+              "defined": {
+                "name": "Fee"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeCentsValueChange",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "old",
+            "type": {
+              "defined": {
+                "name": "FeeCents"
+              }
+            }
+          },
+          {
+            "name": "new",
+            "type": {
+              "defined": {
+                "name": "FeeCents"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "PubkeyValueChange",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "old",
+            "type": "pubkey"
+          },
+          {
+            "name": "new",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "BoolValueChange",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "old",
+            "type": "bool"
+          },
+          {
+            "name": "new",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ChangeAuthorityData",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "validatorManager",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "operationalSolAccount",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "treasuryMsolAccount",
+            "type": {
+              "option": "pubkey"
+            }
+          },
+          {
+            "name": "pauseAuthority",
+            "type": {
+              "option": "pubkey"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ConfigLpParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "minFee",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "Fee"
+                }
+              }
+            }
+          },
+          {
+            "name": "maxFee",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "Fee"
+                }
+              }
+            }
+          },
+          {
+            "name": "liquidityTarget",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "treasuryCut",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "Fee"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ConfigMarinadeParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "rewardsFee",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "Fee"
+                }
+              }
+            }
+          },
+          {
+            "name": "slotsForStakeDelta",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "minStake",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "minDeposit",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "minWithdraw",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "stakingSolCap",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "liquiditySolCap",
+            "type": {
+              "option": "u64"
+            }
+          },
+          {
+            "name": "withdrawStakeAccountEnabled",
+            "type": {
+              "option": "bool"
+            }
+          },
+          {
+            "name": "delayedUnstakeFee",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "FeeCents"
+                }
+              }
+            }
+          },
+          {
+            "name": "withdrawStakeAccountFee",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "FeeCents"
+                }
+              }
+            }
+          },
+          {
+            "name": "maxStakeMovedPerEpoch",
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "Fee"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "InitializeData",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "adminAuthority",
+            "type": "pubkey"
+          },
+          {
+            "name": "validatorManagerAuthority",
+            "type": "pubkey"
+          },
+          {
+            "name": "minStake",
+            "type": "u64"
+          },
+          {
+            "name": "rewardsFee",
+            "type": {
+              "defined": {
+                "name": "Fee"
+              }
+            }
+          },
+          {
+            "name": "liqPool",
+            "type": {
+              "defined": {
+                "name": "LiqPoolInitializeData"
+              }
+            }
+          },
+          {
+            "name": "additionalStakeRecordSpace",
+            "type": "u32"
+          },
+          {
+            "name": "additionalValidatorRecordSpace",
+            "type": "u32"
+          },
+          {
+            "name": "slotsForStakeDelta",
+            "type": "u64"
+          },
+          {
+            "name": "pauseAuthority",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LiqPoolInitializeData",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "lpLiquidityTarget",
+            "type": "u64"
+          },
+          {
+            "name": "lpMaxFee",
+            "type": {
+              "defined": {
+                "name": "Fee"
+              }
+            }
+          },
+          {
+            "name": "lpMinFee",
+            "type": {
+              "defined": {
+                "name": "Fee"
+              }
+            }
+          },
+          {
+            "name": "lpTreasuryCut",
+            "type": {
+              "defined": {
+                "name": "Fee"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Fee",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "basisPoints",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeeCents",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "bpCents",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LiqPool",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "lpMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "lpMintAuthorityBumpSeed",
+            "type": "u8"
+          },
+          {
+            "name": "solLegBumpSeed",
+            "type": "u8"
+          },
+          {
+            "name": "msolLegAuthorityBumpSeed",
+            "type": "u8"
+          },
+          {
+            "name": "msolLeg",
+            "type": "pubkey"
+          },
+          {
+            "name": "lpLiquidityTarget",
+            "type": "u64"
+          },
+          {
+            "name": "lpMaxFee",
+            "type": {
+              "defined": {
+                "name": "Fee"
+              }
+            }
+          },
+          {
+            "name": "lpMinFee",
+            "type": {
+              "defined": {
+                "name": "Fee"
+              }
+            }
+          },
+          {
+            "name": "treasuryCut",
+            "type": {
+              "defined": {
+                "name": "Fee"
+              }
+            }
+          },
+          {
+            "name": "lpSupply",
+            "type": "u64"
+          },
+          {
+            "name": "lentFromSolLeg",
+            "type": "u64"
+          },
+          {
+            "name": "liquiditySolCap",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "List",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "account",
+            "type": "pubkey"
+          },
+          {
+            "name": "itemSize",
+            "type": "u32"
+          },
+          {
+            "name": "count",
+            "type": "u32"
+          },
+          {
+            "name": "reserved1",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserved2",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StakeRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "stakeAccount",
+            "type": "pubkey"
+          },
+          {
+            "name": "lastUpdateDelegatedLamports",
+            "type": "u64"
+          },
+          {
+            "name": "lastUpdateEpoch",
+            "type": "u64"
+          },
+          {
+            "name": "isEmergencyUnstaking",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "StakeList",
+      "type": {
+        "kind": "struct",
+        "fields": []
+      }
+    },
+    {
+      "name": "StakeSystem",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "stakeList",
+            "type": {
+              "defined": {
+                "name": "List"
+              }
+            }
+          },
+          {
+            "name": "delayedUnstakeCoolingDown",
+            "type": "u64"
+          },
+          {
+            "name": "stakeDepositBumpSeed",
+            "type": "u8"
+          },
+          {
+            "name": "stakeWithdrawBumpSeed",
+            "type": "u8"
+          },
+          {
+            "name": "slotsForStakeDelta",
+            "type": "u64"
+          },
+          {
+            "name": "lastStakeDeltaEpoch",
+            "type": "u64"
+          },
+          {
+            "name": "minStake",
+            "type": "u64"
+          },
+          {
+            "name": "extraStakeDeltaRuns",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ValidatorRecord",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "validatorAccount",
+            "type": "pubkey"
+          },
+          {
+            "name": "activeBalance",
+            "type": "u64"
+          },
+          {
+            "name": "score",
+            "type": "u32"
+          },
+          {
+            "name": "lastStakeDeltaEpoch",
+            "type": "u64"
+          },
+          {
+            "name": "duplicationFlagBumpSeed",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ValidatorList",
+      "type": {
+        "kind": "struct",
+        "fields": []
+      }
+    },
+    {
+      "name": "ValidatorSystem",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "validatorList",
+            "type": {
+              "defined": {
+                "name": "List"
+              }
+            }
+          },
+          {
+            "name": "managerAuthority",
+            "type": "pubkey"
+          },
+          {
+            "name": "totalValidatorScore",
+            "type": "u32"
+          },
+          {
+            "name": "totalActiveBalance",
+            "type": "u64"
+          },
+          {
+            "name": "autoAddValidatorEnabled",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "State",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "msolMint",
+            "type": "pubkey"
+          },
+          {
+            "name": "adminAuthority",
+            "type": "pubkey"
+          },
+          {
+            "name": "operationalSolAccount",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasuryMsolAccount",
+            "type": "pubkey"
+          },
+          {
+            "name": "reserveBumpSeed",
+            "type": "u8"
+          },
+          {
+            "name": "msolMintAuthorityBumpSeed",
+            "type": "u8"
+          },
+          {
+            "name": "rentExemptForTokenAcc",
+            "type": "u64"
+          },
+          {
+            "name": "rewardFee",
+            "type": {
+              "defined": {
+                "name": "Fee"
+              }
+            }
+          },
+          {
+            "name": "stakeSystem",
+            "type": {
+              "defined": {
+                "name": "StakeSystem"
+              }
+            }
+          },
+          {
+            "name": "validatorSystem",
+            "type": {
+              "defined": {
+                "name": "ValidatorSystem"
+              }
+            }
+          },
+          {
+            "name": "liqPool",
+            "type": {
+              "defined": {
+                "name": "LiqPool"
+              }
+            }
+          },
+          {
+            "name": "availableReserveBalance",
+            "type": "u64"
+          },
+          {
+            "name": "msolSupply",
+            "type": "u64"
+          },
+          {
+            "name": "msolPrice",
+            "type": "u64"
+          },
+          {
+            "name": "circulatingTicketCount",
+            "type": "u64"
+          },
+          {
+            "name": "circulatingTicketBalance",
+            "type": "u64"
+          },
+          {
+            "name": "lentFromReserve",
+            "type": "u64"
+          },
+          {
+            "name": "minDeposit",
+            "type": "u64"
+          },
+          {
+            "name": "minWithdraw",
+            "type": "u64"
+          },
+          {
+            "name": "stakingSolCap",
+            "type": "u64"
+          },
+          {
+            "name": "emergencyCoolingDown",
+            "type": "u64"
+          },
+          {
+            "name": "pauseAuthority",
+            "type": "pubkey"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "delayedUnstakeFee",
+            "type": {
+              "defined": {
+                "name": "FeeCents"
+              }
+            }
+          },
+          {
+            "name": "withdrawStakeAccountFee",
+            "type": {
+              "defined": {
+                "name": "FeeCents"
+              }
+            }
+          },
+          {
+            "name": "withdrawStakeAccountEnabled",
+            "type": "bool"
+          },
+          {
+            "name": "lastStakeMoveEpoch",
+            "type": "u64"
+          },
+          {
+            "name": "stakeMoved",
+            "type": "u64"
+          },
+          {
+            "name": "maxStakeMovedPerEpoch",
+            "type": {
+              "defined": {
+                "name": "Fee"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

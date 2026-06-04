@@ -1,0 +1,136 @@
+{
+  "address": "MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD",
+  "metadata": {
+    "name": "marinade_finance",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Marinade liquid staking (deposit + liquidUnstake hand-encode surface, vendored from @marinade.finance/marinade-ts-sdk v5.0.18 IDL, converted to Anchor 0.30 IDL format)"
+  },
+  "instructions": [
+    {
+      "name": "deposit",
+      "discriminator": [
+        242,
+        35,
+        198,
+        137,
+        82,
+        225,
+        242,
+        182
+      ],
+      "accounts": [
+        {
+          "name": "state",
+          "writable": true
+        },
+        {
+          "name": "msolMint",
+          "writable": true
+        },
+        {
+          "name": "liqPoolSolLegPda",
+          "writable": true
+        },
+        {
+          "name": "liqPoolMsolLeg",
+          "writable": true
+        },
+        {
+          "name": "liqPoolMsolLegAuthority"
+        },
+        {
+          "name": "reservePda",
+          "writable": true
+        },
+        {
+          "name": "transferFrom",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mintTo",
+          "writable": true
+        },
+        {
+          "name": "msolMintAuthority"
+        },
+        {
+          "name": "systemProgram"
+        },
+        {
+          "name": "tokenProgram"
+        }
+      ],
+      "args": [
+        {
+          "name": "lamports",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "liquidUnstake",
+      "discriminator": [
+        30,
+        30,
+        119,
+        240,
+        191,
+        227,
+        12,
+        16
+      ],
+      "accounts": [
+        {
+          "name": "state",
+          "writable": true
+        },
+        {
+          "name": "msolMint",
+          "writable": true
+        },
+        {
+          "name": "liqPoolSolLegPda",
+          "writable": true
+        },
+        {
+          "name": "liqPoolMsolLeg",
+          "writable": true
+        },
+        {
+          "name": "treasuryMsolAccount",
+          "writable": true
+        },
+        {
+          "name": "getMsolFrom",
+          "writable": true
+        },
+        {
+          "name": "getMsolFromAuthority",
+          "signer": true
+        },
+        {
+          "name": "transferSolTo",
+          "writable": true
+        },
+        {
+          "name": "systemProgram"
+        },
+        {
+          "name": "tokenProgram"
+        }
+      ],
+      "args": [
+        {
+          "name": "msolAmount",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [],
+  "events": [],
+  "errors": [],
+  "types": []
+}
