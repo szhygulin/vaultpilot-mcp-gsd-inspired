@@ -65,6 +65,8 @@ import {
 } from "../src/protocols/solana-stake.js";
 // Phase 15 Plan 15-02 — Marinade builders for fixtures I + AA.
 import { _marinade } from "../src/protocols/marinade.js";
+// Phase 15 Plan 15-03 — Jito SPL-stake-pool DepositSol builder for fixture AB.
+import { DEPOSIT_SOL_VARIANT_TAG, _jitoStakePool } from "../src/protocols/jito-stake-pool.js";
 
 // Pinned inputs — used identically by Fixture K + L. Stable across runs.
 // `FROM` is the curated `solana-whale` persona address from Plan 11-06
@@ -993,6 +995,62 @@ describe("Marinade fingerprint fixtures I + AA (Plan 15-02, D-01 hand-encode)", 
     expect([...miscased.slice(8)]).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
     // The correct tail is the LE u64 of 1000 (0xe8 0x03 ...).
     expect([...correct.slice(8, 10)]).toEqual([0xe8, 0x03]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 15 Plan 15-03 — Jito SPL-stake-pool DepositSol fixture AB.
+//
+// Hand-encoded via the PINNED variant tag (14, VERIFIED at build against
+// @solana/spl-stake-pool) + primitive borsh u64 lamports. Asserts: the built
+// data's first byte equals the pinned variant tag; the fingerprint as a HARDCODED
+// 0x… literal (NO beforeAll-snapshot); lamports swap changes the fingerprint.
+//
+// Label map: 15-01 used E/F/G/H; 15-02 used I/AA; the next FREE double-letter is AB.
+//   AB — Jito DepositSol: [tag] ‖ u64 lamports
+//
+// Cross-linked from test/prepare-jito-stake-pool-deposit.test.ts (AB).
+// ---------------------------------------------------------------------------
+describe("Jito DepositSol fingerprint fixture AB (Plan 15-03, pinned variant tag + primitive borsh)", () => {
+  const J_FROM = new PublicKey("5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9");
+  const J_POOL = new PublicKey("Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb");
+  const J_A1 = new PublicKey("AKnL4NNf3DGWZJS6cPknBuEGnVsV4A4m5tgebLHaRSZ9");
+  const J_A2 = new PublicKey("3m9y53V2QwBbrQxtv5WN4T8SA5zw7BpZ2ZBYpZZAu8MW");
+  const J_A3 = new PublicKey("7uYDwDDvFvKsHnvjt9D8gj2Gfd9Xzn4QYsf8KXrXrJsy");
+  const J_A4 = new PublicKey("D9z5pxYZ7tqkQ6oFwvQyZ4QyhRjuw6JtVefdT4U6kx2y");
+  const J_POOLMINT = new PublicKey("J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn");
+  const J_DEST = new PublicKey("FzbcyEZ9m8xjtergWgWDq7mfPoHEbboBF791B6cTpzbq");
+
+  // referralPoolAccount defaults to the destination ATA (no-referral deposit —
+  // matches prepare_jito_stake_pool_deposit's referral default).
+  const accounts = {
+    stakePool: J_POOL, withdrawAuthority: J_A1, reserveStake: J_A2, fundingAccount: J_FROM,
+    destinationPoolAccount: J_DEST, managerFeeAccount: J_A3, referralPoolAccount: J_DEST, poolMint: J_POOLMINT,
+  };
+  // J_A4 is retained as a reference literal for the meta vector docs; unused here.
+  void J_A4;
+
+  function fpOf(ix: import("@solana/web3.js").TransactionInstruction): string {
+    const { messageBytes } = _jitoStakePool.assembleJitoTx({ instruction: ix, feePayer: J_FROM, recentBlockhash: FIXED_BLOCKHASH, ixName: "DepositSol" });
+    return computeSolanaPayloadFingerprint({ messageBytes });
+  }
+
+  it("Fixture AB — Jito DepositSol: PINNED variant tag (14) + hardcoded fingerprint", () => {
+    const ix = _jitoStakePool.buildDepositSolIx({ accounts, lamports: 1_000_000_000n });
+    // The cryptographic-binding regression: the built data's first byte == the
+    // pinned variant tag (mirror Kamino discriminator pinning).
+    expect(ix.data[0]).toBe(DEPOSIT_SOL_VARIANT_TAG);
+    expect(DEPOSIT_SOL_VARIANT_TAG).toBe(14);
+    expect(fpOf(ix)).toBe(
+      "0xe305d3967bb08b8a14dfdac336d2ee3f8c5e0739d854634883834ad98504109c",
+    );
+  });
+
+  it("Fixture AB embedding regression: lamports swap changes the fingerprint", () => {
+    const a = fpOf(_jitoStakePool.buildDepositSolIx({ accounts, lamports: 1_000_000_000n }));
+    const b = fpOf(_jitoStakePool.buildDepositSolIx({ accounts, lamports: 1_000_000_001n }));
+    expect(a).not.toBe(b);
+    expect(a).toBe("0xe305d3967bb08b8a14dfdac336d2ee3f8c5e0739d854634883834ad98504109c");
   });
 });
 

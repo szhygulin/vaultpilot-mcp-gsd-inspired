@@ -54,6 +54,7 @@ import {
   getMarginfiProgramId,
   getMarinadeProgram,
   getNativeStakeProgram,
+  getSplStakePoolProgram,
 } from "../config/contracts.js";
 
 /**
@@ -129,6 +130,12 @@ export const SOLANA_DISPATCH_ALLOWLIST: ReadonlySet<string> = new Set<string>([
   // already above (the CPI targets enumerated from assembleMarinadeTx programIds).
   // Sourced from the contracts SOT getter (NO inlined base58 in this file).
   getMarinadeProgram(),
+
+  // Phase 15 Plan 15-03 (SOL-W-16/20 Jito arm) — the SPL Stake Pool program (Jito
+  // IS the SPL stake pool). The DepositSol tool builds an SPL-stake-pool ix;
+  // System + Token are already above (assembleJitoTx programIds). Sourced from the
+  // contracts SOT getter (NO inlined base58 in this file).
+  getSplStakePoolProgram(),
 ]);
 
 /**

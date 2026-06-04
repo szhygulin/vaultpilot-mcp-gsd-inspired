@@ -190,6 +190,23 @@ export const LEDGER_NOTICE_SOLANA_BLIND_SIGN_TEMPLATE: string = [
 ].join("\n");
 
 /**
+ * JITO UNSTAKE-NOT-SUPPORTED NOTICE (Phase 15 — Plan 15-03). Emitted UNMISSABLY by
+ * `prepare_jito_stake_pool_deposit` on EVERY successful prepare (informational —
+ * the deposit STILL succeeds). Jito ships DEPOSIT-ONLY: unstake is deferred per
+ * the upstream SPL-stake-pool withdrawal-authority gap (15-CONTEXT § Specific
+ * Ideas — the deposit-only gap is the most surprising-to-users issue in this
+ * phase, so the NOTICE must be unmissable). No placeholders — constant prose.
+ */
+export const JITO_UNSTAKE_NOT_SUPPORTED_NOTICE_TEMPLATE: string = [
+  "[NOTICE — Jito stake-pool unstake not yet supported]",
+  "  This tool prepares a Jito stake-pool DEPOSIT only (SOL → jitoSOL).",
+  "  Unstaking jitoSOL back to SOL via the Jito stake pool is NOT yet supported",
+  "  (deferred per the upstream SPL-stake-pool withdrawal-authority gap).",
+  "  To exit a jitoSOL position today, swap jitoSOL → SOL on a DEX",
+  "  (e.g. prepare a Jupiter swap). Do NOT expect a Jito-native unstake path.",
+].join("\n");
+
+/**
  * CHECKS PERFORMED (Solana simulation — Layer 0.7) — emitted UNCONDITIONALLY by
  * preview_send Solana branch (Plan 12-04). Surfaces the
  * `simulateTransaction` envelope verbatim per DF-4 mandatory simulation

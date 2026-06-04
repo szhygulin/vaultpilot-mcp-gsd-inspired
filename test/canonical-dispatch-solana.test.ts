@@ -38,6 +38,7 @@ import {
   getMarginfiProgramId,
   getNativeStakeProgram,
   getMarinadeProgram,
+  getSplStakePoolProgram,
 } from "../src/config/contracts.js";
 // Phase 14 Plan 14-01 — the SINGLE pinned Jupiter swap legacy-tx fixture this
 // plan OWNS. Decoded ONCE here to enumerate the dispatch allowlist; 14-02 imports
@@ -69,14 +70,16 @@ const COMPUTE_BUDGET = ComputeBudgetProgram.programId.toBase58();
 const NATIVE_STAKE = getNativeStakeProgram();
 // Phase 15 Plan 15-02 — Marinade program (Marinade arm of SOL-W-14/15).
 const MARINADE_PROGRAM = getMarinadeProgram();
+// Phase 15 Plan 15-03 — SPL Stake Pool program (Jito arm of SOL-W-16/20).
+const SPL_STAKE_POOL_PROGRAM = getSplStakePoolProgram();
 
 // Phase 12 base count (System + Token + Associated) + Phase 13 additions
 // (MarginFi + Kamino lending) + Phase 13 Plan 13-05 auxiliary oracle programs
 // (Scope + Pyth receiver + Switchboard) + Phase 14 Plan 14-01 (Jupiter v6 +
 // ComputeBudget — the wrapAndUnwrapSol legacy swap top-level set enumerated from
 // the single owned fixture decode) + Phase 15 Plan 15-01 (native Stake Program)
-// + Phase 15 Plan 15-02 (Marinade program).
-const EXPECTED_ALLOWLIST_SIZE = 12;
+// + Phase 15 Plan 15-02 (Marinade program) + Phase 15 Plan 15-03 (SPL Stake Pool).
+const EXPECTED_ALLOWLIST_SIZE = 13;
 
 // Canary program IDs that remain refused.
 //   - A non-canonical MarginFi-shaped base58 (NOT the SOT program ID) — proves
@@ -140,6 +143,10 @@ describe("SOLANA_DISPATCH_ALLOWLIST — membership (Phase 12 base + Phase 13 len
     expect(SOLANA_DISPATCH_ALLOWLIST.has(MARINADE_PROGRAM)).toBe(true);
   });
 
+  it("contains the SPL Stake Pool program ID (Phase 15 Plan 15-03 Jito — from the SOT)", () => {
+    expect(SOLANA_DISPATCH_ALLOWLIST.has(SPL_STAKE_POOL_PROGRAM)).toBe(true);
+  });
+
   it("does NOT contain a non-canonical MarginFi-shaped base58 (only the exact SOT ID allowed)", () => {
     expect(SOLANA_DISPATCH_ALLOWLIST.has(MARGINFI_WRONG_VARIANT)).toBe(false);
   });
@@ -194,6 +201,32 @@ describe("checkSolanaDispatchTarget — Marinade arm (Phase 15 Plan 15-02)", () 
     if (result.kind !== "refused") return;
     expect(result.offenders).toEqual([UNKNOWN]);
     expect(result.offenders).not.toContain(MARINADE_PROGRAM);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 15 Plan 15-03 — Jito (SPL Stake Pool) dispatch arm (SOL-W-16/20). The
+// DepositSol programIds = {SPL Stake Pool, System, Token}; ALL must pass. An
+// unknown program in a Jito-shaped array still refuses.
+// ---------------------------------------------------------------------------
+describe("checkSolanaDispatchTarget — Jito (SPL Stake Pool) arm (Phase 15 Plan 15-03)", () => {
+  it("SPL Stake Pool program only → allowed (DepositSol shape)", () => {
+    expect(checkSolanaDispatchTarget([SPL_STAKE_POOL_PROGRAM])).toEqual({ kind: "allowed" });
+  });
+
+  it("DepositSol programIds {SPL Stake Pool, System, Token} → all allowed", () => {
+    expect(
+      checkSolanaDispatchTarget([SPL_STAKE_POOL_PROGRAM, SYSTEM_PROGRAM, TOKEN_PROGRAM]),
+    ).toEqual({ kind: "allowed" });
+  });
+
+  it("an UNKNOWN program alongside the Jito set still refuses, naming the offender", () => {
+    const UNKNOWN = "EvilProgram1111111111111111111111111111111";
+    const result = checkSolanaDispatchTarget([SPL_STAKE_POOL_PROGRAM, TOKEN_PROGRAM, UNKNOWN]);
+    expect(result.kind).toBe("refused");
+    if (result.kind !== "refused") return;
+    expect(result.offenders).toEqual([UNKNOWN]);
+    expect(result.offenders).not.toContain(SPL_STAKE_POOL_PROGRAM);
   });
 });
 
