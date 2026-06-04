@@ -439,9 +439,9 @@ Plans:
 
 Plans:
 
-- [ ] 15-01-PLAN.md — Native SOL lifecycle (SOL-W-17/18/19/20 native arm): `prepare_solana_delegate` (createAccountWithSeed sub-helper when no stake account) + `prepare_solana_deactivate` + `prepare_solana_withdraw` via built-in `StakeProgram` + native Stake Program ID in contracts SOT + dispatch allowlist + fixtures E/F/G/H
-- [ ] 15-02-PLAN.md — Marinade (SOL-W-14/15): `prepare_marinade_stake` + `prepare_marinade_immediate_unstake` (variable fee read from on-chain LiqPool, surfaced verbatim in CHECKS PERFORMED) via hand-encoded vendored-IDL BorshInstructionCoder + Marinade program/state/mSOL-mint in SOT + dispatch arm + fixtures I/AA
-- [ ] 15-03-PLAN.md — Jito (SOL-W-16): `prepare_jito_stake_pool_deposit` (deposit-only; pinned-verified DepositSol variant tag + primitive borsh) + `[NOTICE — Jito stake-pool unstake not yet supported]` block + Jito pool/jitoSOL-mint/SPL-stake-pool-program in SOT + dispatch arm + fixture AB; phase-final register-all + full-suite + FROZEN-zero-diff gate
+- [x] 15-01-PLAN.md — Native SOL lifecycle (SOL-W-17/18/19/20 native arm): `prepare_solana_delegate` (createAccountWithSeed sub-helper when no stake account) + `prepare_solana_deactivate` + `prepare_solana_withdraw` via built-in `StakeProgram` + native Stake Program ID in contracts SOT + dispatch allowlist + fixtures E/F/G/H
+- [x] 15-02-PLAN.md — Marinade (SOL-W-14/15): `prepare_marinade_stake` + `prepare_marinade_immediate_unstake` (variable fee read from on-chain LiqPool, surfaced verbatim in CHECKS PERFORMED) via hand-encoded vendored-IDL BorshInstructionCoder + Marinade program/state/mSOL-mint in SOT + dispatch arm + fixtures I/AA
+- [x] 15-03-PLAN.md — Jito (SOL-W-16): `prepare_jito_stake_pool_deposit` (deposit-only; pinned-verified DepositSol variant tag + primitive borsh) + `[NOTICE — Jito stake-pool unstake not yet supported]` block + Jito pool/jitoSOL-mint/SPL-stake-pool-program in SOT + dispatch arm + fixture AB; phase-final register-all + full-suite + FROZEN-zero-diff gate
 
 #### Phase 16: LiFi-routed EVM↔Solana bridging + Solana diagnostics
 
@@ -456,12 +456,13 @@ Plans:
   4. `get_solana_setup_status({ wallet })` returns `{ nonceAccountPresent, marginfiAccountPresent, kaminoObligationPresent, ledgerSolAppVersion?, walletPublicKeyOnDevice }` — probes per-wallet PDA + on-device status
   5. SECURITY.md updated with Solana-side bridge facet-decode rationale + Inv #6b extension scope
 
-**Plans**: 2 plans
+**Plans**: 3 plans
 
 Plans:
 
-- [ ] 16-01: `prepare_solana_lifi_swap` + LiFi Solana-side decoder + Inv #6b `decodedFinalRecipient` assertion at preview; cross-chain `toChain` Zod enum widening (`"solana"` joins existing EVM enum)
-- [ ] 16-02: `get_solana_setup_status` diagnostic — per-wallet PDA probe (nonce + MarginFi + Kamino) + Ledger SOL app version probe + on-device pubkey verify; v2.0 milestone close-out (SECURITY.md Solana threat-model finalization)
+- [ ] 16-01-PLAN.md — `get_solana_setup_status` diagnostic (SOL-DIAG-01): lazy 3-arm demote-to-null clone of `get_tron_setup_status` (nonce PDA + MarginFi PDA + Kamino obligation PDA presence + USB-HID device pubkey/app-version); read-only (no createHandle), no boot RPC, no new error code. Independent of 16-02/03.
+- [ ] 16-02-PLAN.md — LiFi client + Solana→EVM OUTBOUND + Inv #6b (SOL-W-21): `fetchLifiQuote` sibling in `src/clients/lifi.ts` (NEVER-throws, no new dep) + `prepare_solana_lifi_swap` outbound arm + direction-split scaffold; Inv #6b finalRecipient decoded FROM the EVM calldata bytes (not agent-relayed `action.toAddress`) via existing Tier-1 bridge-decoders → preview_send Layer 0.6 `DECODED_RECIPIENT_DRIFT`; EVM LiFi Diamond allowlisted, Solana arm gated inactive pending verified program ID; Fixture AC.
+- [ ] 16-03-PLAN.md — EVM→Solana INBOUND v0-guard + SECURITY.md v2.0 close-out (SOL-W-21): `deserializeLifiSolanaTx` (clone Jupiter byte-0 `0x80` v0-guard + `serializeMessage()`-only preimage) + typed `LifiV0TransactionError`; ★ FLAGGED execute-time checkpoint decides ship-inbound (legacy available → `decodeLifiSolanaRecipient` + Fixture AD) vs typed-refuse-inbound (v0-only) — never unfreeze the FROZEN binding; FROZEN-zero-diff gate over the 6 binding files; SECURITY.md bridge facet-decode rationale + Inv #6b scope + v0-inbound residual.
 
 **Status**: planning; v2.0 verify-phase will require a physical Ledger device with the Solana app installed + USB-HID connectivity + small SOL balance for return-able test broadcasts. Mirrors v1.0 ship-gate verify pattern.
 
@@ -1384,8 +1385,8 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8 →
 | 12. Solana native + SPL trust pipeline | v2.0 | 5/5 | Complete (verify-phase open) | 2026-05-20 |
 | 13. Solana lending — MarginFi + Kamino | v2.0 | 6/6 | Complete (#187 docs / #188 MarginFi / #189 Kamino); verify-phase open | 2026-06-04 |
 | 14. Jupiter v6 swaps | v2.0 | 2/2 | Complete (#191 docs / #192 feat); verify-phase open | 2026-06-04 |
-| 15. Staking — Marinade + Jito + native SOL | v2.0 | 0/3 | Planning | - |
-| 16. LiFi-routed EVM↔Solana bridging + Solana diagnostics | v2.0 | 0/2 | Planning | - |
+| 15. Staking — Marinade + Jito + native SOL | v2.0 | 3/3 | Complete (#194 docs / #195 feat); verify-phase open | 2026-06-04 |
+| 16. LiFi-routed EVM↔Solana bridging + Solana diagnostics | v2.0 | 0/3 | Planning | - |
 | 17. TRON scaffolding — USB-HID + TRX reads + persistent TRON account + portfolio fan-out | v2.1 | 5/5 | Complete (verify-phase open) | 2026-05-20 |
 | 18. TRON native + TRC-20 trust pipeline | v2.1 | 4/4 | Complete   | 2026-05-20 |
 | 19. TRC-20 approve + Stake 2.0 (freeze/unfreeze/withdraw-expire-unfreeze/vote/claim) | v2.1 | 4/4 | Complete    | 2026-05-20 |
