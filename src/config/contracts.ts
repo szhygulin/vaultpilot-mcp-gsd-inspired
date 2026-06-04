@@ -1715,7 +1715,34 @@ export interface SolanaContracts {
   jitoSolMint: string;
   /** SPL Stake Pool program ID (Phase 15 — Jito DepositSol dispatch target). */
   splStakePoolProgram: string;
+  /**
+   * LiFi Solana-side bridge program ID (Phase 16 — SOL-W-21 inbound EVM→Solana).
+   *
+   * [ASSUMED — VERIFY-AT-EXECUTE] (A3): the program a LiFi inbound Solana tx
+   * dispatches to is NOT known until an execute-time live /v1/quote capture
+   * deserializes a real inbound tx. Until that capture confirms a legacy tx +
+   * the program ID, this field carries a SENTINEL and the Solana
+   * canonical-dispatch arm stays INACTIVE. Outbound (Solana→EVM) does NOT need
+   * this — it dispatches to the EVM LiFi Diamond (already allowlisted). NEVER
+   * hardcode an unverified program ID into an active allowlist.
+   */
+  lifiSolanaProgram: string;
 }
+
+/**
+ * SENTINEL marking the LiFi Solana program ID as unverified (A3). When the SOT
+ * field equals this, the Solana canonical-dispatch arm is INACTIVE — no inbound
+ * Solana tx can dispatch. 16-03 replaces it with the execute-time-captured ID
+ * ONLY under branch (a) (legacy tx confirmed); branch (b) leaves it sentinel.
+ */
+export const LIFI_SOLANA_PROGRAM_SENTINEL = "VERIFY-AT-EXECUTE-lifi-solana-program";
+
+/**
+ * LiFi Solana chain ID — the LiFi chain identifier for Solana mainnet. Used by
+ * the bridge prepare tool for direction detection (action.toChainId === this →
+ * an inbound EVM→Solana route). NOT an address (no EIP-55 / base58 form).
+ */
+export const LIFI_SOLANA_CHAIN_ID = 1151111081099710;
 
 const SOLANA_CONTRACTS_RAW: Record<"solana", SolanaContracts> = {
   solana: {
@@ -1755,6 +1782,12 @@ const SOLANA_CONTRACTS_RAW: Record<"solana", SolanaContracts> = {
     jitoStakePool: "Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb",
     jitoSolMint: "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",
     splStakePoolProgram: "SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy",
+    // Phase 16 Plan 16-02/03 (SOL-W-21 inbound). SENTINEL — unverified (A3).
+    // The Solana canonical-dispatch arm is INACTIVE while this equals the
+    // sentinel. 16-03 replaces it ONLY under branch (a) (legacy capture
+    // confirmed). NOT a base58 address — the no-inline grep sentinel is
+    // satisfied because no real program ID is present.
+    lifiSolanaProgram: LIFI_SOLANA_PROGRAM_SENTINEL,
   },
 };
 
@@ -1878,6 +1911,26 @@ export function getJitoSolMint(): string {
  */
 export function getSplStakePoolProgram(): string {
   return SOLANA_CONTRACTS_RAW.solana.splStakePoolProgram;
+}
+
+/**
+ * Get the LiFi Solana bridge program ID (Phase 16 — SOL-W-21 inbound). Returns
+ * the SENTINEL while unverified (A3); consumers gate on `isLifiSolanaProgramVerified()`
+ * before treating the value as an active allowlist entry. NEVER inline this — the
+ * value is the SOT for the (eventually) verified inbound dispatch target.
+ */
+export function getLifiSolanaProgram(): string {
+  return SOLANA_CONTRACTS_RAW.solana.lifiSolanaProgram;
+}
+
+/**
+ * True only when the LiFi Solana program ID has been replaced with a real,
+ * execute-time-captured base58 program ID (16-03 branch a). While it equals the
+ * sentinel, the Solana canonical-dispatch arm is INACTIVE — no inbound Solana tx
+ * can dispatch. The gate that keeps an unverified ID out of an active allowlist.
+ */
+export function isLifiSolanaProgramVerified(): boolean {
+  return SOLANA_CONTRACTS_RAW.solana.lifiSolanaProgram !== LIFI_SOLANA_PROGRAM_SENTINEL;
 }
 
 // PDA-derivation helpers (D-05). Each returns a base58 string and is

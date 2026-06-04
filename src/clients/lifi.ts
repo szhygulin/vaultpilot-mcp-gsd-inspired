@@ -163,6 +163,184 @@ function mapLifiResponse(body: RawLifiBody): LifiBtcQuote | null {
  *   &toAddress=<toAddress>
  *   &integrator=vaultpilot-mcp
  */
+// ─── fetchLifiQuote (generic sibling — SOL-W-21, Phase 16 Plan 16-02) ───────────
+//
+// SIBLING to fetchBtcLifiQuote — a GENERIC /v1/quote client used for the Solana
+// bridge flows (Solana→EVM outbound + EVM→Solana inbound). NOT a reuse of
+// fetchBtcLifiQuote, which hardcodes fromChain=BTC + the PSBT shape.
+//
+// Same NEVER-throws envelope discipline (200→ok, 404→not-found, 429→rate-limited,
+// abort/timeout/other→error). Strict field extraction via mapLifiQuoteResponse
+// (clone of mapLifiResponse's T-26-13 discipline) — ONLY action.toAddress +
+// action.{fromChainId,toChainId} + transactionRequest.{to,data,value} survive;
+// every other body field is discarded.
+
+/**
+ * The subset of fields extracted from a generic LiFi quote response. Carries the
+ * raw `transactionRequest` (the EVM-side outbound tx for Solana→EVM) plus
+ * `action.toAddress` + chain IDs for direction detection. All other body fields
+ * are discarded by mapLifiQuoteResponse (T-26-13 response-injection mitigation).
+ */
+export interface LifiQuote {
+  action: {
+    toAddress: string;
+  };
+  /** Source chain ID from action.fromChainId — used for direction detection. */
+  fromChainId: number;
+  /** Target chain ID from action.toChainId. LiFi Solana chain id = 1151111081099710. */
+  toChainId: number;
+  transactionRequest: {
+    /** Dispatch target (EVM LiFi Diamond for an outbound EVM-side tx). */
+    to: string;
+    /** Calldata (EVM) or base64 (Solana inbound) the device signs. */
+    data: string;
+    /** Native value as string (LiFi returns string, never BigInt). */
+    value: string;
+  };
+}
+
+/**
+ * NEVER-throws discriminated union for the generic LiFi /v1/quote client.
+ */
+export type LifiQuoteResult =
+  | { kind: "ok"; quote: LifiQuote }
+  | { kind: "not-found" }
+  | { kind: "rate-limited"; message: string }
+  | { kind: "error"; message: string };
+
+interface RawLifiActionGeneric {
+  toAddress?: unknown;
+  fromChainId?: unknown;
+  toChainId?: unknown;
+  [key: string]: unknown;
+}
+
+interface RawLifiBodyGeneric {
+  action?: RawLifiActionGeneric;
+  transactionRequest?: RawLifiTransactionRequest;
+  [key: string]: unknown;
+}
+
+/**
+ * Strict field extraction for a generic LiFi quote (T-26-13). Returns null if
+ * any required field is missing or the wrong type. Discards all other fields.
+ */
+function mapLifiQuoteResponse(body: RawLifiBodyGeneric): LifiQuote | null {
+  const toAddress = body.action?.toAddress;
+  const fromChainId = body.action?.fromChainId;
+  const toChainId = body.action?.toChainId;
+  const tr = body.transactionRequest;
+  const trTo = tr?.to;
+  const trData = tr?.data;
+  const trValue = tr?.value;
+
+  if (
+    typeof toAddress !== "string" ||
+    typeof fromChainId !== "number" ||
+    typeof toChainId !== "number" ||
+    typeof trTo !== "string" ||
+    typeof trData !== "string" ||
+    typeof trValue !== "string"
+  ) {
+    return null;
+  }
+
+  return {
+    action: { toAddress },
+    fromChainId,
+    toChainId,
+    transactionRequest: { to: trTo, data: trData, value: trValue },
+  };
+}
+
+/**
+ * Fetch a generic LiFi bridge quote. NEVER throws — returns a `LifiQuoteResult`.
+ *
+ * URL shape:
+ *   GET https://li.quest/v1/quote
+ *   ?fromChain=<fromChain>&fromToken=<fromToken>&fromAddress=<fromAddress>
+ *   &fromAmount=<fromAmount>&toChain=<toChain>&toToken=<toToken>
+ *   &toAddress=<toAddress>&integrator=vaultpilot-mcp
+ */
+export async function fetchLifiQuote(params: {
+  fromChain: string;
+  fromToken: string;
+  fromAddress: string;
+  fromAmount: string;
+  toChain: string;
+  toToken: string;
+  toAddress: string;
+}): Promise<LifiQuoteResult> {
+  const url = new URL(`${LIFI_API_BASE}/v1/quote`);
+  url.searchParams.set("fromChain", params.fromChain);
+  url.searchParams.set("fromToken", params.fromToken);
+  url.searchParams.set("fromAddress", params.fromAddress);
+  url.searchParams.set("fromAmount", params.fromAmount);
+  url.searchParams.set("toChain", params.toChain);
+  url.searchParams.set("toToken", params.toToken);
+  url.searchParams.set("toAddress", params.toAddress);
+  url.searchParams.set("integrator", "vaultpilot-mcp");
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LIFI_TIMEOUT_MS);
+
+  let result: LifiQuoteResult;
+  try {
+    const resp = await fetch(url.toString(), { signal: controller.signal });
+    if (!resp.ok) {
+      if (resp.status === 404) {
+        result = { kind: "not-found" };
+        log("info", `LiFi: no route found (404) for ${params.fromChain}→${params.toChain}`);
+      } else if (resp.status === 429) {
+        const message = `LiFi rate-limited (429) — integrator=vaultpilot-mcp`;
+        result = { kind: "rate-limited", message };
+        log("warn", `LiFi rate limit hit: ${message}`);
+      } else {
+        const message = `LiFi returned HTTP ${resp.status}`;
+        result = { kind: "error", message };
+        log("warn", `LiFi error: ${message}`);
+      }
+    } else {
+      let body: RawLifiBodyGeneric;
+      try {
+        body = (await resp.json()) as RawLifiBodyGeneric;
+      } catch (parseErr) {
+        const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+        result = { kind: "error", message: `LiFi invalid JSON response: ${msg}` };
+        log("warn", `LiFi JSON parse failed: ${result.message}`);
+        return result;
+      }
+      const quote = mapLifiQuoteResponse(body);
+      if (quote === null) {
+        result = {
+          kind: "error",
+          message:
+            "LiFi response missing required fields (action.{toAddress,fromChainId,toChainId} or transactionRequest.{to,data,value})",
+        };
+        log("warn", `LiFi invalid response shape: ${result.message}`);
+      } else {
+        result = { kind: "ok", quote };
+        log(
+          "debug",
+          `LiFi quote OK: toAddress=${quote.action.toAddress} from=${quote.fromChainId} to=${quote.toChainId}`,
+        );
+      }
+    }
+  } catch (err) {
+    const errorObj = err as Error;
+    if (errorObj?.name === "AbortError") {
+      result = { kind: "error", message: `LiFi unreachable (timeout ${LIFI_TIMEOUT_MS}ms)` };
+    } else {
+      result = { kind: "error", message: `LiFi unreachable: ${errorObj?.message ?? String(err)}` };
+    }
+    log("warn", `LiFi fetch failed: ${result.message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  return result;
+}
+
 export async function fetchBtcLifiQuote(params: {
   btcAddress: string;
   amountSatoshi: bigint;

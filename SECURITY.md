@@ -789,3 +789,31 @@ Subtensor enforces the `CheckMetadataHash` signed extension: the extrinsic commi
 ### FROZEN assertion
 
 The cryptographic-binding chain — `payload-fingerprint*.ts`, the blake2-256 `presign-hash*.ts`, the `send_transaction.ts` three-gate region (previewToken + userDecision + payloadFingerprint-drift), and `handle-store.ts` — stayed **byte-identical to `origin/main` across the full v2.7 Bittensor milestone (Phases 46–49)**. The phase adds one read-only diagnostic tool plus one additive `fetchBittensorSetup` transport helper plus docs; it touches NONE of the binding chain. Asserted by the `git diff --stat origin/main` zero-diff gate at Phase 49 close + the in-suite `FROZEN cryptographic-binding chain` describe-block.
+
+## v2.0 Solana close-out (Phase 16 — LiFi bridging + SOL-DIAG-01)
+
+Phase 16 completes the v2.0 Solana milestone: a per-wallet Solana diagnostic (`get_solana_setup_status`, SOL-DIAG-01) and LiFi cross-chain bridging (`prepare_solana_lifi_swap`, SOL-W-21). Three security properties are load-bearing.
+
+### Solana-side bridge facet-decode rationale (Inv #6b — final recipient from the SIGNED bytes)
+
+A compromised agent can relay a clean-looking `toAddress` while the bridge transaction the device actually signs encodes a different recipient inside calldata the Ledger cannot fully decode. VaultPilot decodes the final recipient **from the bytes the device signs**, never from the agent- or LiFi-relayed `quote.action.toAddress`:
+
+- **Outbound (Solana→EVM):** LiFi returns an EVM calldata transaction bound through the existing EVM signing path. The user-supplied `toAddress` is stored in `PreparedTxEvm.bridgeParams.toAddress` at prepare time; `preview_send` Layer 0.6 decodes `finalRecipient` from `record.tx.data` (the signed EVM bridge calldata) via the centralized Tier-1 decoder registry and refuses with `DECODED_RECIPIENT_DRIFT` on mismatch. This **reuses** the v2.6 Phase 39 BRIDGE-T1 EVM facet-decode mechanism (`decodeBridgeTier1FacetRecipient`) with no per-tool assertion — the outbound bridge tool inherits the assertion by routing through `preview_send`.
+
+### Inv #6b extension scope to Solana
+
+The Inv #6b principle (decode the recipient from the signed bytes, compare against the user-supplied destination, refuse on drift) is the same as the v2.6 EVM facet decoders. On the **inbound (EVM→Solana)** direction the recipient would be extracted from the legacy Solana message bytes (`serializeMessage()`) via a Solana instruction-account decoder — but see the residual below: inbound is conservatively refused in this build, so no Solana-side recipient decoder ships.
+
+### v0-inbound residual risk (fail-safe default — conservative refusal)
+
+**In scope vs out of scope.** The FROZEN Solana cryptographic-binding (`computeSolanaPayloadFingerprint`) accepts **only legacy `serializeMessage()` bytes**. At execute-time an authoritative live `GET https://li.quest/v1/quote?…&toChain=SOL` capture **succeeded** (HTTP 200) and returned a base64 Solana transaction whose message header byte-0 was `0xd3` (high-bit set → **v0 / VersionedTransaction**). LiFi returns v0 transactions for the EVM→Solana route and exposes no documented legacy-forcing parameter.
+
+**Control (fail-safe default).** The inbound path runs a v0-guard (`deserializeLifiSolanaTx`, mirroring the Jupiter byte-0 `0x80` guard) **before** any legacy parse. A v0 transaction throws a typed `LifiV0TransactionError` and the tool refuses — a v0 transaction is **never** silently accepted, **never** run through the FROZEN binding, and the binding is **never** unfrozen to accommodate it. No Solana-side recipient decoder is shipped and the LiFi Solana canonical-dispatch arm stays **inactive** (the SOT `lifiSolanaProgram` field holds a sentinel, gated by `isLifiSolanaProgramVerified()`), because shipping a recipient decoder that can never run against a real LiFi inbound transaction would be defense-in-name-only.
+
+**Residual risk.** EVM→Solana inbound bridging via LiFi is **intentionally un-shippable** under the FROZEN legacy-only binding until either (a) LiFi exposes a legacy transaction path, or (b) a future milestone unfreezes the Solana binding and re-anchors the fingerprint preimage against v0 message bytes (a deliberate, separately-reviewed change to the trust anchor — out of scope for v2.0). Outbound (Solana→EVM) is **unaffected** and fully shipped.
+
+**Standing relayer / value-in-flight residual.** As with every bridge (BTC LiFi, EVM Tier-1), once funds leave the source chain the LiFi relayer and the destination bridge contract are trusted to deliver to the decoded recipient. VaultPilot's guarantee is bounded to the source-chain signed bytes (the recipient the device commits to); cross-chain delivery integrity is out of scope to eliminate and is an accepted residual.
+
+### FROZEN assertion (v2.0 Solana)
+
+The six FROZEN cryptographic-binding files — `payload-fingerprint.ts`, `payload-fingerprint-solana.ts`, `presign-hash.ts`, `presign-hash-solana.ts`, `send_transaction.ts`, `handle-store.ts` — stay **byte-identical to `origin/main`** across Phase 16. The phase ADDS sibling files (`get_solana_setup_status.ts`, `prepare_solana_lifi_swap.ts`, `lifi-solana.ts`, the `fetchLifiQuote` sibling) and never edits the FROZEN binding; new transaction shapes flow through `computeSolanaPayloadFingerprint` via legacy `serializeMessage()` unchanged. Asserted by the `git diff origin/main` zero-diff gate at Phase 16 close.

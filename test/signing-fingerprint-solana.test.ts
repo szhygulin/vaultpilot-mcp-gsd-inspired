@@ -36,12 +36,17 @@ import {
 import { execFileSync } from "node:child_process";
 
 import { describe, expect, it, vi } from "vitest";
+import { getAddress } from "viem";
 
 import {
   FINGERPRINT_DOMAIN_TAG_SOLANA,
   _solanaFingerprint,
   computeSolanaPayloadFingerprint,
 } from "../src/signing/payload-fingerprint-solana.js";
+// Phase 16 Plan 16-02 — Fixture AC anchors the OUTBOUND LiFi (Solana→EVM)
+// bridge-shape fingerprint, which flows through the EVM compute path (the
+// outbound LiFi tx is EVM calldata). Aliased to make the EVM-path source clear.
+import { computePayloadFingerprint as computePayloadFingerprintEvm } from "../src/signing/payload-fingerprint.js";
 // Phase 13 Plan 13-03 — MarginFi ix builders for fixtures O–S.
 import {
   buildDepositIx,
@@ -1051,6 +1056,50 @@ describe("Jito DepositSol fingerprint fixture AB (Plan 15-03, pinned variant tag
     const b = fpOf(_jitoStakePool.buildDepositSolIx({ accounts, lamports: 1_000_000_001n }));
     expect(a).not.toBe(b);
     expect(a).toBe("0xe305d3967bb08b8a14dfdac336d2ee3f8c5e0739d854634883834ad98504109c");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 16 Plan 16-02 — Fixture AC: LiFi OUTBOUND (Solana→EVM) bridge-shape
+// payloadFingerprint anchor.
+//
+// OUTBOUND binds an EVM CALLDATA tx (LiFi returns a transactionRequest the EVM
+// path signs), so the fingerprint flows through the EVM `computePayloadFingerprint`
+// (NOT the Solana binding). This is the bridge tx shape `prepare_solana_lifi_swap`
+// introduces; anchored here as a hardcoded 0x… literal per CLAUDE.md fixture
+// discipline (NO beforeAll-snapshot — drift fails at THIS line). Cross-linked
+// from test/prepare-solana-lifi-swap.test.ts (the outbound handle's fingerprint).
+//
+// (Fixture AD — the INBOUND legacy Solana fingerprint — is added by Plan 16-03
+//  ONLY under branch (a). Under branch (b) inbound is refused, so no AD anchor.)
+// ---------------------------------------------------------------------------
+describe("Fixture AC — LiFi OUTBOUND Solana→EVM bridge-shape fingerprint (EVM path)", () => {
+  it("anchors the outbound LiFi-Diamond EVM calldata fingerprint as a hardcoded literal", () => {
+    const fp = computePayloadFingerprintEvm({
+      chainId: 42161, // Arbitrum — the LiFi-returned target chain id (outbound)
+      to: getAddress("0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE"), // LiFi Diamond
+      valueWei: 0n,
+      data: "0xabcdef0123456789", // representative LiFi outbound calldata
+    });
+    expect(fp).toBe(
+      "0xf51d0ef8fe6cb0debe063a38bb3a656fa895a7bfa88f8933e12ae0466645fb4c",
+    );
+  });
+
+  it("embedding regression: a calldata byte swap changes the outbound fingerprint", () => {
+    const a = computePayloadFingerprintEvm({
+      chainId: 42161,
+      to: getAddress("0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE"),
+      valueWei: 0n,
+      data: "0xabcdef0123456789",
+    });
+    const b = computePayloadFingerprintEvm({
+      chainId: 42161,
+      to: getAddress("0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE"),
+      valueWei: 0n,
+      data: "0xabcdef0123456788",
+    });
+    expect(a).not.toBe(b);
   });
 });
 
